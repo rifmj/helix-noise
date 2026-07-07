@@ -17,9 +17,12 @@ First release (roadmap M0–M2).
     shaders cannot host the emitter's array-constructor syntax). Scales to ~10⁶ particles.
   - `mode="auto"` picks GPU for large counts when WebGL2 float render targets are available and
     falls back to CPU otherwise (and on any GPU-init failure) with a one-time console notice.
-- `obstacle` / `boundaryThickness` — free-slip SDF boundary via the core's `withBoundary`
-  (velocity → 0 inside, tangent at the wall, still divergence-free). Runs on the CPU engine;
-  setting it with `mode="gpu"` falls back to CPU with a notice (GPU-native boundary planned).
+- `obstacle` / `obstacleGlsl` / `boundaryThickness` — free-slip SDF boundary (velocity → 0
+  inside, tangent at the wall, still divergence-free). `obstacle` (JS SDF) runs on the CPU via
+  the core's `withBoundary`; `obstacleGlsl` (a `float helixSdf(vec3 p)` snippet) enables a
+  **GPU-native** boundary — the same `∇×(ramp·A)` flow via `u_b = ramp'·(∇d×A) + ramp·u` from
+  the emitted vector potential, with in-obstacle respawn. Verified in-browser: 0 particles
+  inside the obstacle (vs 2.9% unbounded).
 - `presets` — `cirrus` / `kelp` / `nebula` / `smoke` option bundles.
 - Tests: transport faithfulness, GLSL emission shape, and a numeric GLSL↔`sample()` parity
   harness (`≤1e-9` at precision 17; documents the `≤1e-5` default-precision ship tradeoff).

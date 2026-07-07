@@ -44,6 +44,8 @@ const C: [number, number, number] = [Math.PI, Math.PI, Math.PI];
 const R = 1.2;
 const sphereSdf = (x: number, y: number, z: number) =>
   Math.hypot(x - C[0], y - C[1], z - C[2]) - R;
+// The same sphere as a GLSL SDF, enabling the GPU-native boundary.
+const sphereGlsl = `float helixSdf(vec3 p){ return length(p - vec3(${C[0]}, ${C[1]}, ${C[2]})) - ${R}; }`;
 
 function Scene({ demo, count, colorBy, obstacle }: { demo: Demo; count: number; colorBy: ColorBy; obstacle: boolean }) {
   return (
@@ -60,6 +62,7 @@ function Scene({ demo, count, colorBy, obstacle }: { demo: Demo; count: number; 
           speed={0.6}
           colorBy={colorBy}
           obstacle={obstacle ? sphereSdf : undefined}
+          obstacleGlsl={obstacle ? sphereGlsl : undefined}
           boundaryThickness={1.2}
         />
       )}
@@ -78,7 +81,7 @@ function App() {
       <div style={{ position: "fixed", top: 10, left: 12, zIndex: 10, font: "12px ui-monospace, monospace", color: "#8a97a2" }}>
         <div>
           demo: <b style={{ color: "#2fd6bf" }}>{demo}</b>
-          {demo !== "material" && <> · particles: <b style={{ color: "#2fd6bf" }}>{(obstacle ? 60000 : count).toLocaleString()}</b> · color: <b style={{ color: "#2fd6bf" }}>{String(colorBy)}</b> · obstacle: <b style={{ color: "#2fd6bf" }}>{obstacle ? "sphere (CPU)" : "off"}</b></>}
+          {demo !== "material" && <> · particles: <b style={{ color: "#2fd6bf" }}>{(obstacle ? 60000 : count).toLocaleString()}</b> · color: <b style={{ color: "#2fd6bf" }}>{String(colorBy)}</b> · obstacle: <b style={{ color: "#2fd6bf" }}>{obstacle ? "sphere" : "off"}</b></>}
         </div>
         <div style={{ marginTop: 6, display: "flex", gap: 6 }}>
           <button onClick={() => setDemo(next[demo])}>next demo</button>

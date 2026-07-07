@@ -20,6 +20,10 @@ export interface GpuSimOptions {
   pointSize: number;
   colorBy: ColorBy;
   lifespan: [number, number];
+  /** GLSL snippet defining `float helixSdf(vec3 p)` (> 0 outside). Enables a GPU-native boundary. */
+  obstacleGlsl?: string;
+  /** Obstacle influence-band width (maps to the core `thickness`). Default 1. */
+  thickness?: number;
 }
 
 const rtOptions: THREE.RenderTargetOptions = {
@@ -52,14 +56,15 @@ export class GpuParticleSim {
 
   constructor(renderer: THREE.WebGLRenderer, field: Field, opts: GpuSimOptions) {
     this.renderer = renderer;
-    const { count, bounds, speed, pointSize, colorBy, lifespan } = opts;
+    const { count, bounds, speed, pointSize, colorBy, lifespan, obstacleGlsl, thickness = 1 } = opts;
 
     // Texture large enough to hold `count` particles (one texel each).
     const width = Math.ceil(Math.sqrt(count));
     const height = Math.ceil(count / width);
     const texCount = width * height;
 
-    const chunk = helixFieldChunk(field, { curl: true });
+    // The vector potential A is only needed for the boundary (u_b = r'·∇d×A + r·u).
+    const chunk = helixFieldChunk(field, { curl: true, potential: !!obstacleGlsl });
     const boundsVec = new THREE.Vector3(...bounds);
 
     // --- initial state: random positions in [0, bounds), random remaining life ---
@@ -90,9 +95,11 @@ export class GpuParticleSim {
         uBounds: { value: boundsVec },
         uSeed: { value: Math.random() * 1000 },
         uLife: { value: new THREE.Vector2(lmin, lmax) },
+        uThickness: { value: Math.max(thickness, 1e-9) },
+        uSdfEps: { value: 1e-3 },
       },
       vertexShader: SIM_VERT,
-      fragmentShader: simFragment(chunk),
+      fragmentShader: simFragment(chunk, obstacleGlsl),
     });
     this.quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.simMat);
     this.quad.frustumCulled = false;
@@ -194,7 +201,42 @@ void main() {
 }
 `;
 
-function simFragment(chunk: string): string {
+function simFragment(chunk: string, obstacleGlsl?: string): string {
+  const hasObstacle = !!obstacleGlsl;
+
+  // Bounded velocity, computed exactly as the core boundary.ts:
+  //   u_b = ramp'(q)·(∇d × A) + ramp(q)·u,  q = d/thickness  (Bridson free-slip quintic)
+  // A = helixNoisePot, u = helixNoise, ∇d by central differences of helixSdf. Zero inside,
+  // base field beyond the band, divergence-free by the ∇×(ramp·A) identity.
+  const boundary = hasObstacle
+    ? /* glsl */ `
+${obstacleGlsl}
+uniform float uThickness;
+uniform float uSdfEps;
+float helixRamp(float x)  { if (x <= 0.0) return 0.0; if (x >= 1.0) return 1.0; float x2 = x*x; return x*(15.0 - 10.0*x2 + 3.0*x2*x2)/8.0; }
+float helixDRamp(float x) { if (x < 0.0 || x >= 1.0) return 0.0; float w = 1.0 - x*x; return (15.0/8.0)*w*w; }
+vec3 boundedVel(vec3 p, float t) {
+  float d = helixSdf(p);
+  if (d <= 0.0) return vec3(0.0);
+  vec3 u = helixNoise(p, t);
+  float q = d / uThickness;
+  if (q >= 1.0) return u;
+  vec3 A = helixNoisePot(p, t);
+  float e = uSdfEps;
+  vec3 g = vec3(
+    helixSdf(p + vec3(e,0,0)) - helixSdf(p - vec3(e,0,0)),
+    helixSdf(p + vec3(0,e,0)) - helixSdf(p - vec3(0,e,0)),
+    helixSdf(p + vec3(0,0,e)) - helixSdf(p - vec3(0,0,e))) / (2.0*e);
+  return helixDRamp(q) / uThickness * cross(g, A) + helixRamp(q) * u;
+}
+#define HELIX_VEL(p, t) boundedVel(p, t)
+#define HELIX_INSIDE(p) (helixSdf(p) < 0.0)
+`
+    : /* glsl */ `
+#define HELIX_VEL(p, t) helixNoise(p, t)
+#define HELIX_INSIDE(p) false
+`;
+
   return /* glsl */ `precision highp float;
 ${chunk}
 uniform sampler2D uParticles;
@@ -206,10 +248,10 @@ uniform float uSeed;
 uniform vec2 uLife;
 in vec2 vUv;
 out vec4 outColor;
-
+${boundary}
 float hash11(float n) { return fract(sin(n) * 43758.5453123); }
 vec3 spawnPos(vec2 uv) {
-  float n = dot(uv, vec2(127.1, 311.7)) + uSeed;
+  float n = dot(uv, vec2(127.1, 311.7)) + uSeed + uTime;
   return vec3(hash11(n), hash11(n + 1.7), hash11(n + 3.3)) * uBounds;
 }
 
@@ -217,14 +259,15 @@ void main() {
   vec4 s = texture(uParticles, vUv);
   if (uDt < 0.0) { outColor = s; return; } // prime/blit pass-through
   float life = s.w - uDt;
-  if (life <= 0.0) {
+  // Respawn on death, or when the particle is inside the obstacle (keeps the void clear).
+  if (life <= 0.0 || HELIX_INSIDE(s.xyz)) {
     vec3 sp = spawnPos(vUv);
     float r = hash11(dot(vUv, vec2(269.5, 183.3)) + uSeed);
     outColor = vec4(sp, mix(uLife.x, uLife.y, r));
     return;
   }
   vec3 pos = s.xyz;
-  vec3 v = helixNoise(pos, uTime);
+  vec3 v = HELIX_VEL(pos, uTime);
   pos += v * (uSpeed * uDt);
   pos = mod(pos, uBounds); // wrap into [0, bounds)
   outColor = vec4(pos, life);

@@ -101,7 +101,8 @@ Props are the core `HelixNoiseOptions` (spread directly) plus rendering controls
 | `colorBy` | `"helicity"` | `"helicity"` \| `"speed"` \| a fixed colour |
 | `mode` | `"auto"` | `"cpu"` \| `"gpu"` \| `"auto"` |
 | `lifespan` | `[1, 3]` | particle lifetime range (seconds) |
-| `obstacle` | — | SDF obstacle; forces the CPU engine (see below) |
+| `obstacle` | — | JS SDF obstacle (CPU engine) — see below |
+| `obstacleGlsl` | — | GLSL SDF snippet enabling a GPU-native boundary |
 | `boundaryThickness` | `1` | obstacle influence-band width |
 | `field` | — | use a prebuilt field instead of the option props |
 | `onField` | — | callback with the resolved field (escape hatch) |
@@ -117,15 +118,32 @@ CPU otherwise (and on any GPU-init failure) with a one-time console notice — n
 
 ## Obstacles
 
-Pass an `obstacle` — a signed-distance function (`> 0` outside, `< 0` inside). The flow slides
-along the wall (free-slip), is zero inside, and stays exactly divergence-free. This uses the
-core's `withBoundary` and currently runs on the **CPU** engine (setting `obstacle` with
-`mode="gpu"` falls back to CPU with a notice; a GPU-native boundary is planned).
+Constrain the flow with a signed-distance function (`> 0` outside, `< 0` inside). The flow
+slides along the wall (free-slip), is zero inside, and stays exactly divergence-free — it is
+`∇×(ramp(d)·A)` with `A` the field's analytic vector potential, expanded as
+`u_b = ramp'(d)·(∇d × A) + ramp(d)·u`.
+
+**CPU engine** — pass `obstacle`, a JS SDF (uses the core `withBoundary`):
 
 ```tsx
 const sphere = (x, y, z) => Math.hypot(x - Math.PI, y - Math.PI, z - Math.PI) - 1.2;
 
 <HelixParticles {...presets.nebula} count={60000} obstacle={sphere} boundaryThickness={1.2} />
+```
+
+**GPU engine** — also pass `obstacleGlsl`, a GLSL snippet defining `float helixSdf(vec3 p)`.
+The same bounded flow is then evaluated on-device from the emitted vector potential, and
+particles inside the obstacle are respawned so it reads as a clean void. Provide both to keep
+the CPU fallback bounded:
+
+```tsx
+const sphere = (x, y, z) => Math.hypot(x - Math.PI, y - Math.PI, z - Math.PI) - 1.2;
+const sphereGlsl = `float helixSdf(vec3 p){ return length(p - vec3(3.14159)) - 1.2; }`;
+
+<HelixParticles
+  {...presets.nebula} count={200000}
+  obstacle={sphere} obstacleGlsl={sphereGlsl} boundaryThickness={1.2}
+/>
 ```
 
 ## Presets

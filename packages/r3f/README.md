@@ -11,9 +11,10 @@ one place, so numerical parity with every other port is inherited, not re-establ
 > **Status: `0.1.0`, pre-release.** Both engines work: the CPU path (`field.sampleUW`) and the
 > GPU path (a GLSL ES 3.00 float-texture ping-pong that advects on-device from the injected
 > `field.glsl()`, ~10⁶ particles). `mode="auto"` uses GPU when WebGL2 float render targets are
-> available and falls back to CPU otherwise. Obstacles (free-slip SDF boundaries) run on the CPU
-> engine. A GPU-native boundary is the remaining item. See `examples/r3f` for a live
-> CPU/GPU/material/obstacle demo, and the [docs page](https://rifmj.github.io/helix-noise/docs/r3f).
+> available and falls back to CPU otherwise. Obstacles (free-slip SDF boundaries) work on **both**
+> engines — a JS SDF (`obstacle`) on the CPU, a GLSL SDF (`obstacleGlsl`) natively on the GPU.
+> See `examples/r3f` for a live CPU/GPU/material/obstacle demo, and the
+> [docs page](https://rifmj.github.io/helix-noise/docs/r3f).
 
 ## Install
 
@@ -64,17 +65,20 @@ uniform from `useFrame`.
 | `colorBy` | `"helicity"` | `"helicity"` \| `"speed"` \| a fixed colour |
 | `mode` | `"auto"` | `"cpu"` \| `"gpu"` \| `"auto"` |
 | `lifespan` | `[1, 3]` | particle lifetime range (seconds) |
-| `obstacle` | — | free-slip SDF obstacle (`> 0` outside); forces the CPU engine |
+| `obstacle` | — | JS SDF obstacle (`> 0` outside); CPU engine |
+| `obstacleGlsl` | — | GLSL `float helixSdf(vec3 p)` snippet; GPU-native boundary |
 | `boundaryThickness` | `1` | obstacle influence-band width |
 | `field` | — | use a prebuilt field instead of the option props |
 | `onField` | — | callback with the resolved field (escape hatch) |
 
-**Obstacles** — pass a signed-distance function; the flow slides along the wall, is zero
-inside, and stays divergence-free (via the core's `withBoundary`). Runs on the CPU engine.
+**Obstacles** — the flow slides along the wall (free-slip), is zero inside, and stays
+divergence-free (`∇×(ramp(d)·A)`). Pass a JS SDF (`obstacle`) for the CPU engine, and/or a GLSL
+SDF (`obstacleGlsl`) for a GPU-native boundary:
 
 ```tsx
 const sphere = (x, y, z) => Math.hypot(x - Math.PI, y - Math.PI, z - Math.PI) - 1.2;
-<HelixParticles {...presets.nebula} count={60000} obstacle={sphere} />
+const sphereGlsl = `float helixSdf(vec3 p){ return length(p - vec3(3.14159)) - 1.2; }`;
+<HelixParticles {...presets.nebula} count={200000} obstacle={sphere} obstacleGlsl={sphereGlsl} />
 ```
 
 **Presets** — `import { presets } from "helix-noise-r3f"`: `cirrus`, `kelp`, `nebula`, `smoke`

@@ -33,11 +33,18 @@ export interface HelixParticlesProps extends HelixNoiseOptions {
   lifespan?: [number, number];
   /**
    * Constrain the flow with an obstacle: a signed-distance function (> 0 outside, < 0 inside).
-   * The field slides along the wall (free-slip) and stays exactly divergence-free. Forces the
-   * **CPU** engine — the GPU path has no boundary support yet, so setting this with `mode="gpu"`
-   * falls back to CPU with a one-time notice.
+   * The field slides along the wall (free-slip) and stays exactly divergence-free. This runs on
+   * the **CPU** engine (via the core `withBoundary`). For the GPU engine, also pass
+   * {@link obstacleGlsl}; with only `obstacle` set, `mode="gpu"` falls back to CPU.
    */
   obstacle?: Sdf;
+  /**
+   * A GLSL snippet defining `float helixSdf(vec3 p)` (> 0 outside the obstacle), enabling a
+   * **GPU-native** boundary — the same `∇×(ramp(d)·A)` free-slip flow, evaluated on-device from
+   * the emitted vector potential. Provide the matching JS {@link obstacle} too if you want the
+   * CPU fallback to stay bounded.
+   */
+  obstacleGlsl?: string;
   /** Width of the obstacle's influence band (see `withBoundary`). Default 1. */
   boundaryThickness?: number;
   /** Called once with the resolved field (imperative escape hatch). */
@@ -84,6 +91,7 @@ export function HelixParticles(props: HelixParticlesProps): JSX.Element {
     mode = "auto",
     lifespan = [1, 3],
     obstacle,
+    obstacleGlsl,
     boundaryThickness = 1,
     onField,
     ...fieldOptions
@@ -108,33 +116,41 @@ export function HelixParticles(props: HelixParticlesProps): JSX.Element {
     onFieldRef.current?.(field);
   }, [field]);
 
-  // Resolve the engine. The GPU path needs WebGL2 float render targets and has no obstacle
-  // support; when either blocks it (or GPU init later throws) we fall back to CPU with a
-  // one-time notice — never silently.
-  const wantGpu = !obstacle && (mode === "gpu" || (mode === "auto" && count > 50000));
+  // Resolve the engine. The GPU path needs WebGL2 float render targets; it can honour an
+  // obstacle only via a GLSL SDF (`obstacleGlsl`). A JS-only `obstacle` forces the CPU engine.
+  // Any block (or a GPU-init failure) falls back to CPU with a one-time notice — never silently.
+  const obstacleForcesCpu = !!obstacle && !obstacleGlsl;
+  const wantGpu = !obstacleForcesCpu && (mode === "gpu" || (mode === "auto" && count > 50000));
   const gpuCapable = wantGpu && supportsGpuPath(gl);
   const [gpuFailed, setGpuFailed] = useState(false);
   const useGpu = gpuCapable && !gpuFailed;
 
   useEffect(() => {
     if (gpuFallbackNotified) return;
-    if (obstacle && mode === "gpu") {
+    if (obstacleForcesCpu && mode === "gpu") {
       gpuFallbackNotified = true;
       // eslint-disable-next-line no-console
-      console.info("[helix-noise-r3f] obstacle has no GPU path yet; rendering on the CPU.");
+      console.info("[helix-noise-r3f] obstacle needs a GLSL SDF (obstacleGlsl) for the GPU; rendering on the CPU.");
     } else if (wantGpu && !gpuCapable) {
       gpuFallbackNotified = true;
+      const unbounded = obstacleGlsl && !obstacle ? " (CPU fallback has no JS obstacle → flow is unbounded)" : "";
       // eslint-disable-next-line no-console
       console.info(
-        `[helix-noise-r3f] GPU path requested but WebGL2 float render targets are unavailable; ` +
-          `rendering ${count} particles on the CPU.`,
+        `[helix-noise-r3f] GPU path unavailable (no WebGL2 float render targets); ` +
+          `rendering ${count} particles on the CPU${unbounded}.`,
       );
     }
-  }, [wantGpu, gpuCapable, count, obstacle, mode]);
+  }, [wantGpu, gpuCapable, count, obstacleForcesCpu, obstacleGlsl, obstacle, mode]);
 
   const shared = { count, bounds, speed, pointSize, colorBy, lifespan };
   return useGpu ? (
-    <GpuParticles field={field} {...shared} onFailure={() => setGpuFailed(true)} />
+    <GpuParticles
+      field={field}
+      {...shared}
+      obstacleGlsl={obstacleGlsl}
+      thickness={boundaryThickness}
+      onFailure={() => setGpuFailed(true)}
+    />
   ) : (
     <CpuParticles field={cpuField} {...shared} />
   );
@@ -149,7 +165,12 @@ interface SharedProps {
   lifespan: [number, number];
 }
 type CpuProps = SharedProps & { field: SamplerField };
-type GpuProps = SharedProps & { field: Field; onFailure: () => void };
+type GpuProps = SharedProps & {
+  field: Field;
+  obstacleGlsl?: string;
+  thickness: number;
+  onFailure: () => void;
+};
 
 /** The GPU engine: advect on-device via the injected `field.glsl()` (see {@link GpuParticleSim}). */
 function GpuParticles({
@@ -160,14 +181,16 @@ function GpuParticles({
   pointSize,
   colorBy,
   lifespan,
+  obstacleGlsl,
+  thickness,
   onFailure,
 }: GpuProps): JSX.Element | null {
   const gl = useThree((s) => s.gl);
-  const optsKey = `${count}|${bounds.join(",")}|${speed}|${pointSize}|${String(colorBy)}|${lifespan.join(",")}`;
+  const optsKey = `${count}|${bounds.join(",")}|${speed}|${pointSize}|${String(colorBy)}|${lifespan.join(",")}|${thickness}|${obstacleGlsl ?? ""}`;
 
   const sim = useMemo(() => {
     try {
-      return new GpuParticleSim(gl, field, { count, bounds, speed, pointSize, colorBy, lifespan });
+      return new GpuParticleSim(gl, field, { count, bounds, speed, pointSize, colorBy, lifespan, obstacleGlsl, thickness });
     } catch (e) {
       // eslint-disable-next-line no-console
       console.warn("[helix-noise-r3f] GPU init failed; falling back to CPU.", e);
