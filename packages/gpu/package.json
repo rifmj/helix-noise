@@ -1,0 +1,66 @@
+{
+  "name": "helix-noise-gpu",
+  "version": "0.1.0",
+  "description": "Framework-agnostic WebGL2 particle engine for Helix Noise — advect millions of particles on the GPU via transform feedback, driven by the injected field.glsl(). No three.js, no React.",
+  "keywords": [
+    "helix-noise",
+    "webgl2",
+    "gpgpu",
+    "transform-feedback",
+    "particles",
+    "flow-field",
+    "curl-noise",
+    "divergence-free",
+    "vfx",
+    "generative-art"
+  ],
+  "author": "Rifat Jumagulov <jum.rifm@gmail.com>",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "sideEffects": false,
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test test/*.test.ts",
+    "check": "npm run typecheck && npm run test",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "helix-noise": "^1.0.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "tsup": "^8.0.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.4.0"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rifmj/helix-noise.git",
+    "directory": "packages/gpu"
+  },
+  "homepage": "https://github.com/rifmj/helix-noise#readme",
+  "bugs": {
+    "url": "https://github.com/rifmj/helix-noise/issues"
+  }
+}

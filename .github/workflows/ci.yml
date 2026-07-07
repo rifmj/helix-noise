@@ -111,6 +111,28 @@ jobs:
       - run: npm test
       - run: npm run build
 
+  gpu:
+    name: gpu engine (node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [18, 20, 22]
+    defaults:
+      run:
+        working-directory: packages/gpu
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      # Same policy as r3f: no lockfile committed (0.1.0) → npm install. Depends on the published
+      # helix-noise (^1.0.2) from the registry. Tests are GL-free (shader text, camera, init,
+      # calibration); the WebGL2 runtime is verified in-browser (packages/gpu/example).
+      - run: npm install
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
   parity-fixture:
     name: Fixture is in sync (no drift)
     runs-on: ubuntu-latest

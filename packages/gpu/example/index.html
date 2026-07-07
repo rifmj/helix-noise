@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>helix-noise-gpu — framework-agnostic WebGL2 particles</title>
+<style>
+  html,body{margin:0;background:#070a0e;color:#cdd6dd;font-family:system-ui,sans-serif}
+  .wrap{max-width:980px;margin:0 auto;padding:22px 16px}
+  h1{font-size:19px;font-weight:600;margin:0 0 6px}
+  h1 code{color:#f4a13c}
+  p{color:#8a97a2;font-size:13.5px;line-height:1.6;margin:0 0 14px}
+  p b{color:#cdd6dd;font-weight:500}
+  code{font-family:ui-monospace,Menlo,monospace;color:#f4a13c;font-size:12.5px}
+  #stage{position:relative;width:100%;aspect-ratio:16/9;border:1px solid rgba(150,180,200,.15);
+    border-radius:10px;overflow:hidden;background:#070a0e;cursor:grab;touch-action:none}
+  #stage.drag{cursor:grabbing}
+  canvas{display:block;width:100%;height:100%}
+  .badge{position:absolute;top:10px;left:12px;font-family:ui-monospace,monospace;font-size:10.5px;
+    letter-spacing:.12em;text-transform:uppercase;color:#93a3b0;background:rgba(7,10,14,.55);
+    border:1px solid rgba(150,180,200,.14);border-radius:6px;padding:4px 8px;pointer-events:none}
+  .fps{position:absolute;top:10px;right:12px;font-family:ui-monospace,monospace;font-size:11px;color:#93a3b0;
+    background:rgba(7,10,14,.55);border:1px solid rgba(150,180,200,.14);border-radius:6px;padding:5px 9px;
+    text-align:right;line-height:1.5;pointer-events:none}
+  .fps b{font-weight:400;color:#2fd6bf}
+  .row{display:flex;flex-wrap:wrap;gap:14px;align-items:center;margin-top:12px;font-family:ui-monospace,monospace;font-size:12px;color:#93a3b0}
+  .row label{display:flex;align-items:center;gap:8px}
+  input[type=range]{width:104px}
+  select{font-family:ui-monospace,monospace;font-size:12px;color:#cdd6dd;background:#0c1016;
+    border:1px solid rgba(150,180,200,.22);border-radius:7px;padding:5px 8px}
+  button{font-family:ui-monospace,monospace;font-size:11.5px;color:#cdd6dd;background:#0c1016;
+    border:1px solid rgba(150,180,200,.22);border-radius:7px;padding:6px 11px;cursor:pointer}
+  button:hover{border-color:#38d9d1}
+  .note{margin-top:12px;font-size:12px;color:#5d6b77;font-family:ui-monospace,monospace}
+</style>
+<!-- No bundler: map the bare specifiers to the built ESM (core from node_modules, this package from dist). -->
+<script type="importmap">
+{
+  "imports": {
+    "helix-noise": "../node_modules/helix-noise/dist/helix-noise.js",
+    "helix-noise-gpu": "../dist/index.js"
+  }
+}
+</script>
+</head>
+<body>
+<div class="wrap">
+  <h1>A million particles — <code>createParticleSystem(gl, field)</code></h1>
+  <p>The same GPU transform-feedback advection as the core's <code>million.html</code>, now a
+    <b>framework-agnostic package</b>: hand it any <code>WebGL2RenderingContext</code> and a
+    <code>helix-noise</code> field and it advects + renders entirely on the GPU — <b>no three.js,
+    no React</b>. Colour is local relative helicity
+    (<span style="color:#2fd6bf">teal right-handed</span> /
+    <span style="color:#f4a13c">amber left-handed</span>). Drag to orbit, scroll to zoom.</p>
+  <div id="stage">
+    <canvas id="cv"></canvas>
+    <div class="badge">helix-noise-gpu · transform feedback · 0 cpu/frame</div>
+    <div class="fps" id="fps">—</div>
+  </div>
+  <div class="row">
+    <label>particles <select id="count">
+      <option value="250000">250 k</option>
+      <option value="1000000" selected>1 M</option>
+      <option value="2000000">2 M</option>
+    </select></label>
+    <label>helicity <input id="heli" type="range" min="-1" max="1" step="0.05" value="0.8"><span id="v-heli">+0.80</span></label>
+    <label>coherence <input id="coh" type="range" min="0" max="1" step="0.05" value="0.65"><span id="v-coh">65%</span></label>
+    <label>slope <input id="slope" type="range" min="1" max="3" step="0.1" value="1.7"><span id="v-slope">1.7</span></label>
+    <button id="reseed">↻ seed</button>
+  </div>
+  <div class="note" id="note">starting…</div>
+</div>
+
+<script type="module">
+import { create } from "helix-noise";
+import { createParticleSystem, version } from "helix-noise-gpu";
+
+const $ = (id) => document.getElementById(id);
+const cv = $("cv"), stage = $("stage");
+const gl = cv.getContext("webgl2", { antialias: false, alpha: false });
+
+// Expose a little state so an automated check (or the console) can read health without a screenshot.
+const health = { version, webgl2: !!gl, count: 0, fps: 0, frames: 0, glError: 0, error: null };
+window.__helix = health;
+
+if (!gl) {
+  $("note").textContent = "WebGL2 is not available in this browser.";
+  health.error = "no-webgl2";
+} else {
+  const params = { count: 1_000_000, heli: 0.8, coh: 0.65, slope: 1.7, seed: 9 };
+  let system = null;
+
+  const buildField = () => create({
+    modes: 40, slope: params.slope, helicity: params.heli,
+    coherence: params.coh, seed: params.seed, tileable: true,
+  });
+
+  function rebuild() {
+    if (system) system.dispose();
+    system = createParticleSystem(gl, buildField(), { count: params.count, speed: 0.55 });
+    system.start();
+    health.count = params.count;
+    $("note").textContent =
+      `helix-noise-gpu v${version} · ${(params.count / 1e6).toFixed(2)} M particles advected + coloured entirely on the GPU · seed ${params.seed}`;
+  }
+
+  // DPR-aware backing size.
+  function resize() {
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    cv.width = Math.max(1, Math.round(cv.clientWidth * dpr));
+    cv.height = Math.max(1, Math.round(cv.clientHeight * dpr));
+  }
+  resize();
+  window.addEventListener("resize", resize);
+
+  // FPS meter + GL-error watch, independent of the library's internal loop.
+  let last = 0, ema = 0;
+  function tick(t) {
+    const dt = last ? (t - last) * 0.001 : 0.016; last = t;
+    ema = ema ? ema * 0.95 + dt * 0.05 : dt;
+    health.fps = Math.round(1 / ema);
+    health.frames++;
+    if (health.frames % 30 === 0) {
+      const e = gl.getError();
+      if (e !== gl.NO_ERROR) health.glError = e;
+    }
+    $("fps").innerHTML = `${(params.count / 1e6).toFixed(2)}M particles<br><b>${health.fps} fps</b>`;
+    requestAnimationFrame(tick);
+  }
+
+  const fmtSigned = (v) => (v > 0 ? "+" : "") + v.toFixed(2);
+  function bindField(id, key, fmt) {
+    $(id).addEventListener("input", (e) => { params[key] = parseFloat(e.target.value); $("v-" + id).textContent = fmt(params[key]); });
+    $(id).addEventListener("change", () => system && system.setField(buildField()));
+  }
+  bindField("heli", "heli", fmtSigned);
+  bindField("coh", "coh", (v) => Math.round(v * 100) + "%");
+  bindField("slope", "slope", (v) => v.toFixed(1));
+  $("count").addEventListener("change", (e) => { params.count = parseInt(e.target.value, 10); rebuild(); });
+  $("reseed").addEventListener("click", () => { params.seed = (params.seed * 1103515245 + 12345) >>> 0; if (system) system.setField(buildField()); });
+
+  // simple grab/drag affordance class (the library owns the actual orbit)
+  stage.addEventListener("pointerdown", () => stage.classList.add("drag"));
+  addEventListener("pointerup", () => stage.classList.remove("drag"));
+
+  try {
+    rebuild();
+    requestAnimationFrame(tick);
+    console.log(`helix-noise-gpu v${version} ready — ${params.count} particles on WebGL2`);
+  } catch (err) {
+    health.error = String(err && err.message || err);
+    $("note").textContent = "Error: " + health.error;
+    console.error(err);
+  }
+}
+</script>
+</body>
+</html>

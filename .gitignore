@@ -13,6 +13,11 @@ docs/.vitepress/dist/
 packages/r3f/dist/
 packages/r3f/package-lock.json
 
+# packages/gpu: framework-agnostic WebGL2 lib — same policy as r3f (dist published via
+# prepublishOnly, lockfile omitted at 0.1.0; CI uses npm install; see ci.yml).
+packages/gpu/dist/
+packages/gpu/package-lock.json
+
 # Python (packages/python, packages/shaders)
 __pycache__/
 *.pyc

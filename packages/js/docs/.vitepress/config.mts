@@ -27,6 +27,7 @@ export default defineConfig({
       { text: "Rust", link: "/rust" },
       { text: "Shaders", link: "/shaders" },
       { text: "React (r3f)", link: "/r3f" },
+      { text: "WebGL2 (gpu)", link: "/gpu" },
       { text: "GitHub", link: "https://github.com/rifmj/helix-noise" },
     ],
 
@@ -58,6 +59,7 @@ export default defineConfig({
         text: "Integrations",
         items: [
           { text: "React — react-three-fiber", link: "/r3f" },
+          { text: "WebGL2 particles — helix-noise-gpu", link: "/gpu" },
         ],
       },
     ],

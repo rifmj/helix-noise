@@ -27,6 +27,8 @@ algorithm once and re-verify every language in one CI run.
 | [`packages/rust`](packages/rust) | Rust | crates.io `helix-noise` | `0.1.0` | spectral **+ atom** engines + boundary (wraps either) + GLSL; zero runtime deps, WASM-friendly |
 | [`packages/wasm`](packages/wasm) | Rust → WebAssembly | npm `helix-noise-wasm` | `0.1.0` | `wasm-bindgen` build of the Rust core; both engines, native-speed sampling in the browser |
 | [`packages/shaders`](packages/shaders) | GLSL · HLSL · WGSL · Godot | — | `0.1.0` | code generator + ready-to-paste shaders for Shadertoy / Unity / Unreal / Godot / WebGPU |
+| [`packages/r3f`](packages/r3f) | TypeScript / React | npm `helix-noise-r3f` | `0.1.0` | react-three-fiber components (declarative particles + material); CPU + GPU engines, SDF obstacles |
+| [`packages/gpu`](packages/gpu) | TypeScript / WebGL2 | npm `helix-noise-gpu` | `0.1.0` | framework-agnostic GPU particle engine (transform-feedback advection via injected `field.glsl()`, ~10⁶ particles); no three.js/React |
 
 The project's front-door site lives in [`site/`](site) (the landing) plus `packages/js/docs` (the VitePress
 reference); the `Deploy Site` workflow assembles them into one GitHub Pages site — landing at `/`, docs at `/docs`.
@@ -34,7 +36,9 @@ Rendered reference docs cover **every** platform:
 [JavaScript](https://rifmj.github.io/helix-noise/docs/API) ·
 [Python](https://rifmj.github.io/helix-noise/docs/python) ·
 [Rust](https://rifmj.github.io/helix-noise/docs/rust) ·
-[Shaders](https://rifmj.github.io/helix-noise/docs/shaders). Each package also keeps its own `CHANGELOG.md`.
+[Shaders](https://rifmj.github.io/helix-noise/docs/shaders) ·
+[React (r3f)](https://rifmj.github.io/helix-noise/docs/r3f) ·
+[WebGL2 (gpu)](https://rifmj.github.io/helix-noise/docs/gpu). Each package also keeps its own `CHANGELOG.md`.
 
 Both engines — the **spectral** field and the sparse **atom** field — now ship in JS and Rust (and,
 via `packages/wasm`, in the browser as WebAssembly); Python and the shader generator scope v0.1 to
@@ -75,6 +79,9 @@ cd packages/wasm && wasm-pack build --target web --out-dir pkg && node tests/par
 
 # Shader generator
 cd packages/shaders && python3 tests/test_shaders.py
+
+# WebGL2 particle engine (framework-agnostic)
+cd packages/gpu && npm install && npm test && npm run build
 ```
 
 ## License
