@@ -24,7 +24,8 @@ algorithm once and re-verify every language in one CI run.
 |---|---|---|---|---|
 | [`packages/js`](packages/js) | TypeScript / JS | npm `helix-noise` | `1.0.2` | reference implementation (spectral + atom engines, boundaries, GLSL, WASM batch kernel) |
 | [`packages/python`](packages/python) | Python 3 + numpy | PyPI `helix-noise` | `0.1.0` | spectral engine + boundary + GLSL; vectorized `sample_many` |
-| [`packages/rust`](packages/rust) | Rust | crates.io `helix-noise` | `0.1.0` | spectral engine + boundary + GLSL; zero runtime deps, WASM-friendly |
+| [`packages/rust`](packages/rust) | Rust | crates.io `helix-noise` | `0.1.0` | spectral **+ atom** engines + boundary (wraps either) + GLSL; zero runtime deps, WASM-friendly |
+| [`packages/wasm`](packages/wasm) | Rust → WebAssembly | npm `helix-noise-wasm` | `0.1.0` | `wasm-bindgen` build of the Rust core; both engines, native-speed sampling in the browser |
 | [`packages/shaders`](packages/shaders) | GLSL · HLSL · WGSL · Godot | — | `0.1.0` | code generator + ready-to-paste shaders for Shadertoy / Unity / Unreal / Godot / WebGPU |
 
 The project's front-door site lives in [`site/`](site) (the landing) plus `packages/js/docs` (the VitePress
@@ -35,8 +36,9 @@ Rendered reference docs cover **every** platform:
 [Rust](https://rifmj.github.io/helix-noise/docs/rust) ·
 [Shaders](https://rifmj.github.io/helix-noise/docs/shaders). Each package also keeps its own `CHANGELOG.md`.
 
-The **atom engine** currently lives only in `packages/js`; the native ports scope v0.1 to the spectral
-engine and document it as a follow-up.
+Both engines — the **spectral** field and the sparse **atom** field — now ship in JS and Rust (and,
+via `packages/wasm`, in the browser as WebAssembly); Python and the shader generator scope v0.1 to
+the spectral engine and document the atom engine as a follow-up.
 
 ## Parity — the shared contract
 
@@ -67,6 +69,9 @@ cd packages/python && python3 tests/test_parity.py
 
 # Rust port
 cd packages/rust && cargo test
+
+# WASM artifact (Rust → wasm-bindgen)
+cd packages/wasm && wasm-pack build --target web --out-dir pkg && node tests/parity.test.mjs
 
 # Shader generator
 cd packages/shaders && python3 tests/test_shaders.py

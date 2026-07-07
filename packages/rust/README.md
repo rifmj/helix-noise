@@ -83,6 +83,21 @@ let bounded = field.with_boundary(sphere, BoundaryOptions { thickness: 0.9, ..De
 let u = bounded.sample(2.0, 2.0, 2.0, 0.0);
 ```
 
+### Atom engine (sparse wavelets)
+
+An alternative engine built from compactly-supported helical wavelets ("atoms") drawn from a
+spatial hash — infinite, grid-free, amortized `O(1)` per sample, and locally art-directable. It
+shares the sampling surface (`sample`, `sample_uw`, `sample_ua`, `vorticity`, `bake3d`, …) and can
+be wrapped by the same `with_boundary`.
+
+```rust
+use helix_noise::{HelixAtoms, AtomOptions};
+let atoms = HelixAtoms::new(AtomOptions { octaves: 4, helicity: 0.7, seed: 42, ..Default::default() });
+let u = atoms.sample(1.0, 2.0, 3.0);            // velocity at a point
+let (u, w) = atoms.sample_uw(1.0, 2.0, 3.0, 0.5); // velocity + analytic vorticity, animated
+# let _ = (u, w);
+```
+
 ### Emit a GPU shader
 
 ```rust
@@ -181,8 +196,14 @@ cargo test
 
 ## Scope
 
-v0.1 covers the spectral engine, the free-slip SDF boundary, and the GLSL emitter. The
-particle "atom" engine of the JS reference is a documented follow-up and is not yet ported.
+Covers both engines — the spectral [`HelixField`] and the sparse-atom [`HelixAtoms`] — plus the
+free-slip SDF boundary (`with_boundary` wraps either engine via the [`VectorPotential`] trait) and
+the GLSL emitter. The atom-engine GLSL emitter of the JS reference is a documented follow-up and
+is not yet ported.
+
+[`HelixField`]: https://docs.rs/helix-noise/latest/helix_noise/struct.HelixField.html
+[`HelixAtoms`]: https://docs.rs/helix-noise/latest/helix_noise/struct.HelixAtoms.html
+[`VectorPotential`]: https://docs.rs/helix-noise/latest/helix_noise/trait.VectorPotential.html
 
 ## Changelog
 

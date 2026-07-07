@@ -9,7 +9,7 @@ use crate::rng::Mulberry32;
 /// Orthonormal transverse frame `(e1, e2)` perpendicular to the unit vector `(dx, dy, dz)`.
 ///
 /// Returns `[e1x, e1y, e1z, e2x, e2y, e2z]`. Cross-product order matches the reference.
-fn frame(dx: f64, dy: f64, dz: f64) -> [f64; 6] {
+pub(crate) fn frame(dx: f64, dy: f64, dz: f64) -> [f64; 6] {
     let (rx, ry, rz) = if dz.abs() < 0.9 {
         (0.0, 0.0, 1.0)
     } else {
@@ -57,7 +57,7 @@ fn rot_from_uniforms(u1: f64, u2: f64, u3: f64) -> [f64; 9] {
 
 /// 3-argument hypot matching JS `Math.hypot(a, b, c)` semantics closely enough for parity.
 #[inline]
-fn hypot3(a: f64, b: f64, c: f64) -> f64 {
+pub(crate) fn hypot3(a: f64, b: f64, c: f64) -> f64 {
     // JS Math.hypot is scaling-robust; for the magnitudes here a direct sqrt agrees to ULP.
     (a * a + b * b + c * c).sqrt()
 }
@@ -546,7 +546,11 @@ impl HelixField {
     }
 
     /// Wrap this field with a free-slip SDF obstacle boundary.
-    pub fn with_boundary<S>(&self, sdf: S, opts: crate::boundary::BoundaryOptions) -> BoundedField<'_, S>
+    pub fn with_boundary<S>(
+        &self,
+        sdf: S,
+        opts: crate::boundary::BoundaryOptions,
+    ) -> BoundedField<'_, HelixField, S>
     where
         S: Fn(f64, f64, f64) -> f64,
     {
@@ -556,5 +560,11 @@ impl HelixField {
     /// Emit self-contained GLSL (ES 3.00 / WebGL2) evaluating this exact field on the GPU.
     pub fn glsl(&self, opts: &GlslOptions) -> String {
         to_glsl(self, opts)
+    }
+}
+
+impl crate::boundary::VectorPotential for HelixField {
+    fn velocity_and_potential(&self, x: f64, y: f64, z: f64, t: f64) -> ([f64; 3], [f64; 3]) {
+        self.sample_ua(x, y, z, t)
     }
 }

@@ -57,6 +57,26 @@ jobs:
       - run: cargo test
       - run: cargo build --release
 
+  wasm:
+    name: WASM artifact (Rust → wasm-bindgen)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/wasm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+      - run: wasm-pack build --target web --out-dir pkg
+      - name: WASM numerical parity vs the JS reference
+        run: node tests/parity.test.mjs
+
   shaders:
     name: Shader generator
     runs-on: ubuntu-latest
@@ -69,6 +89,27 @@ jobs:
         with:
           python-version: "3.13"
       - run: python tests/test_shaders.py
+
+  r3f:
+    name: r3f adapter (node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [18, 20, 22]
+    defaults:
+      run:
+        working-directory: packages/r3f
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      # No lockfile yet (0.1.0) → npm install, not npm ci. Depends on packages/js via
+      # file:../js; packages/js/dist is committed, so no core build step is needed.
+      - run: npm install
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
 
   parity-fixture:
     name: Fixture is in sync (no drift)
@@ -90,7 +131,8 @@ jobs:
           fail=0
           for f in packages/python/tests/parity_fixture.json \
                    packages/rust/tests/parity_fixture.json \
-                   packages/shaders/tests/parity_fixture.json; do
+                   packages/shaders/tests/parity_fixture.json \
+                   packages/wasm/tests/parity_fixture.json; do
             if ! diff -q spec/parity_fixture.json "$f" >/dev/null; then
               echo "::error file=$f::copy differs from spec/parity_fixture.json — re-sync it"
               fail=1

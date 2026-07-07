@@ -3,6 +3,29 @@
 All notable changes to this project are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.2.0] - 2026-07-07
+
+Adds the second engine and generalizes the boundary.
+
+- **Atom engine** (`HelixAtoms` / `AtomOptions`): the sparse-wavelet field of the JS reference,
+  ported at full numerical parity (bit-identical spatial hash and per-atom PRNG draw order). A
+  divergence-free sum of compactly-supported helical wavelets on a spatial hash — infinite,
+  grid-free, amortized `O(1)` per sample, with per-region helicity/gain. Shares the sampling
+  surface (`sample`, `sample_uw`, `sample_ua`, `vorticity`, `helicity_density`, `potential`,
+  `sample_many`, `bake3d`/`bake2d`/`bake_potential3d`, `relative_helicity`) and closed-form
+  vorticity/potential. The atom-engine GLSL emitter remains a follow-up.
+- **`VectorPotential` trait**: `with_boundary` now wraps *either* engine. Any field exposing its
+  exact vector potential gets the free-slip SDF obstacle for free.
+- Parity fixtures extended with three atom configs; the `atom_configs_match_fixture` test asserts
+  the port reproduces the JS reference within `1e-9`.
+
+### Breaking
+
+- `BoundedField<'f, S>` is now `BoundedField<'f, B, S>` (generic over the wrapped engine `B`).
+  `HelixField::with_boundary` returns `BoundedField<'_, HelixField, S>`. Code that named the type
+  parameters explicitly needs the extra argument; typical `let bounded = field.with_boundary(...)`
+  usage is unaffected.
+
 ## [0.1.0] - 2026-07-07
 
 Initial release of the Rust port of Helix Noise.

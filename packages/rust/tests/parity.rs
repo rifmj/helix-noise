@@ -4,7 +4,7 @@
 //! relative helicity, and bake sums match the reference within tolerance. Also checks that the
 //! GLSL emitter for config A reproduces the reference shader's float constants.
 
-use helix_noise::{BoundaryOptions, GlslOptions, HelixField, HelixOptions, Layout};
+use helix_noise::{AtomOptions, BoundaryOptions, GlslOptions, HelixAtoms, HelixField, HelixOptions, Layout};
 use serde_json::Value;
 
 const FIXTURE: &str = include_str!("parity_fixture.json");
@@ -185,6 +185,111 @@ fn boundary_matches_fixture() {
             assert_close(w[c], ew[c], &format!("boundary_F.sample[{si}].w[{c}]"));
             assert_close(pot[c], ep[c], &format!("boundary_F.sample[{si}].pot[{c}]"));
         }
+    }
+}
+
+fn build_atoms_from_config(cfg: &Value) -> HelixAtoms {
+    let mut o = AtomOptions::default();
+    let m = cfg.as_object().unwrap();
+    if let Some(v) = m.get("octaves") {
+        o.octaves = v.as_u64().unwrap() as usize;
+    }
+    if let Some(v) = m.get("atomsPerCell") {
+        o.atoms_per_cell = v.as_u64().unwrap() as usize;
+    }
+    if let Some(v) = m.get("radius") {
+        o.radius = v.as_f64().unwrap();
+    }
+    if let Some(v) = m.get("cyclesPerAtom") {
+        o.cycles_per_atom = v.as_f64().unwrap();
+    }
+    if let Some(v) = m.get("slope") {
+        o.slope = v.as_f64().unwrap();
+    }
+    if let Some(v) = m.get("helicity") {
+        o.helicity = v.as_f64().unwrap();
+    }
+    if let Some(v) = m.get("amplitude") {
+        o.amplitude = v.as_f64().unwrap();
+    }
+    if let Some(v) = m.get("seed") {
+        o.seed = v.as_u64().unwrap() as u32;
+    }
+    if let Some(v) = m.get("churn") {
+        o.churn = v.as_f64().unwrap();
+    }
+    if let Some(v) = m.get("anisotropy") {
+        o.anisotropy = v.as_f64().unwrap();
+    }
+    if let Some(v) = m.get("axis") {
+        let a = arr(v);
+        o.axis = [a[0], a[1], a[2]];
+    }
+    HelixAtoms::new(o)
+}
+
+#[test]
+fn atom_configs_match_fixture() {
+    let root: Value = serde_json::from_str(FIXTURE).unwrap();
+    for name in ["G_atoms_default", "H_atoms_helical", "I_atoms_aniso"] {
+        let entry = &root[name];
+        let f = build_atoms_from_config(&entry["config"]);
+
+        // Derived constants: the RMS-normalization scale and the octave-0 base wavenumber.
+        assert_close(f.scale(), entry["scale"].as_f64().unwrap(), &format!("{name}.scale"));
+        assert_close(f.k_base(), entry["kBase"].as_f64().unwrap(), &format!("{name}.kBase"));
+
+        // Samples: u / w (analytic vorticity) / A (analytic potential).
+        for (si, s) in entry["samples"].as_array().unwrap().iter().enumerate() {
+            let x = s["x"].as_f64().unwrap();
+            let y = s["y"].as_f64().unwrap();
+            let z = s["z"].as_f64().unwrap();
+            let t = s["t"].as_f64().unwrap();
+            let (u, w) = f.sample_uw(x, y, z, t);
+            let (_, a) = f.sample_ua(x, y, z, t);
+            let eu = arr(&s["u"]);
+            let ew = arr(&s["w"]);
+            let ea = arr(&s["A"]);
+            for c in 0..3 {
+                assert_close(u[c], eu[c], &format!("{name}.sample[{si}].u[{c}]"));
+                assert_close(w[c], ew[c], &format!("{name}.sample[{si}].w[{c}]"));
+                assert_close(a[c], ea[c], &format!("{name}.sample[{si}].A[{c}]"));
+            }
+        }
+
+        // Relative helicity (fixture uses ng = 8).
+        let rh = f.relative_helicity(8);
+        assert_close(rh, entry["relativeHelicity"].as_f64().unwrap(), &format!("{name}.relativeHelicity"));
+
+        // Bake sum: sum of all bake3D(4, 0) floats (f32 accumulation -> looser tol).
+        let bake = f.bake3d(4, 0.0);
+        let sum: f64 = bake.iter().map(|&x| x as f64).sum();
+        let exp_sum = entry["bake3d4_sum"].as_f64().unwrap();
+        assert!(
+            close(sum, exp_sum, 1e-7, 1e-7),
+            "{name}.bake3d4_sum: got {sum}, expected {exp_sum}"
+        );
+    }
+}
+
+#[test]
+fn atoms_accept_boundary() {
+    // The generalized boundary wraps the atom engine too: zero inside the obstacle, exactly the
+    // base field far outside the influence band.
+    let f = HelixAtoms::new(AtomOptions { seed: 3, ..Default::default() });
+    let sphere = |x: f64, y: f64, z: f64| {
+        ((x - 3.0).powi(2) + (y - 3.0).powi(2) + (z - 3.0).powi(2)).sqrt() - 1.2
+    };
+    let bounded = f.with_boundary(sphere, BoundaryOptions { thickness: 0.9, ..Default::default() });
+
+    let inside = bounded.sample(3.0, 3.0, 3.0, 0.0);
+    assert_eq!(inside, [0.0, 0.0, 0.0], "atom flow must vanish inside the obstacle");
+
+    let far = (10.0, 10.0, 10.0);
+    let ub = bounded.sample(far.0, far.1, far.2, 0.0);
+    let uf = f.sample(far.0, far.1, far.2);
+    for c in 0..3 {
+        assert_close(ub[c], uf[c], &format!("bounded atom far-field[{c}]"));
     }
 }
 

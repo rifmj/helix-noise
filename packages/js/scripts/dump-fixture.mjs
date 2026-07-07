@@ -1,6 +1,6 @@
 // Dump a canonical parity fixture from the JS reference implementation.
 // Consumed by the Python / Rust / shader ports' tests to prove numerical parity.
-import { create } from "../dist/helix-noise.js";
+import { create, createAtoms } from "../dist/helix-noise.js";
 
 const CONFIGS = {
   A_default_small: { modes: 8, seed: 1 },
@@ -74,6 +74,40 @@ for (const [name, cfg] of Object.entries(CONFIGS)) {
     bsamples.push({ x, y, z, u: uw.slice(0, 3), w: uw.slice(3, 6), pot });
   }
   out.boundary_F = { base_config: { modes: 6, seed: 42, helicity: 0.8, coherence: 0.5, slope: 1.6, centers: 3 }, thickness: 0.9, fdStep: 1e-3, samples: bsamples };
+}
+
+// Atom-engine parity: the sparse-wavelet engine. Constant-parameter configs only (no callback
+// fields) so every port can reproduce them from options alone.
+{
+  const ATOM_CONFIGS = {
+    G_atoms_default: {},
+    H_atoms_helical: { octaves: 2, atomsPerCell: 4, helicity: 0.7, seed: 42, churn: 1 },
+    I_atoms_aniso: { octaves: 2, atomsPerCell: 3, anisotropy: -0.5, axis: [0, 0, 1], slope: 1.6, seed: 7 },
+  };
+  for (const [name, cfg] of Object.entries(ATOM_CONFIGS)) {
+    const f = createAtoms(cfg);
+    const samples = [];
+    for (const t of TIMES) {
+      for (const [x, y, z] of POINTS) {
+        const uw = [0, 0, 0, 0, 0, 0];
+        f.sampleUW(x, y, z, uw, t);
+        const ua = [0, 0, 0, 0, 0, 0];
+        f.sampleUA(x, y, z, ua, t);
+        samples.push({ x, y, z, t, u: uw.slice(0, 3), w: uw.slice(3, 6), A: ua.slice(3, 6) });
+      }
+    }
+    const bake = f.bake3D(4, 0);
+    let bsum = 0;
+    for (let i = 0; i < bake.data.length; i++) bsum += bake.data[i];
+    out[name] = {
+      config: cfg,
+      scale: f._scale,
+      kBase: f._kBase,
+      samples,
+      relativeHelicity: f.relativeHelicity(8),
+      bake3d4_sum: bsum,
+    };
+  }
 }
 
 process.stdout.write(JSON.stringify(out, null, 2));

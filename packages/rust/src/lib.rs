@@ -57,16 +57,19 @@
 //!
 //! ## Scope
 //!
-//! v0.1 covers the spectral engine, the free-slip SDF boundary, and the GLSL/shader emitter.
-//! The particle "atom" engine of the JS reference is a documented follow-up and not yet ported.
+//! Covers both engines — the spectral [`HelixField`] and the sparse-atom [`HelixAtoms`] — plus
+//! the free-slip SDF boundary (which wraps either) and the GLSL/shader emitter. The atom-engine
+//! GLSL emitter of the JS reference is a documented follow-up and not yet ported.
 
+mod atoms;
 mod boundary;
 mod constants;
 mod field;
 mod glsl;
 mod rng;
 
-pub use boundary::{BoundaryOptions, BoundedField};
+pub use atoms::{AtomOptions, HelixAtoms, ScalarField3};
+pub use boundary::{BoundaryOptions, BoundedField, VectorPotential};
 pub use constants::{ga, HelixOptions, Layout, SpectrumFn, TAU, VERSION};
 pub use field::{HelixField, ModeSnapshot};
 pub use glsl::GlslOptions;

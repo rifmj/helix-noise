@@ -6,7 +6,14 @@
 //! divergence-free by construction, tangent to the wall, zero inside, and identical to the base
 //! field beyond the influence band.
 
-use crate::field::HelixField;
+/// A divergence-free flow field that exposes its exact vector potential `A` — the one
+/// requirement for the free-slip boundary wrapper. Implemented by both engines
+/// ([`HelixField`](crate::HelixField) and [`HelixAtoms`](crate::HelixAtoms)), so any field can be
+/// wrapped with an obstacle.
+pub trait VectorPotential {
+    /// Velocity `u` and its analytic vector potential `A` at `(x, y, z, t)`: `(u, A)`.
+    fn velocity_and_potential(&self, x: f64, y: f64, z: f64, t: f64) -> ([f64; 3], [f64; 3]);
+}
 
 /// Options for [`HelixField::with_boundary`](crate::HelixField::with_boundary).
 pub struct BoundaryOptions {
@@ -51,23 +58,26 @@ fn dramp(x: f64) -> f64 {
     (15.0 / 8.0) * w * w
 }
 
-/// A base [`HelixField`] constrained by an SDF obstacle. Borrows the base field.
-pub struct BoundedField<'f, S>
+/// A base flow field constrained by an SDF obstacle. Borrows the base field, which may be either
+/// engine (anything implementing [`VectorPotential`]).
+pub struct BoundedField<'f, B, S>
 where
+    B: VectorPotential,
     S: Fn(f64, f64, f64) -> f64,
 {
-    base: &'f HelixField,
+    base: &'f B,
     sdf: S,
     th: f64,
     h: f64,
     grad: Option<Box<dyn Fn(f64, f64, f64) -> [f64; 3]>>,
 }
 
-impl<'f, S> BoundedField<'f, S>
+impl<'f, B, S> BoundedField<'f, B, S>
 where
+    B: VectorPotential,
     S: Fn(f64, f64, f64) -> f64,
 {
-    pub(crate) fn new(base: &'f HelixField, sdf: S, opts: BoundaryOptions) -> Self {
+    pub(crate) fn new(base: &'f B, sdf: S, opts: BoundaryOptions) -> Self {
         BoundedField {
             base,
             sdf,
@@ -83,7 +93,7 @@ where
         if d <= 0.0 {
             return [0.0, 0.0, 0.0];
         }
-        let (u_base, a) = self.base.sample_ua(x, y, z, t);
+        let (u_base, a) = self.base.velocity_and_potential(x, y, z, t);
         let q = d / self.th;
         if q >= 1.0 {
             return u_base;
@@ -151,7 +161,7 @@ where
         if d <= 0.0 {
             return [0.0, 0.0, 0.0];
         }
-        let (_, a) = self.base.sample_ua(x, y, z, t);
+        let (_, a) = self.base.velocity_and_potential(x, y, z, t);
         let r = ramp(d / self.th);
         [r * a[0], r * a[1], r * a[2]]
     }
