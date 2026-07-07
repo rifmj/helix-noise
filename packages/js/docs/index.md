@@ -15,7 +15,7 @@ hero:
       link: /API#getting-started
     - theme: alt
       text: View on GitHub
-      link: https://github.com/rifatjumagulov/helix-noise
+      link: https://github.com/rifmj/helix-noise
 
 features:
   - icon: 🌀

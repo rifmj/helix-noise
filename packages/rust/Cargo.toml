@@ -7,7 +7,7 @@ authors = ["Rifat Jumagulov"]
 description = "Divergence-free helical (Beltrami) spectral flow-field noise, evaluatable analytically at any point in space and time. Zero-dependency, WASM-friendly."
 keywords = ["noise", "procedural", "flow-field", "curl-noise", "graphics"]
 categories = ["graphics", "game-development", "mathematics"]
-repository = "https://github.com/rifat-j/helix-noise-rs"
+repository = "https://github.com/rifmj/helix-noise"
 readme = "README.md"
 
 [dependencies]

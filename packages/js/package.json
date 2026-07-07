@@ -71,11 +71,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/rifatjumagulov/helix-noise.git"
+    "url": "git+https://github.com/rifmj/helix-noise.git"
   },
-  "homepage": "https://github.com/rifatjumagulov/helix-noise#readme",
+  "homepage": "https://github.com/rifmj/helix-noise#readme",
   "bugs": {
-    "url": "https://github.com/rifatjumagulov/helix-noise/issues"
+    "url": "https://github.com/rifmj/helix-noise/issues"
   },
   "engines": {
     "node": ">=14"

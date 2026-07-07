@@ -46,11 +46,11 @@ export default defineConfig({
     search: { provider: "local" },
 
     socialLinks: [
-      { icon: "github", link: "https://github.com/rifatjumagulov/helix-noise" },
+      { icon: "github", link: "https://github.com/rifmj/helix-noise" },
     ],
 
     editLink: {
-      pattern: "https://github.com/rifatjumagulov/helix-noise/edit/main/docs/:path",
+      pattern: "https://github.com/rifmj/helix-noise/edit/main/docs/:path",
       text: "Edit this page on GitHub",
     },
 

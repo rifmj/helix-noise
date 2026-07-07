@@ -13,6 +13,10 @@ authors = [{ name = "Rifat Jumagulov" }]
 keywords = ["noise", "flow-field", "curl-noise", "procedural", "graphics", "vector-field", "glsl"]
 dependencies = ["numpy>=1.20"]
 
+[project.urls]
+Homepage = "https://github.com/rifmj/helix-noise"
+Repository = "https://github.com/rifmj/helix-noise"
+
 [project.optional-dependencies]
 test = ["pytest"]
 

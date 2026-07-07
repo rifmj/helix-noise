@@ -2,7 +2,7 @@
 
 A practical reference for developers. It covers every public function, option, and method.
 For the concepts and the visual tour, see the
-[README](https://github.com/rifatjumagulov/helix-noise#readme).
+[README](https://github.com/rifmj/helix-noise#readme).
 
 **Mental model in one line:** you create a *field*, then ask it for a velocity at any point in
 space (and, optionally, at any time). The velocity is always divergence-free — it moves like a
