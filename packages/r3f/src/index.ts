@@ -23,4 +23,4 @@ export { presets } from "./presets";
 export type { PresetName } from "./presets";
 
 // Re-export the core option/field types so consumers need only this package.
-export type { Field, HelixNoiseOptions, Vec3 } from "helix-noise";
+export type { Field, FlowField, BoundedField, HelixNoiseOptions, Sdf, BoundaryOptions, Vec3 } from "helix-noise";

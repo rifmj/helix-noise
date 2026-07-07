@@ -66,6 +66,7 @@ All ports produce the **same field** for the same seed and options — verified 
 | **Python** (numpy) — spectral engine, vectorized `sample_many` | `pip install helix-noise` | [Python reference →](/python) |
 | **Rust** — zero-dependency, WASM-friendly crate | `cargo add helix-noise` | [Rust reference →](/rust) |
 | **Shaders** — GLSL · HLSL · WGSL · Godot generator | `generate.py --target glsl` | [Shaders reference →](/shaders) |
+| **React** — react-three-fiber components (CPU + GPU particles) | `npm install helix-noise-r3f` | [React (r3f) reference →](/r3f) |
 
 The native ports scope v0.1 to the spectral engine, the free-slip SDF boundary, and the GLSL emitter; the
 atom engine (`createAtoms`) currently lives only in JavaScript and is a documented follow-up for the ports.

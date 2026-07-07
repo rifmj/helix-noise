@@ -11,8 +11,8 @@ you can evaluate it grid-free at any point in space and time, bake it to a textu
 around an obstacle, or emit an equivalent GLSL shader.
 
 This is the Python + numpy port of the JavaScript reference implementation. See also the
-[JavaScript reference](/API), the [Rust port](/rust), the [shader port](/shaders), and the
-[project landing page](/).
+[JavaScript reference](/API), the [Rust port](/rust), the [shader port](/shaders), the
+[React (r3f) integration](/r3f), and the [project landing page](/).
 
 - **PyPI:** <https://pypi.org/project/helix-noise/>
 - **Source:** <https://github.com/rifmj/helix-noise/tree/main/packages/python>

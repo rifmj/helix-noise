@@ -26,6 +26,7 @@ export default defineConfig({
       { text: "Python", link: "/python" },
       { text: "Rust", link: "/rust" },
       { text: "Shaders", link: "/shaders" },
+      { text: "React (r3f)", link: "/r3f" },
       { text: "GitHub", link: "https://github.com/rifmj/helix-noise" },
     ],
 
@@ -51,6 +52,12 @@ export default defineConfig({
           { text: "Python", link: "/python" },
           { text: "Rust", link: "/rust" },
           { text: "Shaders — GLSL · HLSL · WGSL · Godot", link: "/shaders" },
+        ],
+      },
+      {
+        text: "Integrations",
+        items: [
+          { text: "React — react-three-fiber", link: "/r3f" },
         ],
       },
     ],

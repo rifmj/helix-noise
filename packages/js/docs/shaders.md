@@ -16,7 +16,7 @@ computes the mode arrays on the CPU once and emits them as a `const` block plus 
 function body. There is no in-shader RNG — regenerating with different options re-tunes the
 field. Targets are **GLSL** (GLSL ES 3.00 / WebGL2), **HLSL**, **WGSL**, and **Godot**.
 
-- Other ports: [JavaScript](/API) · [Python](/python) · [Rust](/rust) · [project home](/)
+- Other ports: [JavaScript](/API) · [Python](/python) · [Rust](/rust) · [React](/r3f) · [project home](/)
 - Source: [`packages/shaders` on GitHub](https://github.com/rifmj/helix-noise/tree/main/packages/shaders)
 
 ## Install

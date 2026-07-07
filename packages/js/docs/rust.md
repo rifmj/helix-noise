@@ -15,7 +15,7 @@ The crate has **zero runtime dependencies** and no threads or I/O in the hot pat
 compiles cleanly to WebAssembly.
 
 **Ports:** [JavaScript](/API) · [Python](/python) · Rust (this page) · [Shaders](/shaders) ·
-[Project home](/)
+[React](/r3f) · [Project home](/)
 
 **Registry & source:** [crates.io](https://crates.io/crates/helix-noise) ·
 [API docs on docs.rs](https://docs.rs/helix-noise) ·

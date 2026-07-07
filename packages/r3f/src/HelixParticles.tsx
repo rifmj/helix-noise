@@ -1,12 +1,15 @@
 import * as THREE from "three";
 import { useFrame, useThree } from "@react-three/fiber";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { Field, HelixNoiseOptions } from "helix-noise";
+import type { Field, FlowField, HelixNoiseOptions, Sdf } from "helix-noise";
 import { useHelixField } from "./useHelixField";
 import { GpuParticleSim } from "./gpu";
 
 export type ColorBy = "helicity" | "speed" | THREE.ColorRepresentation;
 export type ParticleMode = "cpu" | "gpu" | "auto";
+
+/** The subset of a field the CPU engine samples — satisfied by both `Field` and `BoundedField`. */
+type SamplerField = Pick<FlowField, "sample" | "helicityDensity" | "sampleUW">;
 
 export interface HelixParticlesProps extends HelixNoiseOptions {
   /** Use a prebuilt field instead of constructing one from the option props. */
@@ -28,6 +31,15 @@ export interface HelixParticlesProps extends HelixNoiseOptions {
   mode?: ParticleMode;
   /** Particle lifetime range in seconds [min, max]; respawned when it expires. Default [1, 3]. */
   lifespan?: [number, number];
+  /**
+   * Constrain the flow with an obstacle: a signed-distance function (> 0 outside, < 0 inside).
+   * The field slides along the wall (free-slip) and stays exactly divergence-free. Forces the
+   * **CPU** engine — the GPU path has no boundary support yet, so setting this with `mode="gpu"`
+   * falls back to CPU with a one-time notice.
+   */
+  obstacle?: Sdf;
+  /** Width of the obstacle's influence band (see `withBoundary`). Default 1. */
+  boundaryThickness?: number;
   /** Called once with the resolved field (imperative escape hatch). */
   onField?: (field: Field) => void;
 }
@@ -71,12 +83,20 @@ export function HelixParticles(props: HelixParticlesProps): JSX.Element {
     colorBy = "helicity",
     mode = "auto",
     lifespan = [1, 3],
+    obstacle,
+    boundaryThickness = 1,
     onField,
     ...fieldOptions
   } = props;
 
   const builtField = useHelixField(fieldProp ? undefined : fieldOptions);
   const field = fieldProp ?? builtField;
+
+  // Effective sampler for the CPU engine: the raw field, or one constrained by the obstacle.
+  const cpuField = useMemo<SamplerField>(
+    () => (obstacle ? field.withBoundary(obstacle, { thickness: boundaryThickness }) : field),
+    [field, obstacle, boundaryThickness],
+  );
 
   const gl = useThree((s) => s.gl);
 
@@ -88,15 +108,21 @@ export function HelixParticles(props: HelixParticlesProps): JSX.Element {
     onFieldRef.current?.(field);
   }, [field]);
 
-  // Resolve the engine. The GPU path needs WebGL2 float render targets; when they are missing
-  // (or GPU init later throws) we fall back to CPU with a one-time notice — never silently.
-  const wantGpu = mode === "gpu" || (mode === "auto" && count > 50000);
+  // Resolve the engine. The GPU path needs WebGL2 float render targets and has no obstacle
+  // support; when either blocks it (or GPU init later throws) we fall back to CPU with a
+  // one-time notice — never silently.
+  const wantGpu = !obstacle && (mode === "gpu" || (mode === "auto" && count > 50000));
   const gpuCapable = wantGpu && supportsGpuPath(gl);
   const [gpuFailed, setGpuFailed] = useState(false);
   const useGpu = gpuCapable && !gpuFailed;
 
   useEffect(() => {
-    if (wantGpu && !gpuCapable && !gpuFallbackNotified) {
+    if (gpuFallbackNotified) return;
+    if (obstacle && mode === "gpu") {
+      gpuFallbackNotified = true;
+      // eslint-disable-next-line no-console
+      console.info("[helix-noise-r3f] obstacle has no GPU path yet; rendering on the CPU.");
+    } else if (wantGpu && !gpuCapable) {
       gpuFallbackNotified = true;
       // eslint-disable-next-line no-console
       console.info(
@@ -104,18 +130,17 @@ export function HelixParticles(props: HelixParticlesProps): JSX.Element {
           `rendering ${count} particles on the CPU.`,
       );
     }
-  }, [wantGpu, gpuCapable, count]);
+  }, [wantGpu, gpuCapable, count, obstacle, mode]);
 
-  const common = { field, count, bounds, speed, pointSize, colorBy, lifespan };
+  const shared = { count, bounds, speed, pointSize, colorBy, lifespan };
   return useGpu ? (
-    <GpuParticles {...common} onFailure={() => setGpuFailed(true)} />
+    <GpuParticles field={field} {...shared} onFailure={() => setGpuFailed(true)} />
   ) : (
-    <CpuParticles {...common} />
+    <CpuParticles field={cpuField} {...shared} />
   );
 }
 
-interface EngineProps {
-  field: Field;
+interface SharedProps {
   count: number;
   bounds: [number, number, number];
   speed: number;
@@ -123,7 +148,8 @@ interface EngineProps {
   colorBy: ColorBy;
   lifespan: [number, number];
 }
-type CpuProps = EngineProps;
+type CpuProps = SharedProps & { field: SamplerField };
+type GpuProps = SharedProps & { field: Field; onFailure: () => void };
 
 /** The GPU engine: advect on-device via the injected `field.glsl()` (see {@link GpuParticleSim}). */
 function GpuParticles({
@@ -135,7 +161,7 @@ function GpuParticles({
   colorBy,
   lifespan,
   onFailure,
-}: EngineProps & { onFailure: () => void }): JSX.Element | null {
+}: GpuProps): JSX.Element | null {
   const gl = useThree((s) => s.gl);
   const optsKey = `${count}|${bounds.join(",")}|${speed}|${pointSize}|${String(colorBy)}|${lifespan.join(",")}`;
 
