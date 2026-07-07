@@ -1,7 +1,8 @@
-// Renders the landing page's particle-streamline animation into ../assets/particles.gif —
+// Renders the landing page's particle-streamline animation into ../assets/hero.gif —
 // the "Silk" current: teal/amber fading trails advected through the live field. Pure Node
 // (gifenc, no browser), reproducible. Seamless loop trick: a static field + a warmed-up
 // steady-state particle flow, so every captured frame is statistically identical.
+// This is the canonical hero renderer (render-assets.mjs deliberately skips hero.gif).
 // Run: node scripts/render-landing-gif.mjs
 import { create } from "../dist/helix-noise.js";
 import gifencMod from "gifenc";
@@ -81,5 +82,5 @@ const ref = frames[(frames.length / 2) | 0];
 const palette = quantize(ref, 128, { format: "rgba4444" });
 frames.forEach((frame, i) => enc.writeFrame(applyPalette(frame, palette, "rgba4444"), W, H, { palette, delay: DELAY, repeat: i === 0 ? 0 : undefined }));
 enc.finish();
-fs.writeFileSync(new URL("particles.gif", OUT), enc.bytes());
-console.log(`wrote particles.gif ${W}×${H} ${FRAMES}f ${(enc.bytes().length / 1024) | 0}kB`);
+fs.writeFileSync(new URL("hero.gif", OUT), enc.bytes());
+console.log(`wrote hero.gif ${W}×${H} ${FRAMES}f ${(enc.bytes().length / 1024) | 0}kB`);

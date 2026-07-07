@@ -223,29 +223,8 @@ const pingpong = (a, b, n) => { const v = []; for (let i = 0; i < n; i++) v.push
 // ---------- build ----------
 console.log("rendering assets…");
 
-// hero.gif — flowing particle streaks with glowing trails
-{
-  const w = 600, h = 220, f = create({ modes: 46, slope: 1.5, helicity: 0.85, coherence: 0.55, seed: 7 }), G = grid(f, w, h);
-  const NP = 5000, px = new Float32Array(NP), py = new Float32Array(NP), life = new Float32Array(NP), rnd = rng32(99);
-  for (let i = 0; i < NP; i++) { px[i] = rnd() * TAU; py[i] = rnd() * TAU; life[i] = rnd() * 60; }
-  const acc = new Float32Array(w * h * 3), sx = w / TAU, sy = h / TAU;
-  const splat = (x, y, r, g, b, a) => { if (x < 0 || y < 0 || x >= w - 1 || y >= h - 1) return; const x0 = x | 0, y0 = y | 0, fx = x - x0, fy = y - y0; const add = (X, Y, wt) => { const k = (Y * w + X) * 3; acc[k] += r * a * wt; acc[k + 1] += g * a * wt; acc[k + 2] += b * a * wt; }; add(x0, y0, (1 - fx) * (1 - fy)); add(x0 + 1, y0, fx * (1 - fy)); add(x0, y0 + 1, (1 - fx) * fy); add(x0 + 1, y0 + 1, fx * fy); };
-  const stepDraw = () => {
-    for (let i = 0; i < acc.length; i++) acc[i] *= 0.85;
-    for (let i = 0; i < NP; i++) {
-      const u = gbil(G, G.U, px[i], py[i]), v = gbil(G, G.V, px[i], py[i]), hd = gbil(G, G.H, px[i], py[i]);
-      const nx = px[i] + u * 0.09, ny = py[i] + v * 0.09;
-      if (--life[i] <= 0) { life[i] = 35 + rnd() * 55; px[i] = rnd() * TAU; py[i] = rnd() * TAU; continue; }
-      const teal = hd >= 0, r = teal ? 0.18 : 0.96, g = teal ? 0.84 : 0.63, b = teal ? 0.75 : 0.24;
-      if (Math.abs(nx - px[i]) < TAU * 0.5 && Math.abs(ny - py[i]) < TAU * 0.5) { const x0 = px[i] * sx, y0 = py[i] * sy, x1 = nx * sx, y1 = ny * sy; for (let t = 0; t < 2; t++) { const tt = t / 2; splat(x0 + (x1 - x0) * tt, y0 + (y1 - y0) * tt, r, g, b, 0.5); } }
-      px[i] = ((nx % TAU) + TAU) % TAU; py[i] = ((ny % TAU) + TAU) % TAU;
-    }
-  };
-  for (let k = 0; k < 26; k++) stepDraw();
-  const frames = [];
-  for (let k = 0; k < 30; k++) { stepDraw(); frames.push(toneRGBA(acc, w, h)); }
-  saveGIF("hero.gif", w, h, frames, 55, 160);
-}
+// hero.gif is rendered by scripts/render-landing-gif.mjs (the landing's Silk-current
+// particle animation) — not here, so `npm run assets` never overwrites it.
 
 // knob-sweep GIFs — same seed, one dial animates; you watch the field morph
 function sweep(name, param, a, b) {
