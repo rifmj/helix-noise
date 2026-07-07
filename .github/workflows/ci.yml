@@ -84,19 +84,22 @@ jobs:
         working-directory: packages/js
       - run: npm run build
         working-directory: packages/js
-      - name: Regenerate the canonical fixture from the JS reference
-        run: node packages/js/scripts/dump-fixture.mjs > /tmp/fixture.json
-      - name: Assert spec/ and every package copy match the regenerated oracle
+      - name: Every package copy is byte-identical to spec/ (copy drift)
         run: |
           set -e
           fail=0
-          for f in spec/parity_fixture.json \
-                   packages/python/tests/parity_fixture.json \
+          for f in packages/python/tests/parity_fixture.json \
                    packages/rust/tests/parity_fixture.json \
                    packages/shaders/tests/parity_fixture.json; do
-            if ! diff -q /tmp/fixture.json "$f" >/dev/null; then
-              echo "::error file=$f::parity fixture drifted from the JS oracle — regenerate it"
+            if ! diff -q spec/parity_fixture.json "$f" >/dev/null; then
+              echo "::error file=$f::copy differs from spec/parity_fixture.json — re-sync it"
               fail=1
             fi
           done
           exit $fail
+      - name: spec/ still matches the JS oracle within parity tolerance (algorithm drift)
+        # The oracle is regenerated on this runner; floats differ by ~1 ULP across
+        # platforms, so compare NUMERICALLY (1e-9), never byte-for-byte.
+        run: |
+          node packages/js/scripts/dump-fixture.mjs > /tmp/oracle.json
+          node spec/compare-fixture.mjs /tmp/oracle.json spec/parity_fixture.json 1e-9 1e-9
