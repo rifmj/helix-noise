@@ -1,0 +1,90 @@
+name: Release
+
+# Publish a package to npm when its version tag is pushed, e.g.:
+#   git tag helix-noise-gpu@0.1.0 && git push origin helix-noise-gpu@0.1.0
+#
+# The tag is <package-name>@<version>. This workflow checks out the tagged commit, verifies the
+# tag version matches the package's package.json, installs, builds, tests, and publishes with npm
+# provenance (a signed, verifiable link from the package back to this commit + workflow).
+#
+# One-time setup:
+#   - Repo secret NPM_TOKEN = an npm *Automation* access token (publishes without an OTP prompt).
+#   - The tagged commit must contain THIS file (tag-triggered workflows use the workflow as of the
+#     tag) — so the first release after adding it must be tagged on a commit that includes it.
+#
+# Covers the npm packages: helix-noise (packages/js), helix-noise-r3f (packages/r3f),
+# helix-noise-gpu (packages/gpu). See RELEASING.md to extend to wasm / PyPI / crates.io.
+
+on:
+  push:
+    tags:
+      - "helix-noise@*"
+      - "helix-noise-r3f@*"
+      - "helix-noise-gpu@*"
+
+permissions:
+  contents: write # create the GitHub Release
+  id-token: write # npm provenance (OIDC)
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish ${{ github.ref_name }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Resolve package + verify version matches the tag
+        id: resolve
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          PKG="${TAG%@*}"        # everything before the last '@'
+          VERSION="${TAG##*@}"   # everything after the last '@'
+          case "$PKG" in
+            helix-noise)     DIR=packages/js  ;;
+            helix-noise-r3f) DIR=packages/r3f ;;
+            helix-noise-gpu) DIR=packages/gpu ;;
+            *) echo "::error::unknown package '$PKG' from tag '$TAG'"; exit 1 ;;
+          esac
+          PKG_VERSION="$(node -p "require('./$DIR/package.json').version")"
+          if [ "$PKG_VERSION" != "$VERSION" ]; then
+            echo "::error::tag version '$VERSION' != $DIR/package.json version '$PKG_VERSION'"
+            exit 1
+          fi
+          echo "pkg=$PKG" >> "$GITHUB_OUTPUT"
+          echo "dir=$DIR" >> "$GITHUB_OUTPUT"
+          echo "Publishing $PKG@$VERSION from $DIR"
+
+      - name: Install
+        working-directory: ${{ steps.resolve.outputs.dir }}
+        run: |
+          if [ -f package-lock.json ]; then npm ci; else npm install; fi
+
+      - name: Build
+        working-directory: ${{ steps.resolve.outputs.dir }}
+        run: npm run build
+
+      - name: Test
+        working-directory: ${{ steps.resolve.outputs.dir }}
+        run: npm test
+
+      - name: Publish to npm (with provenance)
+        working-directory: ${{ steps.resolve.outputs.dir }}
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Create GitHub Release
+        run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes
+          || echo "GitHub Release step skipped (it may already exist) — the npm publish above is the release of record."
+        env:
+          GH_TOKEN: ${{ github.token }}
