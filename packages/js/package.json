@@ -1,6 +1,6 @@
 {
   "name": "helix-noise",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Helix Noise — divergence-free helical flow fields, grid-free. Sample a 3-D incompressible velocity field at any point with three artist controls: spectral slope, helicity, phase coherence. No FFT, no grid, no simulation.",
   "keywords": [
     "helix-noise",
@@ -71,7 +71,8 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/rifmj/helix-noise.git"
+    "url": "git+https://github.com/rifmj/helix-noise.git",
+    "directory": "packages/js"
   },
   "homepage": "https://github.com/rifmj/helix-noise#readme",
   "bugs": {

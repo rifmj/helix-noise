@@ -3,6 +3,13 @@
 All notable changes to this project are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [1.0.1]
+
+- Fix broken README images on npm: the package lives in `packages/js` of the monorepo, so
+  relative `assets/*` paths didn't resolve on the npm page. Images now use absolute raw URLs,
+  and `repository.directory` is set so npm resolves the remaining relative links correctly.
+- No code changes.
+
 ## [1.0.0]
 
 Initial release of Helix Noise.

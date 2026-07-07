@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/hero.gif" alt="Helix Noise — a divergence-free helical flow field, flowing" width="100%">
+  <img src="https://raw.githubusercontent.com/rifmj/helix-noise/main/packages/js/assets/hero.gif" alt="Helix Noise — a divergence-free helical flow field, flowing" width="100%">
 </p>
 
 <h1 align="center">Helix Noise</h1>
@@ -94,7 +94,7 @@ It's just velocities, so the *renderer is your choice*. Here is one field drawn 
 a flow texture (LIC), a helicity map, and speed contours:
 
 <p align="center">
-  <img src="assets/looks.png" alt="One field, four renderers: streamlines, LIC, helicity map, contours" width="100%">
+  <img src="https://raw.githubusercontent.com/rifmj/helix-noise/main/packages/js/assets/looks.png" alt="One field, four renderers: streamlines, LIC, helicity map, contours" width="100%">
 </p>
 
 …and the same field drives motion and 3-D just as easily — smoke you can raymarch, water you can flow:
@@ -102,12 +102,12 @@ a flow texture (LIC), a helicity map, and speed contours:
 <table>
 <tr>
 <td width="50%" valign="top">
-<img src="assets/smoke.gif" alt="Volumetric smoke raymarched through the helical field" width="100%"><br>
+<img src="https://raw.githubusercontent.com/rifmj/helix-noise/main/packages/js/assets/smoke.gif" alt="Volumetric smoke raymarched through the helical field" width="100%"><br>
 <sub><b>Volumetric smoke</b> — a dye volume advected through <code>field.bake3D()</code> and raymarched in
 WebGL2, with self-shadowing. → <a href="examples/smoke.html"><code>examples/smoke.html</code></a></sub>
 </td>
 <td width="50%" valign="top">
-<img src="assets/water.gif" alt="Flowing water surface with caustics and sun-glints" width="100%"><br>
+<img src="https://raw.githubusercontent.com/rifmj/helix-noise/main/packages/js/assets/water.gif" alt="Flowing water surface with caustics and sun-glints" width="100%"><br>
 <sub><b>Flowing water</b> — ripple crests bent along the streamlines, with caustic highlights and
 sun-glints. → <a href="examples/water.html"><code>examples/water.html</code></a></sub>
 </td>
@@ -120,14 +120,14 @@ Everything is driven by three artist-facing controls (plus a `seed`).
 
 ### Spectral slope — the size of things
 
-<img src="assets/knob-spectrum.gif" alt="Spectral slope sweeping from steep to shallow" width="100%">
+<img src="https://raw.githubusercontent.com/rifmj/helix-noise/main/packages/js/assets/knob-spectrum.gif" alt="Spectral slope sweeping from steep to shallow" width="100%">
 
 `slope` sets how energy spreads across scales — the sweep runs from steep (`slope: 2.6`, a few big
 silky swirls) to shallow (`slope: 1.0`, fine multi-scale grain) and back.
 
 ### Helicity — which way it swirls
 
-<img src="assets/knob-helicity.gif" alt="Helicity sweeping from left-handed to right-handed" width="100%">
+<img src="https://raw.githubusercontent.com/rifmj/helix-noise/main/packages/js/assets/knob-helicity.gif" alt="Helicity sweeping from left-handed to right-handed" width="100%">
 
 `helicity` (`p ∈ [-1, 1]`) is the handedness of the swirl — a genuinely 3-D property. The sweep runs
 from left-handed (`-1`, amber) through mirror-symmetric (`0`) to right-handed (`+1`, teal); at the
@@ -135,7 +135,7 @@ extremes every vortex tube corkscrews the same way (a Beltrami flow). Watch the 
 
 ### Phase coherence — noise vs structure
 
-<img src="assets/knob-coherence.gif" alt="Phase coherence sweeping from random to structured at a fixed spectrum" width="100%">
+<img src="https://raw.githubusercontent.com/rifmj/helix-noise/main/packages/js/assets/knob-coherence.gif" alt="Phase coherence sweeping from random to structured at a fixed spectrum" width="100%">
 
 `coherence` (`λ ∈ [0, 1]`) slides the field from formless to organized **at a fixed spectrum** — the
 sweep runs from `0` (even, random) to `1` (energy concentrates into coherent structures) and back.
