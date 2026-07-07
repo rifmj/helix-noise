@@ -27,6 +27,9 @@ algorithm once and re-verify every language in one CI run.
 | [`packages/rust`](packages/rust) | Rust | crates.io `helix-noise` | spectral engine + boundary + GLSL; zero runtime deps, WASM-friendly |
 | [`packages/shaders`](packages/shaders) | GLSL · HLSL · WGSL · Godot | — | code generator + ready-to-paste shaders for Shadertoy / Unity / Unreal / Godot / WebGPU |
 
+The project's front-door site lives in [`site/`](site) (the landing) plus `packages/js/docs` (the VitePress
+reference); the `Deploy Site` workflow assembles them into one GitHub Pages site — landing at `/`, docs at `/docs`.
+
 The **atom engine** currently lives only in `packages/js`; the native ports scope v0.1 to the spectral
 engine and document it as a follow-up.
 

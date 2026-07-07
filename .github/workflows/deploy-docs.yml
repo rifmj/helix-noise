@@ -9,6 +9,7 @@ on:
   push:
     branches: [main]
     paths:
+      - "site/**"
       - "packages/js/**"
       - ".github/workflows/deploy-docs.yml"
   workflow_dispatch:
@@ -52,8 +53,10 @@ jobs:
           SITE="$RUNNER_TEMP/_site"
           SRC=packages/js
           rm -rf "$SITE" && mkdir -p "$SITE"
-          # Landing + demos + the assets/dist they reference -> site root
-          cp "$SRC/index.html" "$SRC/gallery.html" "$SRC/sandbox.html" "$SITE/"
+          # Project landing (site/) -> site root
+          cp site/index.html "$SITE/"
+          # Demos + the assets/dist they reference (they belong with the JS package) -> site root
+          cp "$SRC/gallery.html" "$SRC/sandbox.html" "$SITE/"
           cp -R "$SRC/examples" "$SRC/assets" "$SRC/dist" "$SITE/"
           # VitePress output (built with base /helix-noise/docs/) -> /docs
           mkdir -p "$SITE/docs"

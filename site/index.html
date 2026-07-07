@@ -3,10 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Helix Noise — divergence-free flow fields, grid-free</title>
-<meta name="description" content="Give anything the motion of a fluid. One function tells you which way things drift at any point in space, and it always moves like water: swirling, folding, never clumping. Zero dependencies.">
+<title>Helix Noise — divergence-free flow fields for JS, Python, Rust & shaders</title>
+<meta name="description" content="Give anything the motion of a fluid. One function tells you which way things drift at any point in space, and it always moves like water: swirling, folding, never clumping. The same field in JavaScript, Python, Rust, and shaders — identical to machine precision.">
 <meta property="og:title" content="Helix Noise">
-<meta property="og:description" content="Give anything the motion of a fluid — in one function call.">
+<meta property="og:description" content="Give anything the motion of a fluid — one field, four languages (JS · Python · Rust · shaders).">
 <meta property="og:image" content="assets/hero.gif">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -106,6 +106,10 @@
   .cap h3{font-family:var(--serif);font-weight:400;font-size:27px;line-height:1.08;margin:0 0 11px;letter-spacing:-.01em}
   .cap p{color:var(--mist);font-size:14.5px;margin:0}
   .cap .term{display:block;font-family:var(--mono);font-size:11.5px;color:var(--faint);margin-top:14px}
+  a.cap{transition:background .18s}
+  a.cap:hover{background:#0c121b}
+  a.cap:hover h3{color:var(--ac,var(--teal))}
+  a.cap:hover .term{color:var(--ac,var(--teal))}
 
   /* ── demo rail ── */
   .rail{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:46px}
@@ -164,7 +168,8 @@
     <p class="eyebrow kicker">Helix Noise — divergence-free flow fields</p>
     <h1>Give anything the <em>motion of a&nbsp;fluid</em></h1>
     <p class="sub">One function tells you which way things drift at any point in space — and it always
-      moves like water: <b>swirling, folding, never clumping</b>. This whole page is one field.</p>
+      moves like water: <b>swirling, folding, never clumping</b>. This whole page is one field, running in
+      JavaScript — and <b>identical in Python, Rust, and shaders</b>.</p>
 
     <div class="currents" role="group" aria-label="Field presets">
       <span class="currents-label kicker">Pick a current</span>
@@ -276,27 +281,80 @@
       <a class="all-demos" href="examples/index.html">All 14 demos — three.js · p5 · raw WebGL2 · audio-reactive →</a>
     </section>
 
+    <!-- PORTS -->
+    <section id="ports">
+      <p class="lead-in kicker">One algorithm, four languages</p>
+      <p class="say">The <em>same field</em>, wherever you build.</p>
+      <p class="body">Pick a current in the browser above — then take that exact field to your language of
+        choice. Every port is generated from one shared spec and checked against the JavaScript reference:
+        for the same seed and settings they produce <b>bit-identical output to ~1e-15</b> — machine precision.
+        Not a lookalike, the same field.</p>
+      <div class="caps">
+        <a class="cap" style="--ac:var(--sky)" href="https://github.com/rifatjumagulov/helix-noise/tree/main/packages/js">
+          <p class="k kicker">JavaScript / TS</p>
+          <h3>The reference</h3>
+          <p>Spectral + atom engines, boundaries, GLSL export, a WASM SIMD batch kernel. Runs the field on
+            this page. Zero dependencies.</p>
+          <span class="term">npm install helix-noise ↗</span>
+        </a>
+        <a class="cap" style="--ac:var(--teal)" href="https://github.com/rifatjumagulov/helix-noise/tree/main/packages/python">
+          <p class="k kicker">Python</p>
+          <h3>numpy-native</h3>
+          <p>The spectral engine with vectorized batch sampling — for scientific viz, generative art, and
+            synthetic flow data.</p>
+          <span class="term">pip install helix-noise ↗</span>
+        </a>
+        <a class="cap" style="--ac:var(--amber)" href="https://github.com/rifatjumagulov/helix-noise/tree/main/packages/rust">
+          <p class="k kicker">Rust</p>
+          <h3>Zero-dependency crate</h3>
+          <p>The spectral engine as a lean, WASM-friendly crate — for engines, high-performance procedural
+            work, and native tools.</p>
+          <span class="term">cargo add helix-noise ↗</span>
+        </a>
+        <a class="cap" style="--ac:var(--violet)" href="https://github.com/rifatjumagulov/helix-noise/tree/main/packages/shaders">
+          <p class="k kicker">Shaders</p>
+          <h3>GPU, engine-agnostic</h3>
+          <p>A generator that emits ready-to-paste GLSL, HLSL, WGSL, and Godot — for Shadertoy, Unity,
+            Unreal, Godot, and WebGPU.</p>
+          <span class="term">generate.py → glsl · hlsl · wgsl ↗</span>
+        </a>
+      </div>
+    </section>
+
     <!-- INSTALL -->
     <section id="install">
       <p class="lead-in kicker">Get it running</p>
       <p class="say">In your project in <em>two lines</em>.</p>
       <div class="code">
-        <div class="bar" role="tablist" aria-label="Install method">
-          <button role="tab" aria-selected="true" data-tab="npm">npm</button>
-          <button role="tab" aria-selected="false" data-tab="cdn">cdn / script</button>
-          <button role="tab" aria-selected="false" data-tab="use">use it</button>
+        <div class="bar" role="tablist" aria-label="Language">
+          <button role="tab" aria-selected="true" data-tab="js">JavaScript</button>
+          <button role="tab" aria-selected="false" data-tab="python">Python</button>
+          <button role="tab" aria-selected="false" data-tab="rust">Rust</button>
+          <button role="tab" aria-selected="false" data-tab="shaders">Shaders</button>
         </div>
-        <pre data-panel="npm"><span class="c"># zero runtime dependencies · ESM · CJS · IIFE · TS types</span>
-npm install helix-noise</pre>
-        <pre data-panel="cdn" hidden>&lt;<span class="k">script</span> <span class="f">src</span>=<span class="s">"https://cdn.jsdelivr.net/npm/helix-noise/dist/helix-noise.global.js"</span>&gt;&lt;/<span class="k">script</span>&gt;
-&lt;<span class="k">script</span>&gt;
-  <span class="k">const</span> field = HelixNoise.<span class="f">create</span>({ helicity: <span class="n">0.8</span> });
-&lt;/<span class="k">script</span>&gt;</pre>
-        <pre data-panel="use" hidden><span class="k">import</span> { create } <span class="k">from</span> <span class="s">"helix-noise"</span>;
+        <pre data-panel="js"><span class="c"># zero runtime deps · ESM · CJS · IIFE · TS types (or a CDN &lt;script&gt;)</span>
+npm install helix-noise
 
+<span class="k">import</span> { create } <span class="k">from</span> <span class="s">"helix-noise"</span>;
 <span class="k">const</span> field = <span class="f">create</span>({ helicity: <span class="n">0.8</span>, coherence: <span class="n">0.5</span> });
-<span class="k">const</span> [ux, uy, uz] = field.<span class="f">sample</span>(x, y, z);      <span class="c">// divergence-free, anywhere</span>
-<span class="k">const</span> [ax, ay, az] = field.<span class="f">sample</span>(x, y, z, t);   <span class="c">// …the same field, later in time</span></pre>
+<span class="k">const</span> [ux, uy, uz] = field.<span class="f">sample</span>(x, y, z);   <span class="c">// divergence-free, anywhere</span></pre>
+        <pre data-panel="python" hidden><span class="c"># numpy-native, vectorized batch sampling</span>
+pip install helix-noise
+
+<span class="k">from</span> helix_noise <span class="k">import</span> create
+field = <span class="f">create</span>(helicity=<span class="n">0.8</span>, coherence=<span class="n">0.5</span>)
+u = field.<span class="f">sample</span>(x, y, z)                <span class="c"># divergence-free, anywhere</span></pre>
+        <pre data-panel="rust" hidden><span class="c">// zero-dependency crate, WASM-friendly</span>
+cargo add helix-noise
+
+<span class="k">use</span> helix_noise::{HelixField, HelixOptions};
+<span class="k">let</span> field = HelixField::<span class="f">new</span>(HelixOptions { helicity: <span class="n">0.8</span>, coherence: <span class="n">0.5</span>, ..<span class="f">Default</span>::default() });
+<span class="k">let</span> u = field.<span class="f">sample</span>(x, y, z);              <span class="c">// divergence-free, anywhere</span></pre>
+        <pre data-panel="shaders" hidden><span class="c"># emit a self-contained shader for your target (glsl · hlsl · wgsl · godot)</span>
+python generate.py --target glsl --helicity <span class="n">0.8</span> &gt; helix.glsl
+
+<span class="c">// then, in your shader:</span>
+<span class="k">vec3</span> u = <span class="f">helixNoise</span>(p);                    <span class="c">// divergence-free, anywhere</span></pre>
       </div>
     </section>
   </div>
@@ -306,14 +364,15 @@ npm install helix-noise</pre>
       <span class="foot-mark">Helix Noise</span>
       <nav class="foot-links">
         <a href="examples/index.html">Demos</a>
-        <a href="gallery.html">Gallery</a>
         <a href="sandbox.html">Sandbox</a>
         <a href="docs/">Docs</a>
         <a href="https://github.com/rifatjumagulov/helix-noise">GitHub</a>
         <a href="https://www.npmjs.com/package/helix-noise">npm</a>
+        <a href="https://pypi.org/project/helix-noise/">PyPI</a>
+        <a href="https://crates.io/crates/helix-noise">crates.io</a>
       </nav>
     </div>
-    <p class="foot-note">MIT © Rifat Jumagulov · ~11 kB · grid-free, divergence-free, zero dependencies</p>
+    <p class="foot-note">MIT © Rifat Jumagulov · one field in JavaScript, Python, Rust &amp; shaders — grid-free, divergence-free, identical to ~1e-15</p>
   </footer>
 </main>
 
