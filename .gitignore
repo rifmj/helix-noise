@@ -1,0 +1,30 @@
+# Node (packages/js)
+node_modules/
+*.log
+*.tgz
+*.tsbuildinfo
+.tsup/
+docs/.vitepress/cache/
+docs/.vitepress/dist/
+
+# Python (packages/python, packages/shaders)
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+build/
+dist-python/
+.eggs/
+
+# Rust (packages/rust)
+target/
+Cargo.lock  # this is a library workspace; keep lockfiles out (see note below)
+
+# OS / editors
+.DS_Store
+.vscode/
+.idea/
+.claude/
+
+# NOTE: packages/js/dist IS committed on purpose (CDN + demos need it without a build).
+# It is force-added in that package; do not add a blanket dist/ ignore here.

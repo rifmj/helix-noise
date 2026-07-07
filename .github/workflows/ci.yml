@@ -1,0 +1,102 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  js:
+    name: JS reference (node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [18, 20, 22]
+    defaults:
+      run:
+        working-directory: packages/js
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: packages/js/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+  python:
+    name: Python port
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.9", "3.11", "3.13"]
+    defaults:
+      run:
+        working-directory: packages/python
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install numpy pytest
+      - run: python -m pytest -q
+      - run: python tests/test_parity.py
+
+  rust:
+    name: Rust port
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/rust
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test
+      - run: cargo build --release
+
+  shaders:
+    name: Shader generator
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/shaders
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: python tests/test_shaders.py
+
+  parity-fixture:
+    name: Fixture is in sync (no drift)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: packages/js/package-lock.json
+      - run: npm ci
+        working-directory: packages/js
+      - run: npm run build
+        working-directory: packages/js
+      - name: Regenerate the canonical fixture from the JS reference
+        run: node packages/js/scripts/dump-fixture.mjs > /tmp/fixture.json
+      - name: Assert spec/ and every package copy match the regenerated oracle
+        run: |
+          set -e
+          fail=0
+          for f in spec/parity_fixture.json \
+                   packages/python/tests/parity_fixture.json \
+                   packages/rust/tests/parity_fixture.json \
+                   packages/shaders/tests/parity_fixture.json; do
+            if ! diff -q /tmp/fixture.json "$f" >/dev/null; then
+              echo "::error file=$f::parity fixture drifted from the JS oracle — regenerate it"
+              fail=1
+            fi
+          done
+          exit $fail

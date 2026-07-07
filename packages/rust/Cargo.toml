@@ -1,0 +1,16 @@
+[package]
+name = "helix-noise"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+authors = ["Rifat Jumagulov"]
+description = "Divergence-free helical (Beltrami) spectral flow-field noise, evaluatable analytically at any point in space and time. Zero-dependency, WASM-friendly."
+keywords = ["noise", "procedural", "flow-field", "curl-noise", "graphics"]
+categories = ["graphics", "game-development", "mathematics"]
+repository = "https://github.com/rifat-j/helix-noise-rs"
+readme = "README.md"
+
+[dependencies]
+
+[dev-dependencies]
+serde_json = "1"

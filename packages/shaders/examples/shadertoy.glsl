@@ -1,0 +1,67 @@
+// Helix Noise — Shadertoy demo (GLSL ES 3.00 / WebGL2).
+// Paste the whole file into a new Shadertoy shader. The baked constant block and
+// the helixNoise / helixNoiseCurl functions below were produced by:
+//   python3 generate.py --target glsl --modes 24 --seed 1 --helicity 0.3 --coherence 0.2
+// Regenerate with different flags to re-tune the field.
+
+// Helix Noise — generated GLSL (GLSL ES 3.00 / WebGL2). Divergence-free velocity field.
+// 24 modes. Defines vec3 helixNoise(vec3 p) / (vec3 p, float t) and vec3 helixNoiseCurl — same pair.
+const int helixNoise_N = 24;
+const vec3 helixNoise_K[24] = vec3[24](vec3(1.911081,-0.05503172,4.194047),vec3(-0.6341850,1.392610,3.120986),vec3(0.4399936,-3.216792,4.426476),vec3(3.024810,2.604520,3.116799),vec3(-2.731609,-0.02499362,2.907837),vec3(2.907923,-2.176237,1.896102),vec3(-0.1409626,2.844947,1.404602),vec3(-2.969229,-4.598299,2.909406),vec3(4.987733,1.059463,0.7807666),vec3(-4.783460,2.992007,1.836815),vec3(1.317752,-4.059231,0.4786038),vec3(1.152603,2.419499,-0.1238691),vec3(-0.9498852,-0.3849874,0.1030222),vec3(5.103238,-1.991392,-1.376844),vec3(-0.6145967,1.128699,-0.2215920),vec3(-0.8716001,-2.781131,-0.6736722),vec3(2.699985,1.785008,-1.849645),vec3(-1.383000,0.2216825,-0.4992282),vec3(0.8424097,-1.356696,-1.158042),vec3(-0.04556111,2.118446,-1.823087),vec3(-1.472137,-1.176082,-1.462962),vec3(0.8312651,-0.04950975,-1.463089),vec3(-2.279018,1.459273,-3.966415),vec3(-0.2332814,-0.6574978,-1.978532));
+const vec3 helixNoise_E1[24] = vec3[24](vec3(0.9099823,0.000000,-0.4146471),vec3(-0.9100756,-0.4144423,0.000000),vec3(0.9907748,0.1355184,0.000000),vec3(-0.6524976,0.7577908,0.000000),vec3(0.009149400,-0.9999581,0.000000),vec3(0.5991705,0.8006215,0.000000),vec3(-0.9987747,-0.04948769,0.000000),vec3(0.8400815,-0.5424603,0.000000),vec3(-0.2077781,0.9781760,0.000000),vec3(-0.5302977,-0.8478115,0.000000),vec3(0.9511372,0.3087686,0.000000),vec3(-0.9027938,0.4300736,0.000000),vec3(0.3756203,-0.9267737,0.000000),vec3(0.3635242,0.9315848,0.000000),vec3(-0.8782412,-0.4782180,0.000000),vec3(0.9542358,-0.2990553,0.000000),vec3(-0.5514916,0.8341804,0.000000),vec3(-0.1582707,-0.9873958,0.000000),vec3(0.8495496,0.5275087,0.000000),vec3(-0.9997688,-0.02150188,0.000000),vec3(0.6241683,-0.7812899,0.000000),vec3(0.05945416,0.9982310,0.000000),vec3(-0.5392375,-0.8421538,0.000000),vec3(-0.9931207,0.000000,0.1170952));
+const vec3 helixNoise_E2[24] = vec3[24](vec3(0.004950629,0.9999287,0.01086462),vec3(0.3721213,-0.8171429,0.4402309),vec3(-0.1092749,0.7989088,0.5914420),vec3(-0.4663759,-0.4015741,0.7881825),vec3(0.7288027,0.006668387,0.6846912),vec3(-0.3705095,0.2772826,0.8864745),vec3(0.02188669,-0.4417235,0.8968842),vec3(0.2546030,0.3942912,0.8830129),vec3(-0.1480538,-0.03144867,0.9884792),vec3(0.2624504,-0.1641601,0.9508792),vec3(-0.03441081,0.1059998,0.9937706),vec3(0.01985663,0.04168227,0.9989336),vec3(0.09268818,0.03756641,0.9949863),vec3(0.2270816,-0.08861206,0.9698360),vec3(-0.08125578,0.1492252,0.9854589),vec3(-0.06734914,-0.2148999,0.9743111),vec3(0.4138875,0.2736285,0.8682307),vec3(-0.3315050,0.05313728,0.9419559),vec3(0.3096738,-0.4987278,0.8095509),vec3(-0.01402362,0.6520534,0.7580433),vec3(-0.4791437,-0.3827852,0.7898714),vec3(0.8675522,-0.05167099,0.4946547),vec3(-0.6956631,0.4454384,0.5635933),vec3(-0.03669801,0.9496202,-0.3112471));
+const float helixNoise_S[24] = float[24](-1.000000,1.000000,1.000000,-1.000000,-1.000000,-1.000000,1.000000,-1.000000,1.000000,1.000000,-1.000000,-1.000000,1.000000,1.000000,1.000000,1.000000,-1.000000,1.000000,-1.000000,-1.000000,-1.000000,1.000000,1.000000,-1.000000);
+const float helixNoise_A[24] = float[24](0.08673410,0.1362341,0.06557566,0.07460448,0.1092680,0.1047169,0.1574011,0.05398909,0.07243862,0.05790179,0.09712630,0.2061768,0.9536553,0.06264981,0.6538509,0.1732252,0.1218019,0.5300533,0.3372257,0.1930732,0.2488128,0.4345802,0.08124096,0.3055866);
+const float helixNoise_PH[24] = float[24](-0.7960407,0.2686821,-0.8618163,-2.103127,-0.08498011,0.9074457,2.444746,-3.035932,-1.157305,0.8657812,1.594562,-3.059499,1.068882,-2.257708,-3.010803,-1.164825,-0.4191650,1.083611,1.860213,0.4574206,-1.435830,0.7835286,-2.906018,2.133328);
+const float helixNoise_OM[24] = float[24](-2.580439,-1.489840,2.881424,-1.501287,-2.485971,-1.686465,2.168073,-2.308912,1.171584,2.364073,-2.610079,2.136476,-1.029645,-2.130799,0.8086875,1.063982,1.258478,-1.209253,-1.592317,1.971675,1.698573,-0.9881264,-2.313527,-1.351816);
+const float helixNoise_SCALE = 0.6746971;
+
+vec3 helixNoise(vec3 p, float t) {
+  vec3 u = vec3(0.0);
+  for (int j = 0; j < helixNoise_N; j++) {
+    float phi = dot(helixNoise_K[j], p) + helixNoise_PH[j] + helixNoise_OM[j] * t;
+    u += (helixNoise_A[j]) * (cos(phi) * helixNoise_E1[j] - helixNoise_S[j] * sin(phi) * helixNoise_E2[j]);
+  }
+  return u * helixNoise_SCALE;
+}
+vec3 helixNoise(vec3 p) { return helixNoise(p, 0.0); }
+
+vec3 helixNoiseCurl(vec3 p, float t) {
+  vec3 w = vec3(0.0);
+  for (int j = 0; j < helixNoise_N; j++) {
+    float phi = dot(helixNoise_K[j], p) + helixNoise_PH[j] + helixNoise_OM[j] * t;
+    vec3 tv = (helixNoise_A[j]) * (cos(phi) * helixNoise_E1[j] - helixNoise_S[j] * sin(phi) * helixNoise_E2[j]);
+    w += helixNoise_S[j] * length(helixNoise_K[j]) * tv;
+  }
+  return w * helixNoise_SCALE;
+}
+vec3 helixNoiseCurl(vec3 p) { return helixNoiseCurl(p, 0.0); }
+
+// --- demo ------------------------------------------------------------------
+// Slice the 3D field on the z = 0 plane, advect a dye field a little, and color
+// by local speed + swirl. Purely illustrative — swap in your own consumer.
+void mainImage(out vec4 fragColor, in vec2 fragCoord) {
+  vec2 uv = (fragCoord - 0.5 * iResolution.xy) / iResolution.y;
+  float t = iTime * 0.35;
+
+  // Map screen to a patch of the field's natural [0, 2π) domain.
+  vec3 p = vec3(uv * 4.0, 0.0);
+
+  vec3 v = helixNoise(p, t);          // divergence-free velocity
+  vec3 w = helixNoiseCurl(p, t);      // its curl (vorticity)
+
+  float speed = length(v.xy);
+  float swirl = w.z;                  // out-of-plane vorticity
+
+  // Flow-aligned line texture: sample a stripe pattern warped by the field.
+  vec3 q = p + 0.6 * vec3(v.xy, 0.0);
+  float stripes = 0.5 + 0.5 * sin(8.0 * q.x + 6.0 * q.y + swirl * 3.0);
+
+  vec3 warm = vec3(0.95, 0.55, 0.25);
+  vec3 cool = vec3(0.15, 0.45, 0.85);
+  vec3 col = mix(cool, warm, clamp(swirl * 0.5 + 0.5, 0.0, 1.0));
+  col *= 0.35 + 0.9 * speed;
+  col = mix(col, vec3(1.0), 0.25 * stripes * smoothstep(0.0, 0.6, speed));
+
+  fragColor = vec4(col, 1.0);
+}
