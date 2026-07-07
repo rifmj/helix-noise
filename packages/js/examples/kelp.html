@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Helix Noise — kelp forest (the time axis, made physical)</title>
+<style>
+  html,body{margin:0;background:#04080c;color:#cdd6dd;font-family:system-ui,sans-serif}
+  .wrap{max-width:980px;margin:0 auto;padding:22px 16px}
+  h1{font-size:19px;font-weight:600;margin:0 0 6px}
+  h1 code{color:#f4a13c}
+  p{color:#8a97a2;font-size:13.5px;line-height:1.6;margin:0 0 14px}
+  p b{color:#cdd6dd;font-weight:500}
+  code{font-family:ui-monospace,Menlo,monospace;color:#f4a13c;font-size:12.5px}
+  #stage{position:relative;width:100%;aspect-ratio:16/10;border:1px solid rgba(150,180,200,.15);
+    border-radius:10px;overflow:hidden;background:#04080c;cursor:grab;touch-action:none}
+  #stage.drag{cursor:grabbing}
+  .badge{position:absolute;top:10px;left:12px;font-family:ui-monospace,monospace;font-size:10.5px;
+    letter-spacing:.12em;text-transform:uppercase;color:#93a3b0;background:rgba(4,8,12,.55);
+    border:1px solid rgba(150,180,200,.14);border-radius:6px;padding:4px 8px;pointer-events:none}
+  .row{display:flex;flex-wrap:wrap;gap:14px;align-items:center;margin-top:12px;font-family:ui-monospace,monospace;font-size:12px;color:#93a3b0}
+  .row label{display:flex;align-items:center;gap:8px}
+  input[type=range]{width:104px}
+  button{font-family:ui-monospace,monospace;font-size:11.5px;color:#cdd6dd;background:#0c1016;
+    border:1px solid rgba(150,180,200,.22);border-radius:7px;padding:6px 11px;cursor:pointer}
+  button:hover{border-color:#38d9d1}
+  .note{margin-top:12px;font-size:12px;color:#5d6b77;font-family:ui-monospace,monospace}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Kelp forest — the <code>t</code> axis, made physical</h1>
+  <p>Every frond is a strip of segments, each bent by the field velocity sampled at its own height
+    and <b>at the current field time</b> — <code>field.sampleUW(x, y, z, out, t)</code>. Nothing here
+    is keyframed: the sway is the library's own <b>churn</b>, the Kolmogorov-scaled time evolution, so
+    tip wisps flutter faster than the base leans. Turn <b>churn</b> to 0 and the whole forest freezes
+    mid-current; raise <b>coherence</b> and the stalks start leaning together in coherent gusts. Drag
+    to orbit, scroll to zoom.</p>
+  <div id="stage"><div class="badge">helix-noise · sampleUW(x,y,z,out,t) · three.js</div></div>
+  <div class="row">
+    <label>churn <input id="churn" type="range" min="0" max="2.5" step="0.05" value="1"><span id="v-churn">1.0×</span></label>
+    <label>coherence <input id="coh" type="range" min="0" max="1" step="0.05" value="0.5"><span id="v-coh">50%</span></label>
+    <label>current <input id="cur" type="range" min="0.2" max="2.5" step="0.1" value="1.1"><span id="v-cur">1.1×</span></label>
+    <label>slope <input id="slope" type="range" min="1" max="3" step="0.1" value="1.9"><span id="v-slope">1.9</span></label>
+    <label>fronds <input id="np" type="range" min="60" max="420" step="20" value="240"><span id="v-np">240</span></label>
+    <button id="reseed">↻ seed</button>
+  </div>
+  <div class="note" id="note">loading three.js…</div>
+</div>
+
+<script src="../dist/helix-noise.global.js"></script>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+  import * as THREE from "three";
+  import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+  const params = { churn: 1, coh: 0.5, cur: 1.1, slope: 1.9, np: 240, seed: 3 };
+  const field = HelixNoise.create({ modes: 40, slope: params.slope, helicity: 0.5,
+    coherence: params.coh, churn: params.churn, seed: params.seed, kmax: 5.5 });
+
+  const stage = document.getElementById("stage");
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(Math.min(2, devicePixelRatio));
+  stage.appendChild(renderer.domElement);
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x04080c);
+  scene.fog = new THREE.Fog(0x061019, 14, 34);
+  const camera = new THREE.PerspectiveCamera(46, 16/10, 0.1, 100);
+  camera.position.set(0, 4.5, 16);
+  const controls = new OrbitControls(camera, renderer.domElement);
+  controls.target.set(0, 4, 0);
+  controls.enableDamping = true; controls.autoRotate = true; controls.autoRotateSpeed = 0.5;
+  controls.minDistance = 6; controls.maxDistance = 30;
+
+  // god-ray-ish underwater lighting
+  scene.add(new THREE.HemisphereLight(0x8fd6ff, 0x02131a, 0.9));
+  const sun = new THREE.DirectionalLight(0xdff3ff, 1.4); sun.position.set(3, 12, 5); scene.add(sun);
+  const fill = new THREE.DirectionalLight(0x2f6f8f, 0.5); fill.position.set(-6, 3, -4); scene.add(fill);
+
+  // seabed
+  const floorGeo = new THREE.PlaneGeometry(60, 60);
+  const floor = new THREE.Mesh(floorGeo, new THREE.MeshStandardMaterial({ color: 0x0a1a20, roughness: 1 }));
+  floor.rotation.x = -Math.PI/2; scene.add(floor);
+
+  // --- kelp geometry ---------------------------------------------------------
+  // Each frond = a ribbon: SEG quads up its height. We rebuild vertex positions each
+  // frame by walking the field from the base, so bend + sway both come from sampleUW(t).
+  const SEG = 22, HEIGHT = 8.4, SEGH = HEIGHT/SEG, WIDTH = 0.14;
+  let NP = params.np;
+  let baseX, baseZ, phaseOff, geo, mesh;
+  const uw = [0,0,0,0,0,0];
+
+  function mulberry(s){ return function(){ s|=0; s=s+0x6D2B79F5|0; let t=Math.imul(s^s>>>15,1|s);
+    t=t+Math.imul(t^t>>>7,61|t)^t; return ((t^t>>>14)>>>0)/4294967296; }; }
+
+  function build(){
+    if(mesh){ scene.remove(mesh); geo.dispose(); mesh.material.dispose(); }
+    NP = params.np;
+    const rng = mulberry(params.seed*2654435761>>>0);
+    baseX = new Float32Array(NP); baseZ = new Float32Array(NP); phaseOff = new Float32Array(NP);
+    const R = 9.5;
+    for(let i=0;i<NP;i++){
+      let x,z; do { x=(rng()*2-1)*R; z=(rng()*2-1)*R; } while(x*x+z*z > R*R);
+      baseX[i]=x; baseZ[i]=z; phaseOff[i]=rng()*100;
+    }
+    // vertices: per frond, (SEG+1) rings of 2 verts
+    const vpf = (SEG+1)*2;
+    const positions = new Float32Array(NP*vpf*3);
+    const colors = new Float32Array(NP*vpf*3);
+    const indices = [];
+    const cBase = new THREE.Color(0x1f6b52), cTip = new THREE.Color(0x8fe6a8);
+    const c = new THREE.Color();
+    for(let i=0;i<NP;i++){
+      const vo = i*vpf;
+      for(let s=0;s<=SEG;s++){
+        c.copy(cBase).lerp(cTip, s/SEG);
+        for(let k=0;k<2;k++){ const o=(vo+s*2+k)*3; colors[o]=c.r; colors[o+1]=c.g; colors[o+2]=c.b; }
+      }
+      for(let s=0;s<SEG;s++){
+        const a=vo+s*2, b=a+1, cc=a+2, d=a+3;
+        indices.push(a,b,cc, b,d,cc);
+      }
+    }
+    geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+    geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+    geo.setIndex(indices);
+    const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.62, metalness: 0.0,
+      side: THREE.DoubleSide });
+    mesh = new THREE.Mesh(geo, mat);
+    scene.add(mesh);
+    document.getElementById("note").textContent =
+      `${NP} fronds × ${SEG} segments · ${(NP*SEG).toLocaleString()} field samples/frame · three.js r160`;
+  }
+
+  // walk each frond up through the field; write ribbon vertices
+  let ft = 0;
+  const px = new Float32Array(SEG+1), py = new Float32Array(SEG+1), pz = new Float32Array(SEG+1);
+  function updateGeometry(dt){
+    ft += dt*params.churn;               // live churn = ft scaling (phase = ph + om·t)
+    const pos = geo.attributes.position.array;
+    const vpf = (SEG+1)*2;
+    const CUR = params.cur;
+    for(let i=0;i<NP;i++){
+      let x=baseX[i], y=0, z=baseZ[i];
+      const ph = phaseOff[i];
+      px[0]=x; py[0]=0; pz[0]=z;
+      // integrate the stalk: each segment leans toward the local horizontal flow, more near the tip
+      let dirx=0, dirz=0;
+      for(let s=1;s<=SEG;s++){
+        // sample the field in a domain-scaled coordinate + per-frond phase so neighbours differ
+        field.sampleUW((x*0.34+ph), (y*0.34+1.7), (z*0.34+ph*0.7), uw, ft);
+        const stiff = s/SEG;                 // tip bends more than the anchored base
+        const push = CUR*stiff*stiff*0.7;
+        dirx = dirx*0.6 + uw[0]*push;
+        dirz = dirz*0.6 + uw[2]*push;
+        // keep segment length ~SEGH (buoyant, mostly upright): vertical component tapers with lean
+        const lean = Math.min(0.8, Math.hypot(dirx,dirz)*0.55);
+        const up = Math.sqrt(Math.max(0.36, 1-lean*lean));
+        x += dirx*SEGH; z += dirz*SEGH; y += up*SEGH;
+        px[s]=x; py[s]=y; pz[s]=z;
+      }
+      // build ribbon: offset each ring left/right, facing roughly the camera-horizontal
+      const vo=i*vpf;
+      for(let s=0;s<=SEG;s++){
+        // tangent
+        const s0=Math.max(0,s-1), s1=Math.min(SEG,s+1);
+        const tx=px[s1]-px[s0], tz=pz[s1]-pz[s0];
+        let nx=-tz, nz=tx; const nl=Math.hypot(nx,nz)||1; nx/=nl; nz/=nl;
+        const w=WIDTH*(1-0.55*s/SEG);
+        const o0=(vo+s*2)*3, o1=(vo+s*2+1)*3;
+        pos[o0]=px[s]-nx*w; pos[o0+1]=py[s]; pos[o0+2]=pz[s]-nz*w;
+        pos[o1]=px[s]+nx*w; pos[o1+1]=py[s]; pos[o1+2]=pz[s]+nz*w;
+      }
+    }
+    geo.attributes.position.needsUpdate = true;
+    geo.computeVertexNormals();
+  }
+
+  function size(){ renderer.setSize(stage.clientWidth, stage.clientHeight);
+    camera.aspect = stage.clientWidth/stage.clientHeight; camera.updateProjectionMatrix(); }
+  addEventListener("resize", size);
+
+  const $ = id => document.getElementById(id);
+  $("churn").addEventListener("input", e=>{ params.churn=parseFloat(e.target.value); $("v-churn").textContent=params.churn.toFixed(1)+"×"; });
+  $("cur").addEventListener("input", e=>{ params.cur=parseFloat(e.target.value); $("v-cur").textContent=params.cur.toFixed(1)+"×"; });
+  $("coh").addEventListener("input", e=>{ params.coh=parseFloat(e.target.value); $("v-coh").textContent=Math.round(params.coh*100)+"%";
+    field.set({ coherence:params.coh }); });
+  $("slope").addEventListener("input", e=>{ params.slope=parseFloat(e.target.value); $("v-slope").textContent=params.slope.toFixed(1);
+    field.set({ slope:params.slope }); });
+  $("np").addEventListener("input", e=>{ params.np=parseInt(e.target.value,10); $("v-np").textContent=params.np; build(); });
+  $("reseed").addEventListener("click", ()=>{ params.seed=(params.seed*1103515245+12345)>>>0;
+    field.set({ seed:params.seed }); build(); });
+
+  size(); build();
+  if(window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches){ controls.autoRotate=false; params.churn=0; }
+  let last=0;
+  function loop(t){
+    const dt = last ? Math.min(0.05,(t-last)*0.001) : 0.016;
+    last = t || 0;                    // guard: first rAF t may be undefined -> avoid NaN dt
+    updateGeometry(dt); controls.update(); renderer.render(scene, camera); requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);        // start via rAF so t is always a real timestamp
+</script>
+</body>
+</html>

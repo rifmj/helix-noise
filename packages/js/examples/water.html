@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Helix Noise — flowing water surface</title>
+<style>
+  :root{
+    --bg:#04080d; --bg2:#0a1119; --panel:#0c141d; --hair:rgba(150,190,210,.12);
+    --hair2:rgba(150,190,210,.22); --ink:#e2eef4; --ink2:#8fa6b4; --ink3:#5a6c79;
+    --teal:#3fd4d0; --amber:#f4a13c; --cyan:#4fd6e6; --blue:#3aa0e0;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg)}
+  .wrap{max-width:1120px;margin:0 auto;padding:22px 20px 40px;color:var(--ink);
+    font-family:var(--sans);-webkit-font-smoothing:antialiased}
+  .eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.28em;text-transform:uppercase;
+    color:var(--cyan);margin:0 0 10px}
+  h1{font-size:clamp(24px,4.2vw,36px);line-height:1.04;margin:0 0 12px;font-weight:600;
+    letter-spacing:-.02em;text-wrap:balance}
+  h1 .thin{color:var(--ink2);font-weight:400}
+  .lede{max-width:70ch;color:var(--ink2);font-size:15px;line-height:1.65;margin:0 0 22px}
+  .lede b{color:var(--ink);font-weight:500}
+  .lede code{font-family:var(--mono);font-size:13px;color:var(--amber)}
+  .stage{position:relative;border:1px solid var(--hair);border-radius:14px;overflow:hidden;
+    background:#04080d;aspect-ratio:16/9;cursor:crosshair;touch-action:none}
+  canvas{display:block;width:100%;height:100%;image-rendering:auto}
+  .badge{position:absolute;top:12px;left:14px;font-family:var(--mono);font-size:10.5px;
+    letter-spacing:.14em;text-transform:uppercase;color:var(--ink2);
+    background:rgba(4,8,13,.5);border:1px solid var(--hair);border-radius:6px;
+    padding:5px 9px;backdrop-filter:blur(3px)}
+  .readout{position:absolute;top:12px;right:14px;font-family:var(--mono);font-size:11px;
+    color:var(--ink2);background:rgba(4,8,13,.5);border:1px solid var(--hair);
+    border-radius:6px;padding:6px 10px;text-align:right;backdrop-filter:blur(3px);line-height:1.55}
+  .readout b{font-weight:400;color:var(--teal)}
+  .hint{position:absolute;bottom:12px;left:14px;font-family:var(--mono);font-size:10px;
+    letter-spacing:.1em;text-transform:uppercase;color:var(--ink3)}
+  .panel{margin-top:14px;background:var(--panel);border:1px solid var(--hair);border-radius:14px;padding:18px 20px}
+  .knobs{display:grid;grid-template-columns:repeat(3,1fr);gap:22px}
+  @media(max-width:760px){.knobs{grid-template-columns:1fr;gap:16px}}
+  .knob .kh{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:4px}
+  .knob .kname{font-size:13.5px;font-weight:500}
+  .knob.star .kname{color:var(--cyan)}
+  .knob .kval{font-family:var(--mono);font-size:12.5px;color:var(--teal)}
+  .knob .kdesc{font-size:12px;color:var(--ink3);line-height:1.5;margin-top:7px;min-height:32px}
+  .knob .kpoles{display:flex;justify-content:space-between;font-family:var(--mono);
+    font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:var(--ink3);margin-top:3px}
+  input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:22px;background:transparent;cursor:pointer;margin:0}
+  input[type=range]::-webkit-slider-runnable-track{height:3px;border-radius:3px;background:linear-gradient(90deg,var(--amber),#1b5f78,var(--cyan))}
+  input[type=range]::-moz-range-track{height:3px;border-radius:3px;background:#1b5f78}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:15px;height:15px;
+    border-radius:50%;background:var(--ink);margin-top:-6px;border:2px solid var(--cyan);
+    box-shadow:0 0 0 3px rgba(79,214,230,.14)}
+  input[type=range]::-moz-range-thumb{width:15px;height:15px;border-radius:50%;background:var(--ink);border:2px solid var(--cyan)}
+  input[type=range]:focus-visible{outline:2px solid var(--cyan);outline-offset:4px;border-radius:4px}
+  .bar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:18px;padding-top:16px;border-top:1px solid var(--hair)}
+  button{font-family:var(--sans);font-size:13px;color:var(--ink);background:var(--bg2);
+    border:1px solid var(--hair2);border-radius:8px;padding:8px 14px;cursor:pointer;
+    display:inline-flex;align-items:center;gap:7px;transition:border-color .15s,background .15s}
+  button:hover{border-color:var(--cyan);background:#10202c}
+  button:active{transform:scale(.98)}
+  button:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+  button .dot{width:7px;height:7px;border-radius:50%;background:var(--teal)}
+  button.off .dot{background:var(--ink3)}
+  .spacer{flex:1}
+  .miniknob{display:flex;align-items:center;gap:9px;font-size:12px;color:var(--ink2);font-family:var(--mono)}
+  .miniknob input{width:76px}
+  .preset{font-family:var(--mono);font-size:11.5px;letter-spacing:.04em}
+  .foot{margin-top:20px;display:grid;grid-template-columns:1fr 1fr;gap:22px}
+  @media(max-width:760px){.foot{grid-template-columns:1fr}}
+  .foot h3{font-size:12px;font-family:var(--mono);letter-spacing:.18em;text-transform:uppercase;color:var(--cyan);margin:0 0 8px;font-weight:400}
+  .foot p{font-size:13px;color:var(--ink2);line-height:1.62;margin:0 0 8px}
+  .foot code{font-family:var(--mono);font-size:12px;color:var(--amber);background:rgba(244,161,60,.08);padding:1px 5px;border-radius:4px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <p class="eyebrow">Helix Noise · flowing water · caustics + sun-glints</p>
+  <h1>Flowing water surface <span class="thin">— ripples bent along <code style="color:var(--amber);font-size:.72em">field.sample()</code></span></h1>
+  <p class="lede">A moving water surface where the wave crests are <b>warped along the flow field's
+    streamlines</b>: a few travelling ripple layers, their lattice bent by the field, shaded with a
+    depth ramp, sharp <b>caustic</b> highlights on the crests, and specular <b>sun-glints</b>. The three
+    dials don't touch the water math — they reshape the underlying flow, and the ripples follow. Move the
+    pointer to steer the sun.</p>
+
+  <div class="stage" id="stage">
+    <canvas id="cv"></canvas>
+    <div class="badge" id="badge">building flow…</div>
+    <div class="readout" id="ro">—</div>
+    <div class="hint" id="hint">move pointer to move the sun</div>
+  </div>
+
+  <div class="panel">
+    <div class="knobs">
+      <div class="knob star">
+        <div class="kh"><span class="kname">Helicity</span><span class="kval" id="v-heli">+0.60</span></div>
+        <input type="range" id="heli" min="-1" max="1" step="0.02" value="0.6">
+        <div class="kpoles"><span style="color:var(--amber)">left −1</span><span style="color:var(--cyan)">right +1</span></div>
+        <div class="kdesc">Handedness of the flow that bends the ripples — the swirl of the current.</div>
+      </div>
+      <div class="knob">
+        <div class="kh"><span class="kname">Spectral slope</span><span class="kval" id="v-slope">1.7</span></div>
+        <input type="range" id="slope" min="0.8" max="3.0" step="0.1" value="1.7">
+        <div class="kpoles"><span>choppy</span><span>long swells</span></div>
+        <div class="kdesc">Steep = a few broad swells steer the surface; shallow = a busy, choppy current.</div>
+      </div>
+      <div class="knob">
+        <div class="kh"><span class="kname">Phase coherence</span><span class="kval" id="v-coh">55%</span></div>
+        <input type="range" id="coh" min="0" max="1" step="0.01" value="0.55">
+        <div class="kpoles"><span>even</span><span>channelled</span></div>
+        <div class="kdesc">Same spectrum, random → structured: the flow channels into distinct currents and eddies.</div>
+      </div>
+    </div>
+    <div class="bar">
+      <button id="btn-play"><span class="dot"></span><span id="play-lbl">Pause</span></button>
+      <button id="btn-seed"><span class="dot" style="background:var(--amber)"></span>Seed</button>
+      <div class="miniknob">flow<input type="range" id="spd" min="0" max="2.5" step="0.05" value="1"><span id="v-spd" style="color:var(--teal)">1.0×</span></div>
+      <div class="miniknob">bend<input type="range" id="bend" min="0" max="2.4" step="0.05" value="1.2"><span id="v-bend" style="color:var(--teal)">1.2</span></div>
+      <div class="miniknob">waves<input type="range" id="wav" min="0.6" max="1.8" step="0.05" value="1"><span id="v-wav" style="color:var(--teal)">1.0×</span></div>
+      <div class="spacer"></div>
+      <button id="p-calm" class="preset">◇ calm</button>
+      <button id="p-stream" class="preset">◇ stream</button>
+      <button id="p-caustic" class="preset">◇ caustic</button>
+    </div>
+  </div>
+
+  <div class="foot">
+    <div>
+      <h3>How it works</h3>
+      <p>On each knob change the field is sampled onto a coarse grid, and a short streamline integration
+        gives a per-pixel <code>warp</code> offset — that's what bends the wave lattice to follow the current.
+        Every frame, four travelling ripple layers are summed at the warped coordinate, the surface normal
+        comes from their analytic gradient, and the shader adds a depth ramp, caustic crests, sun specular,
+        and a Fresnel sky term. All the flow comes from <code>field.sample()</code> — the rest is a small
+        surface shader you can lift straight into a fragment program.</p>
+    </div>
+    <div>
+      <h3>Honest limits</h3>
+      <p>This is a stylised surface, not a water simulation — no gravity waves, no shore interaction, no true
+        refraction. The caustics are a crest-focus fake, not a traced light field. It renders on a downscaled
+        buffer and upscales, so at full screen the glints soften. For a physical solver you'd feed the same
+        velocities into a height-field or FFT-ocean; here the point is directable, real-time flow.</p>
+    </div>
+  </div>
+</div>
+
+<script src="../dist/helix-noise.global.js"></script>
+<script>
+(function(){
+  const TAU = Math.PI * 2;
+  const $ = id => document.getElementById(id);
+  const stage = $("stage"), cv = $("cv"), ctx = cv.getContext("2d");
+  // internal render buffer (downscaled, upscaled by the canvas)
+  const RW = 380, RH = 214;
+  cv.width = RW; cv.height = RH;
+  const imgData = ctx.createImageData(RW, RH), buf = imgData.data;
+
+  const params = { heli: 0.6, slope: 1.7, coh: 0.55, seed: 9 };
+  let FLOW = 1.0, BEND = 1.2, WAV = 1.0, sunAng = 2.3, playing = true, needBuild = true, t = 0;
+
+  let field = HelixNoise.create({ modes: 40, slope: params.slope, helicity: params.heli, coherence: params.coh, seed: params.seed });
+
+  // coarse velocity grid + bilinear sampler (for the streamline warp)
+  const GW = 160, GH = 90;
+  const GU = new Float32Array(GW * GH), GV = new Float32Array(GW * GH);
+  function buildGrid(){
+    const o = [0,0,0,0,0,0];
+    for (let j = 0; j < GH; j++) for (let i = 0; i < GW; i++){ field.sampleUW((i/GW)*TAU, (j/GH)*TAU, 0, o); const k = j*GW+i; GU[k]=o[0]; GV[k]=o[1]; }
+  }
+  const gbil = (A, x, y) => {
+    let fx=(x/TAU)*GW, fy=(y/TAU)*GH, x0=Math.floor(fx), y0=Math.floor(fy); const tx=fx-x0, ty=fy-y0;
+    x0=((x0%GW)+GW)%GW; y0=((y0%GH)+GH)%GH; const x1=(x0+1)%GW, y1=(y0+1)%GH;
+    const a=A[y0*GW+x0], b=A[y0*GW+x1], c=A[y1*GW+x0], d=A[y1*GW+x1];
+    return (a*(1-tx)+b*tx)*(1-ty)+(c*(1-tx)+d*tx)*ty;
+  };
+  // per-pixel streamline warp offset — bends the ripple lattice along the flow
+  const Dx = new Float32Array(RW * RH), Dy = new Float32Array(RW * RH);
+  function buildWarp(){
+    for (let j = 0; j < RH; j++) for (let i = 0; i < RW; i++){
+      let x=(i/RW)*TAU, y=(j/RH)*TAU, ax=0, ay=0;
+      for (let s = 0; s < 6; s++){ const u=gbil(GU,x,y), v=gbil(GV,x,y); x+=u*0.09; y+=v*0.09; ax+=u*0.09; ay+=v*0.09; }
+      Dx[j*RW+i]=ax; Dy[j*RW+i]=ay;
+    }
+  }
+  function rebuild(){ buildGrid(); buildWarp(); }
+
+  const LAYERS = [
+    { dx:1.0, dy:0.25, f:3.8,  w:1.00, sp:1, ph:0.0 },
+    { dx:-0.35,dy:1.0, f:6.3,  w:0.58, sp:1, ph:1.7 },
+    { dx:0.72,dy:-0.62,f:10.4, w:0.34, sp:2, ph:3.1 },
+    { dx:0.2, dy:0.9,  f:15.5, w:0.18, sp:3, ph:0.9 },
+  ].map(L => { const n = Math.hypot(L.dx,L.dy); return { ...L, dx:L.dx/n, dy:L.dy/n }; });
+
+  function render(){
+    const Lx=Math.cos(sunAng)*0.6, Ly=Math.sin(sunAng)*0.6, hln=Math.hypot(Lx,Ly,1.7), hx=Lx/hln, hy=Ly/hln, hz=1.7/hln;
+    const slope=1.7, fscale=WAV;
+    for (let j = 0; j < RH; j++) for (let i = 0; i < RW; i++){
+      const k=j*RW+i, px=(i/RW)*TAU + BEND*Dx[k], py=(j/RH)*TAU + BEND*Dy[k];
+      let hgt=0, gx=0, gy=0;
+      for (const L of LAYERS){ const f=L.f*fscale, arg=f*(L.dx*px+L.dy*py)-L.sp*t+L.ph, c=Math.cos(arg); hgt+=L.w*Math.sin(arg); const gg=L.w*c*f; gx+=gg*L.dx; gy+=gg*L.dy; }
+      let nx=-slope*gx, ny=-slope*gy, nz=1; const nn=Math.hypot(nx,ny,nz); nx/=nn; ny/=nn; nz/=nn;
+      const hn=hgt/2.10, tt2=Math.pow(hn*0.5+0.5,2);
+      let r=0.006+0.045*tt2, g=0.045+0.30*tt2, b=0.10+0.42*tt2;
+      const spec=Math.pow(Math.max(0,nx*hx+ny*hy+nz*hz),110); r+=spec*1.5; g+=spec*1.45; b+=spec*1.3;
+      const caus=Math.pow(Math.max(0,hn),7)*(0.4+0.6*nz); r+=caus*0.45; g+=caus*1.05; b+=caus*0.95;
+      const fres=Math.pow(1-nz,3); r+=fres*0.10; g+=fres*0.16; b+=fres*0.22;
+      const o=k*4;
+      buf[o]=Math.min(255,255*Math.pow(Math.max(0,r),0.85));
+      buf[o+1]=Math.min(255,255*Math.pow(Math.max(0,g),0.85));
+      buf[o+2]=Math.min(255,255*Math.pow(Math.max(0,b),0.85));
+      buf[o+3]=255;
+    }
+    ctx.putImageData(imgData,0,0);
+  }
+
+  function frame(){
+    if (needBuild){ rebuild(); needBuild=false; updateBadge(); }
+    if (playing) t += 0.05 * FLOW;
+    render();
+    requestAnimationFrame(frame);
+  }
+
+  function updateBadge(){
+    $("badge").textContent = `${RW}×${RH} surface · flow from helix-noise`;
+    const hn=params.heli;
+    $("ro").innerHTML=`helicity <b style="color:${hn>=0?'var(--cyan)':'var(--amber)'}">${hn>0?'+':''}${hn.toFixed(2)}</b><br>slope <b style="color:var(--ink)">${params.slope.toFixed(1)}</b><br>coherence <b>${Math.round(params.coh*100)}%</b>`;
+  }
+  function bindKnob(id,key,fmt){ $(id).addEventListener("input",e=>{ params[key]=parseFloat(e.target.value); $("v-"+id).textContent=fmt(params[key]); field.set({slope:params.slope,helicity:params.heli,coherence:params.coh,seed:params.seed}); needBuild=true; updateBadge(); }); }
+  bindKnob("heli","heli",v=>(v>0?"+":"")+v.toFixed(2));
+  bindKnob("slope","slope",v=>v.toFixed(1));
+  bindKnob("coh","coh",v=>Math.round(v*100)+"%");
+  $("spd").addEventListener("input",e=>{FLOW=parseFloat(e.target.value);$("v-spd").textContent=FLOW.toFixed(1)+"×";});
+  $("bend").addEventListener("input",e=>{BEND=parseFloat(e.target.value);$("v-bend").textContent=BEND.toFixed(1);});
+  $("wav").addEventListener("input",e=>{WAV=parseFloat(e.target.value);$("v-wav").textContent=WAV.toFixed(1)+"×";});
+  $("btn-play").addEventListener("click",()=>{playing=!playing;$("play-lbl").textContent=playing?"Pause":"Play";$("btn-play").classList.toggle("off",!playing);});
+  $("btn-seed").addEventListener("click",()=>{ params.seed=(params.seed*1103515245+12345)>>>0; field.set({seed:params.seed}); needBuild=true; });
+
+  function preset(h,s,c,fl,bd,wv){
+    params.heli=h;params.slope=s;params.coh=c;FLOW=fl;BEND=bd;WAV=wv;
+    $("heli").value=h;$("slope").value=s;$("coh").value=c;$("spd").value=fl;$("bend").value=bd;$("wav").value=wv;
+    $("v-heli").textContent=(h>0?"+":"")+h.toFixed(2);$("v-slope").textContent=s.toFixed(1);$("v-coh").textContent=Math.round(c*100)+"%";
+    $("v-spd").textContent=fl.toFixed(1)+"×";$("v-bend").textContent=bd.toFixed(1);$("v-wav").textContent=wv.toFixed(1)+"×";
+    field.set({slope:s,helicity:h,coherence:c,seed:params.seed}); needBuild=true; updateBadge();
+  }
+  $("p-calm").addEventListener("click",()=>preset(0.3,2.4,0.4,0.6,0.7,0.8));
+  $("p-stream").addEventListener("click",()=>preset(0.8,1.2,0.7,1.4,1.6,1.1));
+  $("p-caustic").addEventListener("click",()=>preset(-0.5,1.6,0.6,1.0,1.3,1.4));
+
+  stage.addEventListener("pointermove",e=>{
+    const r=stage.getBoundingClientRect();
+    const ux=((e.clientX-r.left)/r.width)*2-1, uy=((e.clientY-r.top)/r.height)*2-1;
+    sunAng=Math.atan2(uy,ux);
+  });
+
+  field.set({slope:params.slope,helicity:params.heli,coherence:params.coh,seed:params.seed});
+  rebuild(); needBuild=false; updateBadge();
+  if (window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches){
+    playing=false; $("play-lbl").textContent="Play"; $("btn-play").classList.add("off");
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

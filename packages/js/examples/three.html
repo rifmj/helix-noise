@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Helix Noise — three.js particles</title>
+<style>
+  html,body{margin:0;background:#070a0e;color:#cdd6dd;font-family:system-ui,sans-serif}
+  .wrap{max-width:820px;margin:0 auto;padding:22px 16px}
+  h1{font-size:18px;font-weight:600;margin:0 0 6px}
+  p{color:#8a97a2;font-size:13.5px;line-height:1.6;margin:0 0 14px}
+  code{font-family:ui-monospace,Menlo,monospace;color:#f4a13c;font-size:12.5px}
+  #stage{width:100%;aspect-ratio:16/10;border:1px solid rgba(150,180,200,.15);border-radius:10px;overflow:hidden}
+  .note{margin-top:12px;font-size:12px;color:#5d6b77;font-family:ui-monospace,monospace}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Helix Noise in <code>three.js</code></h1>
+  <p>A <code>THREE.Points</code> cloud of 16,000 particles, each advected every frame by
+    <code>field.sample(x, y, z)</code> and coloured by helicity. Helix Noise only produces velocities —
+    it drops into any renderer. Drag to orbit. (Loads three.js from a CDN.)</p>
+  <div id="stage"></div>
+  <div class="note" id="note">loading three.js…</div>
+</div>
+
+<script src="../dist/helix-noise.global.js"></script>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+  import * as THREE from "three";
+  import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+  const TAU = Math.PI * 2, PI = Math.PI;
+  const field = HelixNoise.create({ modes: 44, slope: 1.6, helicity: 0.8, coherence: 0.5, seed: 7 });
+
+  const stage = document.getElementById("stage");
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(Math.min(2, devicePixelRatio));
+  function size(){ renderer.setSize(stage.clientWidth, stage.clientHeight); }
+  stage.appendChild(renderer.domElement);
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x070a0e);
+  const camera = new THREE.PerspectiveCamera(50, 16/10, 0.1, 100);
+  camera.position.set(0, 0, 9);
+  const controls = new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true; controls.autoRotate = true; controls.autoRotateSpeed = 0.6;
+
+  const N = 16000;
+  const pos = new Float32Array(N * 3), col = new Float32Array(N * 3), life = new Float32Array(N);
+  const teal = new THREE.Color(0x2fd6bf), amber = new THREE.Color(0xf4a13c);
+  function respawn(i, fresh){
+    const x = Math.random()*TAU, y = Math.random()*TAU, z = Math.random()*TAU;
+    pos[i*3]=x-PI; pos[i*3+1]=y-PI; pos[i*3+2]=z-PI;
+    const h = field.helicityDensity(x, y, z), c = h >= 0 ? teal : amber;
+    col[i*3]=c.r; col[i*3+1]=c.g; col[i*3+2]=c.b;
+    life[i] = (fresh ? Math.random() : 1) * (60 + Math.random()*120);
+  }
+  for (let i=0;i<N;i++) respawn(i, true);
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute("color", new THREE.BufferAttribute(col, 3));
+  const mat = new THREE.PointsMaterial({ size: 0.045, vertexColors: true, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false });
+  scene.add(new THREE.Points(geo, mat));
+
+  const uw = [0,0,0,0,0,0];
+  function step(){
+    for (let i=0;i<N;i++){
+      const x = pos[i*3]+PI, y = pos[i*3+1]+PI, z = pos[i*3+2]+PI;
+      field.sampleUW(x, y, z, uw);
+      if (--life[i] <= 0){ respawn(i, false); continue; }
+      let nx = ((x + uw[0]*0.06) % TAU + TAU) % TAU;
+      let ny = ((y + uw[1]*0.06) % TAU + TAU) % TAU;
+      let nz = ((z + uw[2]*0.06) % TAU + TAU) % TAU;
+      pos[i*3]=nx-PI; pos[i*3+1]=ny-PI; pos[i*3+2]=nz-PI;
+    }
+    geo.attributes.position.needsUpdate = true;
+  }
+  function loop(){ step(); controls.update(); renderer.render(scene, camera); requestAnimationFrame(loop); }
+
+  size(); addEventListener("resize", ()=>{ size(); camera.aspect = stage.clientWidth/stage.clientHeight; camera.updateProjectionMatrix(); });
+  document.getElementById("note").textContent = "16,000 particles advected by field.sample() · three.js r160";
+  loop();
+</script>
+</body>
+</html>

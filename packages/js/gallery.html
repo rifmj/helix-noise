@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Helix Noise — gallery</title>
+<style>
+  :root{
+    --bg:#070a0e; --bg2:#0c1016; --panel:#0f151c; --hair:rgba(150,180,200,.12);
+    --hair2:rgba(150,180,200,.22); --ink:#e4ecf1; --ink2:#93a3b0; --ink3:#5d6b77;
+    --teal:#2fd6bf; --amber:#f4a13c; --cyan:#38d9d1;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1120px;margin:0 auto;padding:22px 18px 48px}
+  .top{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
+  h1{font-size:22px;font-weight:600;margin:0;letter-spacing:-.01em}
+  h1 code{font-family:var(--mono);color:var(--teal);font-size:19px}
+  .tag{font-family:var(--mono);font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--cyan)}
+  .sub{color:var(--ink2);font-size:14px;line-height:1.55;margin:8px 0 16px;max-width:76ch}
+  .sub b{color:var(--ink);font-weight:500}
+  .sub code{font-family:var(--mono);font-size:12.5px;color:var(--amber)}
+  .controls{background:var(--panel);border:1px solid var(--hair);border-radius:12px;padding:14px 16px;position:sticky;top:8px;z-index:5;backdrop-filter:blur(6px)}
+  .crow{display:flex;flex-wrap:wrap;gap:16px 22px;align-items:center}
+  .knob{display:flex;flex-direction:column;gap:2px;min-width:150px;flex:1}
+  .kh{display:flex;justify-content:space-between;align-items:baseline}
+  .kname{font-size:12.5px;font-weight:500}
+  .kname.star{color:var(--cyan)}
+  .kval{font-family:var(--mono);font-size:12px;color:var(--teal)}
+  input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:18px;background:transparent;cursor:pointer;margin:0}
+  input[type=range]::-webkit-slider-runnable-track{height:3px;border-radius:3px;background:linear-gradient(90deg,var(--amber),#1b6f66,var(--teal))}
+  input[type=range]::-moz-range-track{height:3px;border-radius:3px;background:#1b6f66}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:14px;height:14px;border-radius:50%;background:var(--ink);margin-top:-5.5px;border:2px solid var(--cyan)}
+  input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;background:var(--ink);border:2px solid var(--cyan)}
+  button{font-family:var(--sans);font-size:12.5px;color:var(--ink);background:var(--bg2);border:1px solid var(--hair2);border-radius:8px;padding:7px 12px;cursor:pointer;display:inline-flex;align-items:center;gap:6px}
+  button:hover{border-color:var(--cyan);background:#111922}
+  button .dot{width:7px;height:7px;border-radius:50%;background:var(--teal)}
+  button.off .dot{background:var(--ink3)}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:14px;margin-top:16px}
+  figure{margin:0;background:var(--bg2);border:1px solid var(--hair);border-radius:12px;overflow:hidden}
+  figure canvas{display:block;width:100%;aspect-ratio:3/2;background:#070a0e}
+  figcaption{padding:9px 12px 11px}
+  .cap-t{font-size:13px;font-weight:500;display:flex;align-items:center;gap:7px}
+  .cap-t .n{font-family:var(--mono);font-size:10px;color:var(--ink3);border:1px solid var(--hair);border-radius:4px;padding:1px 5px}
+  .cap-u{font-size:11.5px;color:var(--ink3);margin-top:3px;line-height:1.4}
+  .foot{margin-top:20px;color:var(--ink3);font-size:12px;line-height:1.6;font-family:var(--mono)}
+  .foot a{color:var(--teal)}
+  .foot code{color:var(--amber)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <span class="tag">gallery</span>
+    <h1><code>Helix&nbsp;Noise</code> — one field, many looks</h1>
+  </div>
+  <p class="sub">Nine renderers, one <b>Helix Noise</b> field. Every tile below is driven by the same
+    <code>HelixNoise.create(...)</code> — move the three sliders and watch all of them re-tune at once.
+    It's the same divergence-free velocity field underneath; the renderer is just a choice.</p>
+
+  <div class="controls">
+    <div class="crow">
+      <div class="knob">
+        <div class="kh"><span class="kname star">Helicity — p</span><span class="kval" id="v-heli">+0.70</span></div>
+        <input type="range" id="heli" min="-1" max="1" step="0.02" value="0.7">
+      </div>
+      <div class="knob">
+        <div class="kh"><span class="kname">Spectral slope</span><span class="kval" id="v-slope">1.5</span></div>
+        <input type="range" id="slope" min="0.6" max="3" step="0.1" value="1.5">
+      </div>
+      <div class="knob">
+        <div class="kh"><span class="kname">Phase coherence</span><span class="kval" id="v-coh">50%</span></div>
+        <input type="range" id="coh" min="0" max="1" step="0.01" value="0.5">
+      </div>
+      <button id="btn-seed"><span class="dot" style="background:var(--amber)"></span>New seed</button>
+      <button id="btn-play"><span class="dot"></span><span id="play-lbl">Pause</span></button>
+    </div>
+  </div>
+
+  <div class="grid" id="grid"></div>
+
+  <div class="foot">
+    Every tile is the same <code>helix-noise.js</code> field, sampled a different way — particles, dye,
+    arrows, line-integral convolution, a vorticity map, contours, a warped mesh.
+    See <a href="sandbox.html">sandbox.html</a> for the full single-view demo and
+    <a href="README.md">README.md</a> for the API.
+  </div>
+</div>
+
+<script src="dist/helix-noise.global.js"></script>
+<script>
+(function(){
+  var TAU = 2*Math.PI, $ = function(id){return document.getElementById(id);};
+  var params = { heli:0.7, slope:1.5, coh:0.5, seed:11 };
+  var field = HelixNoise.create({ modes:44, slope:params.slope, helicity:params.heli, coherence:params.coh, seed:params.seed });
+  var W = 264, H = 176;
+
+  // --- shared helpers -------------------------------------------------------
+  function grid2D(nx, ny){
+    var U=new Float32Array(nx*ny), V=new Float32Array(nx*ny), Hd=new Float32Array(nx*ny), uw=[0,0,0,0,0,0];
+    for(var j=0;j<ny;j++)for(var i=0;i<nx;i++){
+      field.sampleUW(i/nx*TAU, j/ny*TAU, 0, uw);
+      var o=j*nx+i; U[o]=uw[0]; V[o]=uw[1]; Hd[o]=uw[0]*uw[3]+uw[1]*uw[4]+uw[2]*uw[5];
+    }
+    return { nx:nx, ny:ny, U:U, V:V, H:Hd };
+  }
+  function bil(G, F, x, y){
+    var fx=x/TAU*G.nx, fy=y/TAU*G.ny, x0=Math.floor(fx), y0=Math.floor(fy), tx=fx-x0, ty=fy-y0;
+    x0=((x0%G.nx)+G.nx)%G.nx; y0=((y0%G.ny)+G.ny)%G.ny; var x1=(x0+1)%G.nx, y1=(y0+1)%G.ny;
+    var a=F[y0*G.nx+x0], b=F[y0*G.nx+x1], c=F[y1*G.nx+x0], d=F[y1*G.nx+x1];
+    return (a*(1-tx)+b*tx)*(1-ty)+(c*(1-tx)+d*tx)*ty;
+  }
+  function ta(h, s){ s=0.25+0.75*Math.min(1,s); return h>=0 ? "rgba(47,214,191,"+s.toFixed(2)+")" : "rgba(244,161,60,"+s.toFixed(2)+")"; }
+  function diver(h){ var a=Math.min(1,Math.abs(h/2.2)), b=Math.pow(a,0.7);
+    return h>=0 ? [26*b, (26+180*b), (18+150*b)] : [(26+205*b), (18+128*b), 26*b]; }
+  function heat(t){ t=Math.min(1,Math.max(0,t));
+    if(t<0.5){var u=t/0.5; return [ (0.05+0.10*u)*255,(0.14+0.62*u)*255,(0.28+0.5*u)*255 ]; }
+    var u2=(t-0.5)/0.5; return [ (0.15+0.82*u2)*255,(0.76+0.24*u2)*255,(0.78+0.22*u2)*255 ]; }
+  function rnd(seed){ var s=seed>>>0; return function(){ s=(s*1664525+1013904223)>>>0; return s/4294967296; }; }
+  function offscreen(w,h){ var c=document.createElement("canvas"); c.width=w; c.height=h; return c; }
+
+  // --- tiles ----------------------------------------------------------------
+  var TILES = [
+    { key:"streaklines", label:"3-D streamlines", use:"the signature look — orbiting helical ribbons",
+      animated:true,
+      build:function(t){ var R=rnd(params.seed^0x9e37); t.p=[]; for(var i=0;i<520;i++)t.p.push({x:R()*TAU,y:R()*TAU,z:R()*TAU,life:R()*70,tr:[]}); t.yaw=0.5; },
+      frame:function(t,ctx){ ctx.fillStyle="#070a0e"; ctx.fillRect(0,0,W,H); t.yaw+=0.004;
+        var cy=Math.cos(t.yaw),sy=Math.sin(t.yaw),cp=Math.cos(0.42),sp=Math.sin(0.42),S=0.44*Math.min(W,H),cx=W/2,ccy=H/2;
+        ctx.globalCompositeOperation="lighter"; ctx.lineCap="round"; ctx.lineWidth=1;
+        for(var i=0;i<t.p.length;i++){ var q=t.p[i]; var s=field.sample(q.x,q.y,q.z);
+          q.tr.push([q.x,q.y,q.z]); if(q.tr.length>9)q.tr.shift();
+          q.x=((q.x+s[0]*0.11)%TAU+TAU)%TAU; q.y=((q.y+s[1]*0.11)%TAU+TAU)%TAU; q.z=((q.z+s[2]*0.11)%TAU+TAU)%TAU;
+          if(--q.life<=0){ q.life=50+Math.random()*70; q.tr.length=0; }
+          var h=field.helicityDensity(q.x,q.y,q.z);
+          ctx.strokeStyle=ta(h,0.5); ctx.beginPath(); var started=false, pj;
+          for(var k=0;k<q.tr.length;k++){ var wx=(q.tr[k][0]/TAU)*2-1,wy=(q.tr[k][1]/TAU)*2-1,wz=(q.tr[k][2]/TAU)*2-1;
+            var X=wx*cy+wz*sy, Z=-wx*sy+wz*cy, Y=wy*cp-Z*sp, Zc=wy*sp+Z*cp, pe=1/(1+0.26*Zc);
+            var sx=cx+X*S*pe, syy=ccy-Y*S*pe;
+            if(k>0){ var dq=q.tr[k], pq=q.tr[k-1]; if(Math.abs(dq[0]-pq[0])<TAU*0.5&&Math.abs(dq[1]-pq[1])<TAU*0.5&&Math.abs(dq[2]-pq[2])<TAU*0.5){ if(!started){ctx.moveTo(pjx,pjy);started=true;} ctx.lineTo(sx,syy);} else started=false; }
+            var pjx=sx, pjy=syy;
+          }
+          ctx.stroke();
+        }
+        ctx.globalCompositeOperation="source-over";
+      } },
+
+    { key:"particles", label:"flow particles", use:"advect a particle system, no simulation",
+      animated:true,
+      build:function(t){ t.G=grid2D(150,100); var R=rnd(params.seed^0x1234); t.p=new Float32Array(2600); for(var i=0;i<1300;i++){t.p[i*2]=R()*TAU;t.p[i*2+1]=R()*TAU;} t.life=new Float32Array(1300); for(var j=0;j<1300;j++)t.life[j]=R()*90; t.R=R; },
+      frame:function(t,ctx){ ctx.fillStyle="rgba(7,10,14,0.10)"; ctx.fillRect(0,0,W,H); ctx.globalCompositeOperation="lighter"; ctx.lineWidth=1.1; ctx.lineCap="round";
+        var sx=W/TAU, sy=H/TAU;
+        for(var i=0;i<1300;i++){ var x=t.p[i*2], y=t.p[i*2+1], u=bil(t.G,t.G.U,x,y), v=bil(t.G,t.G.V,x,y);
+          var nx=((x+u*0.11)%TAU+TAU)%TAU, ny=((y+v*0.11)%TAU+TAU)%TAU;
+          if(--t.life[i]<=0){ t.life[i]=60+t.R()*60; t.p[i*2]=t.R()*TAU; t.p[i*2+1]=t.R()*TAU; continue; }
+          if(Math.abs(nx-x)<TAU*0.5&&Math.abs(ny-y)<TAU*0.5){ ctx.strokeStyle=ta(bil(t.G,t.G.H,x,y),0.55); ctx.beginPath(); ctx.moveTo(x*sx,y*sy); ctx.lineTo(nx*sx,ny*sy); ctx.stroke(); }
+          t.p[i*2]=nx; t.p[i*2+1]=ny;
+        }
+        ctx.globalCompositeOperation="source-over";
+      } },
+
+    { key:"smoke", label:"smoke / dye", use:"passive-scalar advection — smoke without a solver",
+      animated:true,
+      build:function(t){ var nx=112, ny=75; t.G=grid2D(nx,ny); t.nx=nx; t.ny=ny; t.d=new Float32Array(nx*ny); t.e=new Float32Array(nx*ny); t.img=offscreen(nx,ny); t.ictx=t.img.getContext("2d"); t.id=t.ictx.createImageData(nx,ny); t.tk=0; },
+      frame:function(t,ctx){ var nx=t.nx, ny=t.ny, tmp=t.d; t.d=t.e; t.e=tmp; t.tk+=0.05;
+        for(var j=0;j<ny;j++)for(var i=0;i<nx;i++){ var o=j*nx+i; var u=t.G.U[o], v=t.G.V[o];
+          var px=i-u*(nx/TAU)*0.075, py=j-v*(ny/TAU)*0.075 + 0.9;
+          var s=0; if(px>=0&&px<nx-1&&py>=0&&py<ny-1){ var x0=px|0,y0=py|0,fx=px-x0,fy=py-y0,a=t.e[y0*nx+x0],b=t.e[y0*nx+x0+1],c=t.e[(y0+1)*nx+x0],e=t.e[(y0+1)*nx+x0+1]; s=(a*(1-fx)+b*fx)*(1-fy)+(c*(1-fx)+e*fx)*fy; }
+          t.d[o]=s*0.992;
+        }
+        var cxk=Math.round(nx*(0.5+0.18*Math.sin(t.tk*0.6)));
+        for(var dy=0;dy<4;dy++)for(var dx=-6;dx<=6;dx++){ var xx=cxk+dx, yy=ny-2-dy; if(xx>=0&&xx<nx&&yy>=0&&yy<ny)t.d[yy*nx+xx]+=0.95*Math.exp(-dx*dx/14); }
+        var dd=t.id.data; for(var o2=0;o2<nx*ny;o2++){ var val=Math.min(1,t.d[o2]); var i4=o2*4; dd[i4]=8+val*230; dd[i4+1]=11+val*220; dd[i4+2]=15+val*210; dd[i4+3]=255; }
+        t.ictx.putImageData(t.id,0,0); ctx.imageSmoothingEnabled=true; ctx.drawImage(t.img,0,0,W,H);
+      } },
+
+    { key:"fireflies", label:"fireflies", use:"glowing point cloud carried by the flow",
+      animated:true,
+      build:function(t){ t.G=grid2D(140,94); var R=rnd(params.seed^0x77); t.p=new Float32Array(3000); for(var i=0;i<1500;i++){t.p[i*2]=R()*TAU;t.p[i*2+1]=R()*TAU;} t.life=new Float32Array(1500); for(var j=0;j<1500;j++)t.life[j]=R()*120; t.R=R; },
+      frame:function(t,ctx){ ctx.fillStyle="rgba(7,10,14,0.18)"; ctx.fillRect(0,0,W,H); ctx.globalCompositeOperation="lighter";
+        var sx=W/TAU, sy=H/TAU;
+        for(var i=0;i<1500;i++){ var x=t.p[i*2], y=t.p[i*2+1], u=bil(t.G,t.G.U,x,y), v=bil(t.G,t.G.V,x,y), sp=Math.hypot(u,v);
+          if(--t.life[i]<=0){ t.life[i]=70+t.R()*80; t.p[i*2]=t.R()*TAU; t.p[i*2+1]=t.R()*TAU; }
+          t.p[i*2]=((x+u*0.10)%TAU+TAU)%TAU; t.p[i*2+1]=((y+v*0.10)%TAU+TAU)%TAU;
+          var h=bil(t.G,t.G.H,x,y), r=0.7+sp*0.9; ctx.fillStyle=ta(h,0.35+sp*0.5);
+          ctx.beginPath(); ctx.arc(x*sx,y*sy,r,0,6.283); ctx.fill();
+        }
+        ctx.globalCompositeOperation="source-over";
+      } },
+
+    { key:"arrows", label:"vector field", use:"the classic quiver — direction and handedness",
+      animated:false,
+      render:function(t,ctx){ ctx.fillStyle="#070a0e"; ctx.fillRect(0,0,W,H); var G=grid2D(24,16), cw=W/24, ch=H/16;
+        ctx.lineCap="round";
+        for(var j=0;j<16;j++)for(var i=0;i<24;i++){ var o=j*24+i, u=G.U[o], v=G.V[o], m=Math.hypot(u,v)||1e-6;
+          var cx=(i+0.5)*cw, cy=(j+0.5)*ch, L=Math.min(cw,ch)*0.42*Math.min(1.6,m*1.4);
+          var dx=u/m*L, dy=v/m*L; ctx.strokeStyle=ta(G.H[o],0.4+Math.min(0.6,m*0.5)); ctx.lineWidth=1.3;
+          ctx.beginPath(); ctx.moveTo(cx-dx,cy-dy); ctx.lineTo(cx+dx,cy+dy);
+          var ah=L*0.5, a1=Math.atan2(dy,dx); ctx.lineTo(cx+dx-ah*Math.cos(a1-0.5),cy+dy-ah*Math.sin(a1-0.5)); ctx.moveTo(cx+dx,cy+dy); ctx.lineTo(cx+dx-ah*Math.cos(a1+0.5),cy+dy-ah*Math.sin(a1+0.5)); ctx.stroke();
+        }
+      } },
+
+    { key:"lic", label:"flow texture (LIC)", use:"line-integral convolution — silky flow-aligned streaks",
+      animated:false,
+      render:function(t,ctx){ var nx=176, ny=118, G=grid2D(nx,ny), R=rnd(params.seed^0xabcd), noise=new Float32Array(nx*ny);
+        for(var i=0;i<nx*ny;i++)noise[i]=R();
+        var off=offscreen(nx,ny), o2=off.getContext("2d"), id=o2.createImageData(nx,ny), dd=id.data;
+        for(var j=0;j<ny;j++)for(var ii=0;ii<nx;ii++){
+          var x=ii, y=j, acc=noise[j*nx+ii], n=1, hx=0;
+          for(var dir=-1;dir<=1;dir+=2){ var cx=ii, cy=j;
+            for(var s=0;s<14;s++){ var gx=Math.max(0,Math.min(nx-1,cx|0)), gy=Math.max(0,Math.min(ny-1,cy|0)), oo=gy*nx+gx, u=G.U[oo], v=G.V[oo], mm=Math.hypot(u,v)||1e-6;
+              cx+=dir*u/mm*0.9; cy+=dir*v/mm*0.9; if(cx<0||cx>=nx||cy<0||cy>=ny)break; acc+=noise[(cy|0)*nx+(cx|0)]; n++; hx+=G.H[oo]; }
+          }
+          var val=acc/n, tint=diver(hx/28), i4=(j*nx+ii)*4, lum=0.35+1.1*(val-0.5);
+          dd[i4]=Math.min(255,tint[0]*0.4+lum*150); dd[i4+1]=Math.min(255,tint[1]*0.4+lum*160); dd[i4+2]=Math.min(255,tint[2]*0.4+lum*165); dd[i4+3]=255;
+        }
+        o2.putImageData(id,0,0); ctx.imageSmoothingEnabled=true; ctx.drawImage(off,0,0,W,H);
+      } },
+
+    { key:"vorticity", label:"helicity field", use:"colour the scalar u·ω — a diagnostic map",
+      animated:false,
+      render:function(t,ctx){ var nx=176, ny=118, G=grid2D(nx,ny), off=offscreen(nx,ny), o2=off.getContext("2d"), id=o2.createImageData(nx,ny), dd=id.data;
+        for(var o=0;o<nx*ny;o++){ var c=diver(G.H[o]), i4=o*4; dd[i4]=c[0]; dd[i4+1]=c[1]; dd[i4+2]=c[2]; dd[i4+3]=255; }
+        o2.putImageData(id,0,0); ctx.imageSmoothingEnabled=true; ctx.drawImage(off,0,0,W,H);
+      } },
+
+    { key:"contours", label:"contours", use:"iso-bands of flow speed |u|",
+      animated:false,
+      render:function(t,ctx){ var nx=170, ny=114, G=grid2D(nx,ny), off=offscreen(nx,ny), o2=off.getContext("2d"), id=o2.createImageData(nx,ny), dd=id.data, mx=1e-6, S=new Float32Array(nx*ny);
+        for(var o=0;o<nx*ny;o++){ S[o]=Math.hypot(G.U[o],G.V[o]); if(S[o]>mx)mx=S[o]; }
+        var BANDS=7;
+        for(var j=0;j<ny;j++)for(var i=0;i<nx;i++){ var o=j*nx+i, tn=S[o]/mx, band=Math.floor(tn*BANDS);
+          var edge = (i>0 && Math.floor(S[o-1]/mx*BANDS)!==band) || (j>0 && Math.floor(S[(j-1)*nx+i]/mx*BANDS)!==band);
+          var c=heat(band/(BANDS-1)); var i4=o*4; var k=edge?0.35:1;
+          dd[i4]=c[0]*k; dd[i4+1]=c[1]*k; dd[i4+2]=c[2]*k; dd[i4+3]=255;
+        }
+        o2.putImageData(id,0,0); ctx.imageSmoothingEnabled=true; ctx.drawImage(off,0,0,W,H);
+      } },
+
+    { key:"warp", label:"domain warp", use:"displace a mesh by the field — generative pattern",
+      animated:false,
+      render:function(t,ctx){ ctx.fillStyle="#070a0e"; ctx.fillRect(0,0,W,H); var nx=34, ny=23, G=grid2D(nx,ny), amt=Math.min(W,H)*0.09;
+        function px(i,j){ var o=j*nx+i; return [ (i/(nx-1))*W + G.U[o]*amt, (j/(ny-1))*H + G.V[o]*amt, G.H[o] ]; }
+        ctx.lineWidth=1; ctx.globalCompositeOperation="lighter";
+        for(var j=0;j<ny;j++)for(var i=0;i<nx;i++){ var a=px(i,j);
+          if(i<nx-1){ var b=px(i+1,j); ctx.strokeStyle=ta((a[2]+b[2])*0.5,0.45); ctx.beginPath(); ctx.moveTo(a[0],a[1]); ctx.lineTo(b[0],b[1]); ctx.stroke(); }
+          if(j<ny-1){ var c=px(i,j+1); ctx.strokeStyle=ta((a[2]+c[2])*0.5,0.45); ctx.beginPath(); ctx.moveTo(a[0],a[1]); ctx.lineTo(c[0],c[1]); ctx.stroke(); }
+        }
+        ctx.globalCompositeOperation="source-over";
+      } }
+  ];
+
+  // --- build DOM ------------------------------------------------------------
+  var gridEl = $("grid");
+  TILES.forEach(function(t, idx){
+    var fig=document.createElement("figure");
+    var cv=document.createElement("canvas"); cv.width=W; cv.height=H;
+    var cap=document.createElement("figcaption");
+    cap.innerHTML='<div class="cap-t"><span class="n">'+String(idx+1).padStart(2,"0")+'</span>'+t.label+'</div><div class="cap-u">'+t.use+'</div>';
+    fig.appendChild(cv); fig.appendChild(cap); gridEl.appendChild(fig);
+    t.cv=cv; t.ctx=cv.getContext("2d");
+  });
+
+  var playing=true;
+  function rebuild(){
+    field.set({ modes:44, slope:params.slope, helicity:params.heli, coherence:params.coh, seed:params.seed });
+    TILES.forEach(function(t){ if(t.build)t.build(t); if(!t.animated && t.render)t.render(t,t.ctx); });
+  }
+  function loop(){ if(playing)TILES.forEach(function(t){ if(t.animated)t.frame(t,t.ctx); }); requestAnimationFrame(loop); }
+
+  function bind(id,key,fmt){ $(id).addEventListener("input",function(e){ params[key]=parseFloat(e.target.value); $("v-"+id).textContent=fmt(params[key]); rebuild(); }); }
+  bind("heli","heli",function(v){return (v>0?"+":"")+v.toFixed(2);});
+  bind("slope","slope",function(v){return v.toFixed(1);});
+  bind("coh","coh",function(v){return Math.round(v*100)+"%";});
+  $("btn-seed").addEventListener("click",function(){ params.seed=(params.seed*1103515245+12345)>>>0; rebuild(); });
+  $("btn-play").addEventListener("click",function(){ playing=!playing; $("play-lbl").textContent=playing?"Pause":"Play"; $("btn-play").classList.toggle("off",!playing); });
+
+  if(window.matchMedia&&matchMedia("(prefers-reduced-motion: reduce)").matches){ playing=false; $("play-lbl").textContent="Play"; $("btn-play").classList.add("off"); }
+
+  rebuild();
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>

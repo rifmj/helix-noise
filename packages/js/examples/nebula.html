@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Helix Noise — nebula (procedural raymarch, field.glsl + time)</title>
+<style>
+  html,body{margin:0;background:#070a0e;color:#cdd6dd;font-family:system-ui,sans-serif}
+  .wrap{max-width:980px;margin:0 auto;padding:22px 16px}
+  h1{font-size:19px;font-weight:600;margin:0 0 6px}
+  h1 code{color:#f4a13c}
+  p{color:#8a97a2;font-size:13.5px;line-height:1.6;margin:0 0 14px}
+  p b{color:#cdd6dd;font-weight:500}
+  code{font-family:ui-monospace,Menlo,monospace;color:#f4a13c;font-size:12.5px}
+  #stage{position:relative;width:100%;aspect-ratio:16/9;border:1px solid rgba(150,180,200,.15);
+    border-radius:10px;overflow:hidden;background:#070a0e;cursor:grab;touch-action:none}
+  #stage.drag{cursor:grabbing}
+  canvas{display:block;width:100%;height:100%}
+  .badge{position:absolute;top:10px;left:12px;font-family:ui-monospace,monospace;font-size:10.5px;
+    letter-spacing:.12em;text-transform:uppercase;color:#93a3b0;background:rgba(7,10,14,.55);
+    border:1px solid rgba(150,180,200,.14);border-radius:6px;padding:4px 8px;pointer-events:none}
+  .hint{position:absolute;bottom:10px;left:12px;font-family:ui-monospace,monospace;font-size:10px;
+    letter-spacing:.1em;text-transform:uppercase;color:#5d6b77;pointer-events:none}
+  .row{display:flex;flex-wrap:wrap;gap:14px;align-items:center;margin-top:12px;font-family:ui-monospace,monospace;font-size:12px;color:#93a3b0}
+  .row label{display:flex;align-items:center;gap:8px}
+  input[type=range]{width:110px}
+  button{font-family:ui-monospace,monospace;font-size:11.5px;color:#cdd6dd;background:#0c1016;
+    border:1px solid rgba(150,180,200,.22);border-radius:7px;padding:6px 11px;cursor:pointer}
+  button:hover{border-color:#38d9d1}
+  .note{margin-top:12px;font-size:12px;color:#5d6b77;font-family:ui-monospace,monospace}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Nebula — <code>field.glsl()</code> raymarched, alive in time</h1>
+  <p>No volume texture, no simulation, no CPU per frame: the fragment shader evaluates the field
+    <b>analytically at every step of every ray</b> through the emitted <code>hx(p, t)</code> — the
+    time-aware GLSL overload. Gas density is the field's own <b>speed</b> (so <b>coherence</b>
+    literally condenses the nebula out of haze — slide it), colour is <b>helicity</b>:
+    <span style="color:#2fd6bf">teal right-handed</span> vs
+    <span style="color:#f4a13c">amber left-handed</span> gas. The churn you see is the library's
+    Kolmogorov-scaled time evolution — small wisps flicker faster than the big lobes.
+    Drag to orbit, scroll to zoom.</p>
+  <div id="stage">
+    <canvas id="cv"></canvas>
+    <div class="badge">helix-noise · glsl raymarch · no bake</div>
+    <div class="hint">drag to rotate · scroll to zoom</div>
+  </div>
+  <div class="row">
+    <label>coherence <input id="coh" type="range" min="0" max="1" step="0.02" value="0.75"><span id="v-coh">75%</span></label>
+    <label>helicity <input id="heli" type="range" min="-1" max="1" step="0.05" value="0.5"><span id="v-heli">+0.50</span></label>
+    <label>slope <input id="slope" type="range" min="1" max="3" step="0.1" value="2.1"><span id="v-slope">2.1</span></label>
+    <label>churn <input id="churn" type="range" min="0" max="2.5" step="0.05" value="0.7"><span id="v-churn">0.7×</span></label>
+    <button id="reseed">↻ seed</button>
+  </div>
+  <div class="note" id="note">compiling…</div>
+</div>
+
+<script src="../dist/helix-noise.global.js"></script>
+<script>
+(function(){
+  var $=function(id){return document.getElementById(id);};
+  var cv=$("cv"), stage=$("stage"), gl=cv.getContext("webgl2",{antialias:false,alpha:false});
+  if(!gl){ $("note").textContent="WebGL2 not available in this browser."; return; }
+
+  var params={ coh:0.75, heli:0.5, slope:1.5, seed:5, modes:36 };
+  var CHURN=0.7, ZOOM=1.25;
+
+  var VERT="#version 300 es\nvoid main(){ vec2 p=vec2(float((gl_VertexID<<1)&2),float(gl_VertexID&2)); gl_Position=vec4(p*2.0-1.0,0.0,1.0); }";
+
+  function fragSource(glslField){
+    return "#version 300 es\nprecision highp float;\n"
+    + "uniform vec2 uRes; uniform float uTime;\n"
+    + "uniform vec3 uThr;                          // measured |curl| percentiles: p72 / p97 / p99.6\n"
+    + "uniform vec3 camPos,camR,camU,camF; uniform float fovT,aspect;\n"
+    + "out vec4 outC;\n"
+    + glslField + "\n"
+    + "float hash31(vec3 p){ p=fract(p*0.1031); p+=dot(p,p.zyx+31.32); return fract((p.x+p.y)*p.z); }\n"
+    + "vec3 hash33(vec3 p){ p=fract(p*vec3(0.1031,0.1030,0.0973)); p+=dot(p,p.yxz+33.33); return fract((p.xxy+p.yxx)*p.zyx); }\n"
+    + "vec3 stars(vec3 rd, float sc, float thr, float tw){\n"
+    + "  vec3 g=rd*sc; vec3 cell=floor(g); vec3 f=g-cell;\n"
+    + "  float h=hash31(cell);\n"
+    + "  if(h<thr) return vec3(0.0);\n"
+    + "  vec3 o=0.30+0.40*hash33(cell);              // star point inside the cell\n"
+    + "  float d=length(f-o);\n"
+    + "  float b=smoothstep(0.16,0.02,d)*(0.65+0.35*sin(uTime*tw*(0.5+h)+h*95.0));\n"
+    + "  return mix(vec3(0.80,0.87,1.0),vec3(1.0,0.85,0.72),step(0.5,fract(h*13.7)))*b;\n"
+    + "}\n"
+    + "void main(){\n"
+    + "  vec2 uv=(gl_FragCoord.xy/uRes)*2.0-1.0;\n"
+    + "  vec3 rd=normalize(camF+uv.x*fovT*aspect*camR+uv.y*fovT*camU);\n"
+    + "  // deep-space backdrop: near-black + two point-star layers (stable under rotation)\n"
+    + "  vec3 col=vec3(0.007,0.009,0.016)*(1.0-0.25*length(uv));\n"
+    + "  col+=stars(rd,26.0,0.982,2.2)*0.85;\n"
+    + "  col+=stars(rd,11.0,0.972,1.1)*0.38;\n"
+    + "  // bounding sphere of the cloud\n"
+    + "  float R=1.85; vec3 ce=vec3(0.0);\n"
+    + "  vec3 oc=camPos-ce; float b=dot(oc,rd); float cc=dot(oc,oc)-R*R; float disc=b*b-cc;\n"
+    + "  if(disc>0.0){\n"
+    + "    float sq=sqrt(disc); float tn=max(-b-sq,0.0), tf=-b+sq;\n"
+    + "    if(tf>tn){\n"
+    + "      const int NST=46;\n"
+    + "      float dt=(tf-tn)/float(NST), t=tn+dt*0.5;\n"
+    + "      float Tt=1.0; vec3 acc=vec3(0.0);\n"
+    + "      for(int i=0;i<NST;i++){\n"
+    + "        vec3 p=camPos+rd*t;\n"
+    + "        float r=length(p-ce);\n"
+    + "        float shape=smoothstep(R,R*0.45,r);\n"
+    + "        if(shape>0.015){\n"
+    + "          vec3 q=p*2.1+vec3(3.14159);           // sample around the field's centre\n"
+    + "          vec3 w=hxCurl(q,uTime);               // gas density = |vorticity| (enstrophy):\n"
+    + "          float wp=length(w)*(0.30+0.70*shape); // curl amplifies fine scales by k -> wisps\n"
+    + "          float den=smoothstep(uThr.x,uThr.y,wp); // transfer self-calibrated per field\n"
+    + "          if(den>0.012){\n"
+    + "            vec3 v=hx(q,uTime);\n"
+    + "            float hn=dot(v,w)/(length(v)*length(w)+1e-5); // relative helicity in [-1,1]\n"
+    + "            // dust at the fringes -> helicity-coloured gas in the cores -> white-hot peaks\n"
+    + "            vec3 hcol=vec3(0.07,0.52,0.46)*max(hn,0.0)+vec3(0.72,0.26,0.07)*max(-hn,0.0);\n"
+    + "            vec3 gas=mix(vec3(0.10,0.07,0.18), hcol*1.15, smoothstep(0.10,0.72,den));\n"
+    + "            gas+=vec3(0.75,0.62,0.80)*smoothstep(uThr.y,uThr.z,wp)*0.7;\n"
+    + "            // one-tap gradient shading toward the key light: carves real 3-D relief\n"
+    + "            float wpL=length(hxCurl(q+vec3(0.14,0.19,0.09),uTime))*(0.30+0.70*shape);\n"
+    + "            gas*=0.42+0.66*clamp(1.0+(wp-wpL)*1.8,0.0,1.45);\n"
+    + "            float a=1.0-exp(-den*5.5*dt);\n"
+    + "            acc+=Tt*gas*den*dt*2.6;             // emission\n"
+    + "            acc+=Tt*gas*a*0.10;                 // scattering-ish\n"
+    + "            Tt*=1.0-a;\n"
+    + "            if(Tt<0.03)break;\n"
+    + "          }\n"
+    + "        }\n"
+    + "        t+=dt;\n"
+    + "      }\n"
+    + "      col=col*Tt+acc;\n"
+    + "    }\n"
+    + "  }\n"
+    + "  col=1.0-exp(-col*1.6);\n"
+    + "  col=pow(col,vec3(0.4545));\n"
+    + "  outC=vec4(col,1.0);\n"
+    + "}";
+  }
+
+  function compile(type,src){
+    var s=gl.createShader(type); gl.shaderSource(s,src); gl.compileShader(s);
+    if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+    return s;
+  }
+  gl.bindVertexArray(gl.createVertexArray());
+  var prog=null,U={},THR=[1.5,2.4,3.0];
+  function calibrate(field){
+    // measure |curl| percentiles over the raymarched region -> transfer function thresholds.
+    // sampleManyUW batches the whole probe in one call.
+    var n=1400, pos=new Float64Array(3*n), m=0;
+    var rs=1234567; function rr(){rs=(rs*1664525+1013904223)>>>0;return rs/4294967296;}
+    while(m<n){
+      var x=(rr()*2-1)*1.85, y=(rr()*2-1)*1.85, z=(rr()*2-1)*1.85;
+      if(x*x+y*y+z*z>1.85*1.85)continue;
+      pos[3*m]=x*2.1+Math.PI; pos[3*m+1]=y*2.1+Math.PI; pos[3*m+2]=z*2.1+Math.PI; m++;
+    }
+    var out=field.sampleManyUW(pos);
+    var wm=new Float64Array(n);
+    for(var i=0;i<n;i++) wm[i]=Math.hypot(out[6*i+3],out[6*i+4],out[6*i+5]);
+    wm.sort();
+    THR=[wm[(n*0.72)|0], wm[(n*0.97)|0], wm[(n*0.996)|0]];
+  }
+  function buildProgram(){
+    var t0=performance.now();
+    var field=HelixNoise.create({ modes:params.modes, slope:params.slope, helicity:params.heli,
+      coherence:params.coh, seed:params.seed, kmax:6.0, centers:4 });
+    calibrate(field);
+    var frag=fragSource(field.glsl({name:"hx"}));
+    var p=gl.createProgram();
+    gl.attachShader(p,compile(gl.VERTEX_SHADER,VERT));
+    gl.attachShader(p,compile(gl.FRAGMENT_SHADER,frag));
+    gl.linkProgram(p);
+    if(!gl.getProgramParameter(p,gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+    if(prog)gl.deleteProgram(prog);
+    prog=p; gl.useProgram(prog);
+    ["uRes","uTime","uThr","camPos","camR","camU","camF","fovT","aspect"].forEach(function(n){U[n]=gl.getUniformLocation(prog,n);});
+    $("note").textContent=params.modes+" modes → "+(frag.length/1024).toFixed(1)+" kB of GLSL · 46 raymarch steps × hxCurl(p,t) per pixel · transfer auto-calibrated (p72/p97 |ω| = "
+      +THR[0].toFixed(2)+"/"+THR[1].toFixed(2)+") · rebuilt in "+(performance.now()-t0).toFixed(0)+" ms · ⟨u·ω⟩ "+field.relativeHelicity(8).toFixed(2);
+  }
+
+  var RW=840,RH=472;
+  cv.width=RW; cv.height=RH;
+
+  var yaw=0.6,pitch=0.18,autoRot=true,draggingRot=false;
+  var camPos,camR,camU,camF;
+  function camera(){
+    var dd=4.6/ZOOM;
+    var cp=Math.cos(pitch),sp=Math.sin(pitch),cy=Math.cos(yaw),sy=Math.sin(yaw);
+    camPos=[dd*cp*sy,dd*sp,dd*cp*cy];
+    var f=[-camPos[0],-camPos[1],-camPos[2]];
+    var fl=Math.hypot(f[0],f[1],f[2]); camF=[f[0]/fl,f[1]/fl,f[2]/fl];
+    var r=[-camF[2],0,camF[0]];
+    var rl=Math.hypot(r[0],r[1],r[2])||1; camR=[r[0]/rl,r[1]/rl,r[2]/rl];
+    camU=[camR[1]*camF[2]-camR[2]*camF[1], camR[2]*camF[0]-camR[0]*camF[2], camR[0]*camF[1]-camR[1]*camF[0]];
+  }
+
+  var ft=0,lastT=0;
+  function frame(tms){
+    var dt=lastT?Math.min(0.05,(tms-lastT)*0.001):0.016; lastT=tms;
+    ft+=dt*CHURN;
+    if(autoRot&&!draggingRot)yaw+=0.0016;
+    camera();
+    gl.viewport(0,0,RW,RH);
+    gl.useProgram(prog);
+    gl.uniform2f(U.uRes,RW,RH); gl.uniform1f(U.uTime,ft);
+    gl.uniform3f(U.uThr,THR[0],THR[1],THR[2]);
+    gl.uniform3fv(U.camPos,camPos); gl.uniform3fv(U.camR,camR);
+    gl.uniform3fv(U.camU,camU); gl.uniform3fv(U.camF,camF);
+    gl.uniform1f(U.fovT,0.42); gl.uniform1f(U.aspect,RW/RH);
+    gl.drawArrays(gl.TRIANGLES,0,3);
+    requestAnimationFrame(frame);
+  }
+
+  function bind(id,key,fmt){
+    $(id).addEventListener("input",function(e){ params[key]=parseFloat(e.target.value); $("v-"+id).textContent=fmt(params[key]); });
+    $(id).addEventListener("change",buildProgram);
+  }
+  bind("coh","coh",function(v){return Math.round(v*100)+"%";});
+  bind("heli","heli",function(v){return (v>0?"+":"")+v.toFixed(2);});
+  bind("slope","slope",function(v){return v.toFixed(1);});
+  $("churn").addEventListener("input",function(e){ CHURN=parseFloat(e.target.value); $("v-churn").textContent=CHURN.toFixed(1)+"×"; });
+  $("reseed").addEventListener("click",function(){ params.seed=(params.seed*1103515245+12345)>>>0; buildProgram(); });
+
+  var lx=0,ly=0;
+  stage.addEventListener("pointerdown",function(e){ draggingRot=true; lx=e.clientX; ly=e.clientY;
+    stage.setPointerCapture(e.pointerId); stage.classList.add("drag"); });
+  stage.addEventListener("pointermove",function(e){ if(!draggingRot)return;
+    yaw+=(e.clientX-lx)*0.006; pitch+=(e.clientY-ly)*0.006;
+    pitch=Math.max(-1.2,Math.min(1.2,pitch)); lx=e.clientX; ly=e.clientY; });
+  function up(){ draggingRot=false; stage.classList.remove("drag"); }
+  stage.addEventListener("pointerup",up); stage.addEventListener("pointercancel",up);
+  stage.addEventListener("wheel",function(e){ e.preventDefault(); ZOOM=Math.max(0.55,Math.min(2.8,ZOOM*Math.exp(-e.deltaY*0.0012))); },{passive:false});
+
+  if(window.matchMedia&&matchMedia("(prefers-reduced-motion: reduce)").matches){ autoRot=false; CHURN=0; }
+  try{ buildProgram(); requestAnimationFrame(frame); }
+  catch(e){ $("note").textContent="Shader error: "+e.message; }
+})();
+</script>
+</body>
+</html>

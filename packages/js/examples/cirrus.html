@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Helix Noise — jetstream cirrus (anisotropy)</title>
+<style>
+  html,body{margin:0;background:#070a0e;color:#cdd6dd;font-family:system-ui,sans-serif}
+  .wrap{max-width:900px;margin:0 auto;padding:22px 16px}
+  h1{font-size:18px;font-weight:600;margin:0 0 6px}
+  p{color:#8a97a2;font-size:13.5px;line-height:1.6;margin:0 0 14px}
+  code{font-family:ui-monospace,Menlo,monospace;color:#f4a13c;font-size:12.5px}
+  .stage{position:relative}
+  canvas{width:100%;aspect-ratio:16/9;display:block;border:1px solid rgba(150,180,200,.15);border-radius:10px;background:#0a1020}
+  .tag{position:absolute;left:14px;top:12px;font-family:ui-monospace,monospace;font-size:12px;
+    color:#eaf1f6;letter-spacing:.06em;text-shadow:0 1px 6px rgba(0,0,0,.6);pointer-events:none}
+  .tag b{color:#fff}
+  .row{display:flex;flex-wrap:wrap;gap:16px 20px;align-items:center;margin-top:14px;
+    font-family:ui-monospace,monospace;font-size:12px;color:#93a3b0}
+  .row label{display:flex;align-items:center;gap:8px}
+  input[type=range]{width:150px;accent-color:#7fb3d5}
+  .presets{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+  .presets button{background:#111a24;color:#b7c4cf;border:1px solid rgba(150,180,200,.2);
+    border-radius:7px;padding:6px 12px;font:12px ui-monospace,monospace;cursor:pointer}
+  .presets button:hover{background:#182430;color:#fff}
+  .note{margin-top:12px;font-size:12px;color:#5d6b77;font-family:ui-monospace,monospace}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Jetstream cirrus — <code>anisotropy</code> shears the sky</h1>
+  <p>A divergence-free helical field, evaluated per-pixel on the GPU from <code>field.glsl()</code>,
+    drives an advected dye texture (image-based flow visualization). The one dial is <code>anisotropy</code>
+    <b>γ</b>: at <b>γ&lt;0</b> the wavevectors avoid the wind axis, so the flow — and the clouds it combs —
+    streak <em>along</em> the jet (fibrous cirrus); at <b>γ&gt;0</b> they stack into tight bands <em>across</em>
+    it (billow layers). Same field, one number. Drag the sky to move the sun.</p>
+  <div class="stage">
+    <canvas id="c"></canvas>
+    <div class="tag" id="tag">cirrus</div>
+  </div>
+  <div class="row">
+    <label>anisotropy γ <input id="gam" type="range" min="-0.95" max="3" step="0.01" value="-0.9"><span id="v-gam">−0.90</span></label>
+    <label>wind ∠ <input id="ang" type="range" min="0" max="180" step="1" value="8"><span id="v-ang">8°</span></label>
+    <label>wind speed <input id="spd" type="range" min="0" max="2" step="0.01" value="0.9"><span id="v-spd">0.90</span></label>
+  </div>
+  <div class="presets">
+    <button id="p-cirrus">Jetstream cirrus (γ −0.9)</button>
+    <button id="p-fair">Fair weather (γ 0)</button>
+    <button id="p-billow">Billow layers (γ +2.6)</button>
+  </div>
+  <div class="note" id="note">compiling…</div>
+</div>
+
+<script src="../dist/helix-noise.global.js"></script>
+<script>
+(function(){
+  var $ = function(id){return document.getElementById(id);};
+  var cv = $("c"), gl = cv.getContext("webgl2", { antialias:false, preserveDrawingBuffer:false });
+  if(!gl){ $("note").textContent = "WebGL2 not available in this browser."; return; }
+
+  var params = { gam:-0.9, ang:8, spd:0.9, sunx:0.70, suny:0.30,
+                 seed:5, modes:40, slope:1.5, heli:0.35, coh:0.15, kmin:1.2, kmax:7.0 };
+
+  // ---- fullscreen triangle ----
+  var VERT = "#version 300 es\nvoid main(){ vec2 p=vec2(float((gl_VertexID<<1)&2),float(gl_VertexID&2)); gl_Position=vec4(p*2.0-1.0,0.0,1.0); }";
+
+  // ---- advection pass: samples the baked field, injects & carries cloud dye ----
+  function advectSource(glslField){
+    return "#version 300 es\nprecision highp float;\n"
+    + "uniform vec2 uRes; uniform float uTime, uPhase, uScale, uDt, uWindS, uDrift; uniform vec2 uWindDir; uniform sampler2D uDye;\n"
+    + glslField + "\n"
+    + "out vec4 outC;\n"
+    + "float h21(vec2 p){ p=fract(p*vec2(127.1,311.7)); p+=dot(p,p+34.5); return fract(p.x*p.y); }\n"
+    + "float vn(vec2 p){ vec2 i=floor(p),f=fract(p); f=f*f*(3.0-2.0*f);\n"
+    + "  return mix(mix(h21(i),h21(i+vec2(1,0)),f.x), mix(h21(i+vec2(0,1)),h21(i+vec2(1,1)),f.x), f.y); }\n"
+    + "float fbm(vec2 p){ float s=0.0,a=0.5; for(int i=0;i<4;i++){ s+=a*vn(p); p=p*2.03+1.7; a*=0.5; } return s; }\n"
+    + "void main(){\n"
+    + "  vec2 uv = gl_FragCoord.xy/uRes; float aspect = uRes.x/uRes.y;\n"
+    + "  vec3 p = vec3((uv.x-0.5)*aspect, (uv.y-0.5), 0.37) * uScale;\n"
+    + "  vec3 fv = cf(p, uTime);\n"                          // divergence-free field velocity
+    + "  vec2 vel = fv.xy + uWindDir*uWindS;\n"              // + bulk wind along the jet
+    + "  vec2 duv = vec2(vel.x/aspect, vel.y) * uDt;\n"      // uDt = uv advanced per frame
+    + "  float prev = texture(uDye, uv - duv).r;\n"          // semi-Lagrangian back-trace
+    + "  vec2 wp = vec2((uv.x-0.5)*aspect, (uv.y-0.5))*uScale - uWindDir*uDrift;\n" // source drifts downwind
+    + "  float base = fbm(wp*1.9 + 21.0);\n"                 // fine cloud source → stretches into strands
+    + "  float pulse = 0.7 + 0.3*sin(uPhase + base*18.0);\n" // pulse so packets are born & carried
+    + "  float inj = smoothstep(0.40,0.64, base) * pulse;\n"
+    + "  float dye = clamp(prev*0.982 + inj*0.118, 0.0, 1.0);\n"
+    + "  outC = vec4(dye, dye, dye, 1.0);\n"
+    + "}";
+  }
+
+  // ---- display pass: colour the dye as a lit cirrus sky ----
+  var DISPLAY = "#version 300 es\nprecision highp float;\n"
+    + "uniform vec2 uRes; uniform vec2 uSun; uniform sampler2D uDye; out vec4 outC;\n"
+    + "void main(){\n"
+    + "  vec2 uv = gl_FragCoord.xy/uRes; float aspect = uRes.x/uRes.y;\n"
+    + "  float d = texture(uDye, uv).r;\n"
+    + "  vec3 top = vec3(0.09,0.17,0.40), hor = vec3(0.95,0.68,0.47);\n"
+    + "  vec3 sky = mix(hor, top, pow(clamp(uv.y,0.0,1.0),0.75));\n"
+    + "  float sd = distance(uv*vec2(aspect,1.0), uSun*vec2(aspect,1.0));\n"
+    + "  sky += vec3(1.0,0.82,0.56)*exp(-sd*3.2)*0.7;\n"                   // sun glow
+    + "  float cov = smoothstep(0.15,0.52,d) * 0.88;\n"               // translucent high cloud
+    + "  vec3 lit = mix(vec3(0.98,0.96,1.0), vec3(1.0,0.90,0.70), exp(-sd*1.6));\n"
+    + "  vec3 shade = vec3(0.62,0.66,0.78);\n"
+    + "  vec3 cloud = mix(shade, lit, smoothstep(0.16,0.7,d));\n"
+    + "  vec3 col = mix(sky, cloud, cov);\n"
+    + "  col = mix(col, vec3(1.0,0.96,0.86), smoothstep(0.05,0.028,sd));\n" // sun disk
+    + "  vec2 q = uv-0.5; col *= 1.0 - 0.55*dot(q,q);\n"                    // vignette
+    + "  outC = vec4(pow(max(col,0.0), vec3(0.92)), 1.0);\n"
+    + "}";
+
+  function compile(type, src){
+    var s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
+    if(!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+    return s;
+  }
+  function link(vsSrc, fsSrc){
+    var p = gl.createProgram();
+    gl.attachShader(p, compile(gl.VERTEX_SHADER, vsSrc));
+    gl.attachShader(p, compile(gl.FRAGMENT_SHADER, fsSrc));
+    gl.linkProgram(p);
+    if(!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+    return p;
+  }
+
+  var vao = gl.createVertexArray(); gl.bindVertexArray(vao);
+
+  // ---- ping-pong dye targets ----
+  var texW=0, texH=0, texA=null, texB=null, fboA=null, fboB=null;
+  function mkTarget(w,h){
+    var tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
+    var fbo = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+    return { tex:tex, fbo:fbo };
+  }
+  function allocTargets(){
+    var dpr = Math.min(1.25, window.devicePixelRatio||1);
+    var w = Math.min(1000, Math.round(cv.clientWidth*dpr));
+    var h = Math.round(w*9/16);
+    if(w===texW && h===texH) return;
+    texW=w; texH=h; cv.width=w; cv.height=h;
+    var A=mkTarget(w,h), B=mkTarget(w,h);
+    texA=A.tex; fboA=A.fbo; texB=B.tex; fboB=B.fbo;
+  }
+
+  // ---- programs ----
+  var advProg=null, dispProg=null, uAdv={}, uDisp={};
+  function buildDisplay(){
+    dispProg = link(VERT, DISPLAY);
+    uDisp.res = gl.getUniformLocation(dispProg,"uRes");
+    uDisp.sun = gl.getUniformLocation(dispProg,"uSun");
+    uDisp.dye = gl.getUniformLocation(dispProg,"uDye");
+  }
+  function buildField(){
+    var f = HelixNoise.create({ modes:params.modes, slope:params.slope, helicity:params.heli,
+      coherence:params.coh, seed:params.seed, kmin:params.kmin, kmax:params.kmax,
+      anisotropy:params.gam, axis:axisFromAngle(params.ang) });
+    var frag = advectSource(f.glsl({ name:"cf" }));
+    var p = link(VERT, frag);
+    if(advProg) gl.deleteProgram(advProg);
+    advProg = p;
+    uAdv.res=gl.getUniformLocation(p,"uRes"); uAdv.time=gl.getUniformLocation(p,"uTime");
+    uAdv.phase=gl.getUniformLocation(p,"uPhase"); uAdv.scale=gl.getUniformLocation(p,"uScale");
+    uAdv.dt=gl.getUniformLocation(p,"uDt"); uAdv.windS=gl.getUniformLocation(p,"uWindS");
+    uAdv.drift=gl.getUniformLocation(p,"uDrift");
+    uAdv.windDir=gl.getUniformLocation(p,"uWindDir"); uAdv.dye=gl.getUniformLocation(p,"uDye");
+    var label = params.gam < -0.25 ? "cirrus — wisps combed along the jet"
+              : params.gam >  0.25 ? "billow layers — bands across the wind"
+              : "fair weather — isotropic puffs";
+    $("tag").innerHTML = "<b>γ "+(params.gam>=0?"+":"−")+Math.abs(params.gam).toFixed(2)+"</b> · "+label;
+    $("note").textContent = params.modes+" modes → "+(f.glsl().length/1024).toFixed(1)
+      +" kB GLSL · IBFV dye advected on the GPU · anisotropy live-recompiles the field";
+  }
+  function axisFromAngle(deg){ var r=deg*Math.PI/180; return [Math.cos(r), Math.sin(r), 0]; }
+  function clearDye(){ [fboA,fboB].forEach(function(f){ gl.bindFramebuffer(gl.FRAMEBUFFER,f);
+    gl.clearColor(0,0,0,1); gl.clear(gl.COLOR_BUFFER_BIT); }); gl.bindFramebuffer(gl.FRAMEBUFFER,null); }
+
+  // ---- render loop ----
+  var t0=0, front="A"; // "A" means texA holds the current dye
+  function draw(ms){
+    if(!t0) t0=ms; var t=(ms-t0)*0.001;
+    var src = front==="A" ? {tex:texA} : {tex:texB};
+    var dst = front==="A" ? {fbo:fboB} : {fbo:fboA};
+
+    // advect into dst
+    gl.bindFramebuffer(gl.FRAMEBUFFER, dst.fbo);
+    gl.viewport(0,0,texW,texH);
+    gl.useProgram(advProg);
+    gl.uniform2f(uAdv.res, texW, texH);
+    gl.uniform1f(uAdv.time, t*0.14);                 // field churn (slow)
+    gl.uniform1f(uAdv.phase, t*1.3);                 // injection pulse
+    gl.uniform1f(uAdv.scale, 4.2);
+    gl.uniform1f(uAdv.dt, 0.006 + 0.010*params.spd); // uv advected per frame (few pixels)
+    gl.uniform1f(uAdv.windS, 0.7*params.spd);
+    gl.uniform1f(uAdv.drift, t*0.16*params.spd);     // cloud sources drift slowly downwind
+    var a = axisFromAngle(params.ang); gl.uniform2f(uAdv.windDir, a[0], a[1]);
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, src.tex);
+    gl.uniform1i(uAdv.dye, 0);
+    gl.bindVertexArray(vao); gl.drawArrays(gl.TRIANGLES,0,3);
+
+    // display dst to screen
+    var shown = front==="A" ? texB : texA;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.viewport(0,0,cv.width,cv.height);
+    gl.useProgram(dispProg);
+    gl.uniform2f(uDisp.res, cv.width, cv.height);
+    gl.uniform2f(uDisp.sun, params.sunx, params.suny);
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, shown);
+    gl.uniform1i(uDisp.dye, 0);
+    gl.drawArrays(gl.TRIANGLES,0,3);
+
+    front = front==="A" ? "B" : "A";
+    requestAnimationFrame(draw);
+  }
+
+  // ---- controls ----
+  var rebuildTimer=null;
+  function scheduleField(){ clearTimeout(rebuildTimer); rebuildTimer=setTimeout(function(){
+    try{ buildField(); }catch(e){ $("note").textContent="Shader error: "+e.message; } }, 90); }
+
+  function bind(id,key,fmt,rebuild){
+    $(id).addEventListener("input",function(e){ params[key]=parseFloat(e.target.value);
+      $("v-"+id).textContent=fmt(params[key]); if(rebuild) scheduleField(); });
+  }
+  bind("gam","gam",function(v){return (v>=0?"+":"−")+Math.abs(v).toFixed(2);}, true);
+  bind("ang","ang",function(v){return Math.round(v)+"°";}, true);
+  bind("spd","spd",function(v){return v.toFixed(2);}, false);
+
+  function setSliders(){ $("gam").value=params.gam; $("v-gam").textContent=(params.gam>=0?"+":"−")+Math.abs(params.gam).toFixed(2);
+    $("ang").value=params.ang; $("v-ang").textContent=Math.round(params.ang)+"°"; }
+  $("p-cirrus").addEventListener("click",function(){ params.gam=-0.9; params.ang=8; setSliders(); clearDye(); buildField(); });
+  $("p-fair").addEventListener("click",function(){ params.gam=0; params.ang=8; setSliders(); clearDye(); buildField(); });
+  $("p-billow").addEventListener("click",function(){ params.gam=2.6; params.ang=8; setSliders(); clearDye(); buildField(); });
+
+  // drag the sky to move the sun
+  cv.addEventListener("pointerdown", moveSun);
+  cv.addEventListener("pointermove", function(e){ if(e.buttons) moveSun(e); });
+  function moveSun(e){ var r=cv.getBoundingClientRect();
+    params.sunx=Math.max(0,Math.min(1,(e.clientX-r.left)/r.width));
+    params.suny=Math.max(0,Math.min(1,1-(e.clientY-r.top)/r.height)); }
+
+  window.addEventListener("resize", function(){ allocTargets(); });
+
+  allocTargets(); buildDisplay();
+  try{ buildField(); requestAnimationFrame(draw); }
+  catch(e){ $("note").textContent="Shader error: "+e.message; }
+})();
+</script>
+</body>
+</html>

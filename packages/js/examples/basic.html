@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Helix Noise — minimal example</title>
+<style>
+  html,body{margin:0;background:#070a0e;color:#cdd6dd;font-family:system-ui,sans-serif}
+  .wrap{max-width:760px;margin:0 auto;padding:24px 16px}
+  h1{font-size:18px;font-weight:600}
+  p{color:#8a97a2;font-size:14px;line-height:1.6}
+  code{font-family:ui-monospace,Menlo,monospace;color:#f4a13c;font-size:13px}
+  canvas{width:100%;aspect-ratio:16/9;display:block;border:1px solid rgba(150,180,200,.15);border-radius:10px;background:#070a0e}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Helix Noise — minimal example</h1>
+  <p>~30 lines: advect 2-D particles through a horizontal slice of a 3-D helical field. The entire
+    field is one <code>HelixNoise.create(...)</code> call and one <code>field.sample()</code> per particle.
+    For the full interactive version see <code>../sandbox.html</code>.</p>
+  <canvas id="c"></canvas>
+</div>
+
+<script src="../dist/helix-noise.global.js"></script>
+<script>
+  const cv = document.getElementById("c"), ctx = cv.getContext("2d");
+  function fit(){ cv.width = cv.clientWidth; cv.height = cv.clientHeight; ctx.fillStyle = "#070a0e"; ctx.fillRect(0,0,cv.width,cv.height); }
+  addEventListener("resize", fit); fit();
+
+  // the whole field:
+  const field = HelixNoise.create({ modes: 40, slope: 1.6, helicity: 0.8, coherence: 0.5, seed: 7 });
+
+  const TAU = 2 * Math.PI, N = 2500;
+  const px = new Float32Array(N), py = new Float32Array(N);
+  for (let i = 0; i < N; i++) { px[i] = Math.random() * TAU; py[i] = Math.random() * TAU; }
+  const uw = [0,0,0,0,0,0];
+  let ft = 0;                                                    // field time — the field churns too
+
+  function frame(){
+    ctx.fillStyle = "rgba(7,10,14,0.075)"; ctx.fillRect(0,0,cv.width,cv.height);   // trail fade
+    ctx.globalCompositeOperation = "lighter";
+    ctx.lineWidth = 1.3; ctx.lineCap = "round";
+    const sx = cv.width / TAU, sy = cv.height / TAU;
+    ft += 0.035;
+    for (let i = 0; i < N; i++) {
+      field.sampleUW(px[i], py[i], 0, uw, ft);                   // sample the z = 0 slice at time ft
+      const x0 = px[i], y0 = py[i];
+      px[i] = ((px[i] + uw[0] * 0.14) % TAU + TAU) % TAU;
+      py[i] = ((py[i] + uw[1] * 0.14) % TAU + TAU) % TAU;
+      const h = uw[0]*uw[3] + uw[1]*uw[4] + uw[2]*uw[5];         // helicity density → colour
+      ctx.strokeStyle = h >= 0 ? "rgba(47,214,191,0.8)" : "rgba(244,161,60,0.8)";
+      if (Math.abs(px[i]-x0) < TAU*0.5 && Math.abs(py[i]-y0) < TAU*0.5) {
+        ctx.beginPath(); ctx.moveTo(x0*sx, y0*sy); ctx.lineTo(px[i]*sx, py[i]*sy); ctx.stroke();
+      }
+    }
+    ctx.globalCompositeOperation = "source-over";
+    requestAnimationFrame(frame);
+  }
+  frame();
+</script>
+</body>
+</html>

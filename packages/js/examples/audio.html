@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Helix Noise — audio-reactive flow</title>
+<style>
+  :root{--teal:#2fd6bf;--amber:#f4a13c;--cyan:#7fd7e6}
+  html,body{margin:0;height:100%;background:#070a0e;color:#c8d2dc;font:15px/1.5 system-ui,sans-serif}
+  .wrap{max-width:900px;margin:0 auto;padding:24px 16px}
+  h1{font-size:20px;margin:0 0 6px} code{color:var(--amber);font-size:.92em}
+  p{color:#8b98a5;margin:0 0 14px}
+  canvas{width:100%;height:58vh;display:block;border-radius:10px;background:#070a0e}
+  .bar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:12px}
+  button{background:#111820;color:#c8d2dc;border:1px solid rgba(150,180,200,.22);border-radius:8px;
+    padding:8px 14px;font:inherit;font-size:13px;cursor:pointer}
+  button:hover{border-color:var(--teal);color:#eaf4f2}
+  button.on{border-color:var(--teal);color:var(--teal);background:#0e1a1a}
+  .hint{color:#5c6873;font-size:12px}
+  .meters{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:16px}
+  .m{background:#0c1116;border:1px solid rgba(150,180,200,.12);border-radius:8px;padding:10px 12px}
+  .m .k{font-size:11px;letter-spacing:.1em;color:#6b7885;text-transform:uppercase}
+  .m .v{font-variant-numeric:tabular-nums;font-size:13px;color:#c8d2dc;float:right}
+  .track{height:8px;background:#0a0f14;border-radius:5px;margin-top:8px;overflow:hidden}
+  .fill{height:100%;width:0;border-radius:5px;transition:width .05s linear}
+  input[type=file]{display:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Audio-reactive flow — <code>bass → amplitude · highs → churn · stereo → helicity</code></h1>
+  <p>One <code>HelixNoise.create()</code> field, three live audio features steering it. <b>Bass</b> pumps
+     the flow speed, <b>treble</b> speeds the field's own churn (small eddies flicker faster), and the
+     <b>stereo balance</b> tips the handedness — teal ↔ amber as the mix pans. Press <em>Demo beat</em> for a
+     self-contained scene, or feed it your mic / a track.</p>
+  <canvas id="cv"></canvas>
+  <div class="bar">
+    <button id="b-demo">▶ Demo beat</button>
+    <button id="b-mic">🎤 Mic</button>
+    <button id="b-file">📁 Load track</button>
+    <button id="b-stop">■ Stop</button>
+    <span class="hint" id="hint">click a source to start audio</span>
+    <input type="file" id="file" accept="audio/*">
+  </div>
+  <div class="meters">
+    <div class="m"><span class="k">Bass → amplitude</span><span class="v" id="v-bass">0.0×</span>
+      <div class="track"><div class="fill" id="f-bass" style="background:var(--amber)"></div></div></div>
+    <div class="m"><span class="k">Treble → churn</span><span class="v" id="v-high">0.0×</span>
+      <div class="track"><div class="fill" id="f-high" style="background:var(--cyan)"></div></div></div>
+    <div class="m"><span class="k">Stereo → helicity</span><span class="v" id="v-hel">+0.00</span>
+      <div class="track"><div class="fill" id="f-hel" style="background:var(--teal)"></div></div></div>
+  </div>
+</div>
+
+<script src="../dist/helix-noise.global.js"></script>
+<script>
+(function(){
+  const $ = id => document.getElementById(id);
+  const cv = $("cv"), ctx = cv.getContext("2d", { alpha:false });
+  const TAU = 2*Math.PI;
+  function fit(){ cv.width = cv.clientWidth; cv.height = cv.clientHeight; ctx.fillStyle="#070a0e"; ctx.fillRect(0,0,cv.width,cv.height); }
+  addEventListener("resize", fit); fit();
+
+  // ---- the field (churn:1 baked in; we vary field-TIME speed, not rebuild) ----
+  const field = HelixNoise.create({ modes:56, slope:1.5, helicity:0, coherence:0.5, churn:1, seed:7 });
+  let setHel = 0;                                   // helicity currently baked into the field
+  const N = 3000;
+  const px = new Float32Array(N), py = new Float32Array(N);
+  for (let i=0;i<N;i++){ px[i]=Math.random()*TAU; py[i]=Math.random()*TAU; }
+  const uw = [0,0,0,0,0,0];
+
+  // ---- smoothed audio-driven params ----
+  let bass=0, high=0, bal=0;                        // raw features (0..1, 0..1, -1..1)
+  let gain=0.5, ftSpeed=0.2, helTarget=0;           // mapped, slewed
+  let ft=0;                                         // field time
+
+  function step(){
+    // slew toward feature-driven targets (extra smoothing on top of the analyser)
+    const gT = 0.35 + 2.4*bass;                     // bass → velocity gain (amplitude)
+    const sT = 0.12 + 3.2*high;                     // treble → field-time speed (churn)
+    gain    += (gT - gain)*0.15;
+    ftSpeed += (sT - ftSpeed)*0.15;
+    helTarget += (Math.max(-1,Math.min(1, bal*1.6)) - helTarget)*0.08;
+    ft += 0.02*ftSpeed;
+
+    // helicity morphs the field — only re-bake when it drifted enough (cheap, monotone flips)
+    if (Math.abs(helTarget - setHel) > 0.03){ setHel = helTarget; field.set({ helicity:setHel }); }
+
+    ctx.fillStyle="rgba(7,10,14,0.08)"; ctx.fillRect(0,0,cv.width,cv.height);
+    ctx.globalCompositeOperation="lighter"; ctx.lineCap="round";
+    ctx.lineWidth = 1.1 + 1.6*bass;
+    const sx = cv.width/TAU, sy = cv.height/TAU, spd = 0.13*gain;
+    for (let i=0;i<N;i++){
+      field.sampleUW(px[i], py[i], 1.3, uw, ft);
+      const x0=px[i], y0=py[i];
+      px[i] = ((px[i] + uw[0]*spd) % TAU + TAU) % TAU;
+      py[i] = ((py[i] + uw[1]*spd) % TAU + TAU) % TAU;
+      const h = uw[0]*uw[3] + uw[1]*uw[4] + uw[2]*uw[5];   // helicity density → colour
+      const alpha = 0.5 + 0.35*bass;
+      ctx.strokeStyle = h>=0 ? "rgba(47,214,191,"+alpha.toFixed(2)+")"
+                             : "rgba(244,161,60,"+alpha.toFixed(2)+")";
+      if (Math.abs(px[i]-x0)<TAU*0.5 && Math.abs(py[i]-y0)<TAU*0.5){
+        ctx.beginPath(); ctx.moveTo(x0*sx,y0*sy); ctx.lineTo(px[i]*sx,py[i]*sy); ctx.stroke();
+      }
+    }
+    ctx.globalCompositeOperation="source-over";
+
+    // meters
+    $("f-bass").style.width = Math.min(100, bass*100)+"%"; $("v-bass").textContent = gain.toFixed(1)+"×";
+    $("f-high").style.width = Math.min(100, high*100)+"%"; $("v-high").textContent = ftSpeed.toFixed(1)+"×";
+    $("f-hel").style.width  = Math.abs(helTarget)*100+"%";
+    $("f-hel").style.background = helTarget>=0 ? "var(--teal)" : "var(--amber)";
+    $("v-hel").textContent = (helTarget>=0?"+":"")+helTarget.toFixed(2);
+    requestAnimationFrame(step);
+  }
+  requestAnimationFrame(step);
+
+  // ---- audio pipeline ----
+  let actx=null, splitter=null, aMain=null, aL=null, aR=null, srcNode=null, teardown=null;
+  let fBass, band, pollTimer=0;                      // analyser buffer + band bin ranges + timer
+
+  function ensureCtx(){
+    if (actx) return;
+    actx = new (window.AudioContext||window.webkitAudioContext)();
+    aMain = actx.createAnalyser(); aMain.fftSize = 2048; aMain.smoothingTimeConstant = 0.82;
+    aL = actx.createAnalyser(); aL.fftSize = 512;
+    aR = actx.createAnalyser(); aR.fftSize = 512;
+    splitter = actx.createChannelSplitter(2);
+    splitter.connect(aL, 0); splitter.connect(aR, 1);
+    fBass = new Uint8Array(aMain.frequencyBinCount);
+    const hz = actx.sampleRate / aMain.fftSize;      // bin width
+    band = { bLo:Math.max(1,(40/hz)|0), bHi:(180/hz)|0, hLo:(2600/hz)|0, hHi:(9000/hz)|0 };
+    // Feature extraction on a timer (decoupled from the render rAF): read the analysers, reduce
+    // to the three audio features. ~60 Hz is plenty for smooth metering.
+    const bL = new Uint8Array(aL.frequencyBinCount), bR = new Uint8Array(aR.frequencyBinCount);
+    clearInterval(pollTimer);
+    pollTimer = setInterval(() => {
+      if (!actx) return;
+      aMain.getByteFrequencyData(fBass);
+      let sb=0, nb=0; for(let i=band.bLo;i<=band.bHi;i++){ sb+=fBass[i]; nb++; }
+      let sh=0, nh=0; for(let i=band.hLo;i<=band.hHi;i++){ sh+=fBass[i]; nh++; }
+      const rawB = nb? sb/nb/255 : 0, rawH = nh? sh/nh/255 : 0;
+      bass = Math.pow(rawB, 1.3)*1.4;                 // gentle gamma + headroom
+      high = Math.pow(rawH, 1.1)*1.7;
+      aL.getByteFrequencyData(bL); aR.getByteFrequencyData(bR);
+      let eL=0,eR=0; for(let i=2;i<bL.length;i++){ eL+=bL[i]; eR+=bR[i]; }
+      bal = (eR-eL)/(eR+eL+1e-3);
+    }, 16);
+  }
+
+  function wire(node, audible){
+    if (teardown) teardown();
+    srcNode = node;
+    node.connect(aMain); node.connect(splitter);
+    if (audible) node.connect(actx.destination);
+  }
+  function setActive(id){ ["b-demo","b-mic","b-file"].forEach(b=>$(b).classList.toggle("on", b===id)); }
+
+  function stopAll(){
+    if (teardown){ teardown(); teardown=null; }
+    setActive(null); $("hint").textContent = "stopped";
+  }
+
+  // Demo beat: a self-contained scene. Bass = two detuned oscillators swelling on a slow LFO;
+  // treble = broadband high-passed noise pulsing on a faster LFO (fills the whole high band, so
+  // churn visibly responds); the whole mix pans L↔R on a third LFO → helicity swings. GIF-ready.
+  function demoBeat(){
+    ensureCtx(); actx.resume();
+    const bass1 = actx.createOscillator(); bass1.type="sine"; bass1.frequency.value=55;
+    const bass2 = actx.createOscillator(); bass2.type="triangle"; bass2.frequency.value=82.5;
+    const bassG = actx.createGain(); bassG.gain.value=0.18;
+    bass1.connect(bassG); bass2.connect(bassG);
+    // treble: looping white-noise buffer through a high-pass → broadband "air"/cymbal wash
+    const nbuf = actx.createBuffer(1, actx.sampleRate*2, actx.sampleRate);
+    const nd = nbuf.getChannelData(0); for(let i=0;i<nd.length;i++) nd[i]=(Math.random()*2-1);
+    const noise = actx.createBufferSource(); noise.buffer=nbuf; noise.loop=true;
+    const hp = actx.createBiquadFilter(); hp.type="highpass"; hp.frequency.value=2800;
+    const noiseG = actx.createGain(); noiseG.gain.value=0.05;
+    noise.connect(hp); hp.connect(noiseG);
+    const panner = actx.createStereoPanner();
+    const mix = actx.createGain(); mix.gain.value=0.9;
+    bassG.connect(mix); noiseG.connect(mix); mix.connect(panner);
+    // LFOs
+    const lSwell = actx.createOscillator(); lSwell.frequency.value=0.55;
+    const dSwell = actx.createGain(); dSwell.gain.value=0.14; lSwell.connect(dSwell); dSwell.connect(bassG.gain);
+    const lPan = actx.createOscillator(); lPan.frequency.value=0.13;
+    const dPan = actx.createGain(); dPan.gain.value=0.92; lPan.connect(dPan); dPan.connect(panner.pan);
+    const lHiss = actx.createOscillator(); lHiss.frequency.value=0.37;
+    const dHiss = actx.createGain(); dHiss.gain.value=0.045; lHiss.connect(dHiss); dHiss.connect(noiseG.gain);
+    const oscs = [bass1,bass2,lSwell,lPan,lHiss];
+    oscs.forEach(o=>o.start()); noise.start();
+    wire(panner, true);
+    teardown = () => { oscs.forEach(o=>{try{o.stop();}catch(e){}}); try{noise.stop();}catch(e){} try{panner.disconnect();}catch(e){} };
+    setActive("b-demo"); $("hint").textContent = "demo beat — swelling bass, panning stereo, pulsing treble wash";
+  }
+
+  async function useMic(){
+    ensureCtx(); actx.resume();
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio:{ echoCancellation:false, noiseSuppression:false } });
+      const node = actx.createMediaStreamSource(stream);
+      wire(node, false);                              // never route mic to speakers (feedback)
+      teardown = () => { try{node.disconnect();}catch(e){} stream.getTracks().forEach(t=>t.stop()); };
+      setActive("b-mic"); $("hint").textContent = "listening to mic — mono in, so helicity stays near 0";
+    } catch(e){ $("hint").textContent = "mic blocked: "+e.message; }
+  }
+
+  // A MediaElementSource can be created only ONCE per <audio> element, so cache both and just
+  // swap the src on later loads (a second createMediaElementSource would throw).
+  let audioEl=null, elSrc=null, lastUrl=null;
+  function loadFile(f){
+    ensureCtx(); actx.resume();
+    if (!audioEl){ audioEl = new Audio(); audioEl.loop = true; }
+    if (!elSrc){ elSrc = actx.createMediaElementSource(audioEl); }
+    if (lastUrl) URL.revokeObjectURL(lastUrl);
+    lastUrl = URL.createObjectURL(f);
+    audioEl.src = lastUrl; audioEl.play();
+    wire(elSrc, true);
+    teardown = () => { try{elSrc.disconnect();}catch(e){} audioEl.pause(); };
+    setActive("b-file"); $("hint").textContent = "playing "+f.name;
+  }
+
+  $("b-demo").onclick = demoBeat;
+  $("b-mic").onclick = useMic;
+  $("b-file").onclick = () => $("file").click();
+  $("b-stop").onclick = stopAll;
+  $("file").onchange = e => { if (e.target.files[0]) loadFile(e.target.files[0]); };
+})();
+</script>
+</body>
+</html>

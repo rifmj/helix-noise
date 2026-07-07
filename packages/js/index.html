@@ -1,0 +1,462 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Helix Noise — divergence-free flow fields, grid-free</title>
+<meta name="description" content="Give anything the motion of a fluid. One function tells you which way things drift at any point in space, and it always moves like water: swirling, folding, never clumping. Zero dependencies.">
+<meta property="og:title" content="Helix Noise">
+<meta property="og:description" content="Give anything the motion of a fluid — in one function call.">
+<meta property="og:image" content="assets/hero.gif">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;1,9..144,400;1,9..144,500&family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --void:#05070b; --void2:#0a0e15; --glass:rgba(10,14,21,.5);
+    --ink:#f0f5f8; --mist:#8a98a5; --faint:#56636f; --hair:rgba(150,180,200,.11); --hair2:rgba(150,180,200,.22);
+    --teal:#35e0c7;   /* right-handed helicity — the field's own colour */
+    --amber:#f6a542;  /* left-handed helicity */
+    --violet:#a78bfa; --sky:#6fc9ff;
+    --mood:53,224,199;
+    --serif:"Fraunces",Georgia,"Times New Roman",serif;
+    --sans:"Hanken Grotesk",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+    --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--void);color:var(--ink);font-family:var(--sans);font-size:16px;
+    line-height:1.6;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+  a{color:inherit;text-decoration:none}
+  ::selection{background:rgba(53,224,199,.26)}
+  .kicker{font-family:var(--sans);font-weight:600;font-size:11.5px;letter-spacing:.22em;text-transform:uppercase}
+
+  /* ── the live field, rendered by the library, behind everything ── */
+  #field{position:fixed;inset:0;width:100vw;height:100vh;display:block;z-index:0;background:var(--void)}
+  .moodglow{position:fixed;inset:0;z-index:1;pointer-events:none;
+    background:radial-gradient(80% 60% at 80% 8%, rgba(var(--mood),.15), transparent 62%)}
+  .scrim{position:fixed;inset:0;z-index:1;pointer-events:none;
+    background:
+      radial-gradient(115% 85% at 84% 6%, rgba(5,7,11,0) 0%, rgba(5,7,11,.5) 60%, rgba(5,7,11,.88) 100%),
+      linear-gradient(180deg, rgba(5,7,11,.4) 0%, rgba(5,7,11,0) 24%, rgba(5,7,11,0) 58%, rgba(5,7,11,.62) 100%)}
+  .grain{position:fixed;inset:0;z-index:1;pointer-events:none;opacity:.045;mix-blend-mode:overlay;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")}
+
+  main{position:relative;z-index:2}
+  .col{max-width:1080px;margin:0 auto;padding:0 30px}
+
+  /* ── hero ── */
+  .hero{min-height:100svh;display:flex;flex-direction:column;justify-content:flex-end;padding-bottom:6vh}
+  .eyebrow{color:var(--teal);margin:0 0 24px;display:flex;align-items:center;gap:13px}
+  .eyebrow::before{content:"";width:30px;height:1px;background:linear-gradient(90deg,var(--teal),transparent)}
+  h1{font-family:var(--serif);font-weight:400;font-optical-sizing:auto;font-size:clamp(48px,9.2vw,124px);
+    line-height:.9;letter-spacing:-.02em;margin:0;max-width:14ch}
+  h1 em{font-style:italic;font-weight:500;background:linear-gradient(96deg,var(--teal) 8%,var(--sky) 46%,var(--amber) 92%);
+    -webkit-background-clip:text;background-clip:text;color:transparent;padding-right:.05em}
+  .sub{font-size:clamp(15.5px,1.9vw,19px);color:var(--mist);max-width:53ch;margin:28px 0 0;line-height:1.6}
+  .sub b{color:var(--ink);font-weight:500}
+
+  /* ── the signature: a menu of moods that morph the whole field ── */
+  .currents{margin-top:44px}
+  .currents-label{color:var(--faint);display:block;margin:0 0 14px}
+  .presets{display:flex;flex-wrap:wrap;gap:8px 30px;align-items:baseline}
+  .preset{font-family:var(--serif);font-weight:400;font-size:clamp(22px,3vw,34px);line-height:1;
+    background:none;border:none;padding:2px 0;cursor:pointer;color:var(--mist);position:relative;
+    transition:color .25s;letter-spacing:-.01em}
+  .preset:hover{color:var(--ink)}
+  .preset::after{content:"";position:absolute;left:0;right:100%;bottom:-6px;height:2px;border-radius:2px;
+    background:linear-gradient(90deg,var(--amber),var(--teal),var(--sky));background-size:220% 100%;
+    transition:right .34s cubic-bezier(.6,0,.2,1);opacity:.9}
+  .preset.on{color:var(--ink);font-style:italic}
+  .preset.on::after{right:0;animation:flow 3.4s linear infinite}
+  @keyframes flow{to{background-position:220% 0}}
+  .preset:focus-visible{outline:none;color:var(--ink)}
+  .preset:focus-visible::after{right:0}
+  .stir{margin:22px 0 0;color:var(--faint);font-size:13.5px;display:flex;align-items:center;gap:9px}
+  .stir svg{opacity:.7}
+  .stir b{color:var(--mist);font-weight:500}
+
+  .actions{display:flex;flex-wrap:wrap;gap:11px;margin-top:38px}
+  .btn{font-weight:600;font-size:14px;padding:12px 20px;border-radius:12px;border:1px solid var(--hair2);
+    color:var(--ink);display:inline-flex;align-items:center;gap:8px;transition:border-color .18s,transform .18s,background .18s}
+  .btn:hover{transform:translateY(-2px);border-color:var(--teal)}
+  .btn .ar{color:var(--faint);transition:color .18s} .btn:hover .ar{color:var(--teal)}
+  .btn.go{border-color:transparent;background:linear-gradient(96deg,rgba(53,224,199,.22),rgba(246,165,66,.2))}
+  .btn.go:hover{background:linear-gradient(96deg,rgba(53,224,199,.34),rgba(246,165,66,.3))}
+
+  /* ── sections ── */
+  section{padding:128px 0 0}
+  .lead-in{color:var(--faint);margin:0 0 22px;display:flex;align-items:center;gap:15px}
+  .lead-in::after{content:"";flex:1;height:1px;background:var(--hair)}
+  .say{font-family:var(--serif);font-weight:400;font-optical-sizing:auto;font-size:clamp(28px,4.6vw,50px);
+    line-height:1.14;letter-spacing:-.015em;margin:0;max-width:19ch}
+  .say em{font-style:italic;color:var(--teal)}
+  .body{color:var(--mist);max-width:60ch;font-size:16.5px;margin:26px 0 0}
+  .body b{color:var(--ink);font-weight:500}
+  .body code{font-family:var(--mono);font-size:13px;color:var(--amber);background:rgba(246,165,66,.08);padding:1px 6px;border-radius:5px}
+  .fine{font-size:13.5px;color:var(--faint);max-width:60ch;margin:18px 0 0;line-height:1.7}
+  .fine code{font-family:var(--mono);font-size:12px;color:var(--mist)}
+  .fine a{color:var(--teal);border-bottom:1px solid rgba(53,224,199,.35)}
+
+  /* ── capability grid ── */
+  .caps{display:grid;grid-template-columns:repeat(2,1fr);gap:1px;margin-top:46px;
+    background:var(--hair);border:1px solid var(--hair);border-radius:18px;overflow:hidden}
+  .cap{background:var(--void2);padding:28px 28px 32px}
+  .cap .k{color:var(--ac,var(--teal));margin:0 0 14px}
+  .cap h3{font-family:var(--serif);font-weight:400;font-size:27px;line-height:1.08;margin:0 0 11px;letter-spacing:-.01em}
+  .cap p{color:var(--mist);font-size:14.5px;margin:0}
+  .cap .term{display:block;font-family:var(--mono);font-size:11.5px;color:var(--faint);margin-top:14px}
+
+  /* ── demo rail ── */
+  .rail{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:46px}
+  a.demo{display:block;background:var(--void2);border:1px solid var(--hair);border-radius:16px;overflow:hidden;
+    transition:border-color .18s,transform .18s}
+  a.demo:hover{border-color:var(--hair2);transform:translateY(-3px)}
+  a.demo .thumb{aspect-ratio:16/10;background:#04060a;position:relative;overflow:hidden;border-bottom:1px solid var(--hair)}
+  a.demo .thumb canvas{width:100%;height:100%;display:block}
+  a.demo .thumb.gif img{width:100%;height:100%;object-fit:cover;display:block}
+  a.demo .meta{padding:15px 17px 17px}
+  a.demo .meta .t{font-family:var(--serif);font-size:21px;font-weight:400;margin:0 0 3px;letter-spacing:-.01em}
+  a.demo .meta .d{font-size:13px;color:var(--mist);margin:0}
+  a.demo .tag{position:absolute;top:11px;left:11px;font-family:var(--mono);font-size:9.5px;letter-spacing:.08em;
+    text-transform:uppercase;color:var(--mist);background:rgba(5,7,11,.66);padding:4px 8px;border-radius:7px;backdrop-filter:blur(4px)}
+  .all-demos{margin-top:24px;font-weight:600;font-size:14px;color:var(--teal);display:inline-flex;gap:8px;align-items:center;transition:gap .2s}
+  .all-demos:hover{gap:13px}
+
+  /* ── install ── */
+  .code{margin-top:42px;background:var(--void2);border:1px solid var(--hair);border-radius:18px;overflow:hidden}
+  .code .bar{display:flex;border-bottom:1px solid var(--hair)}
+  .code .bar button{background:none;border:none;color:var(--faint);padding:14px 22px;cursor:pointer;
+    font-family:var(--sans);font-weight:500;font-size:13.5px;border-bottom:2px solid transparent;transition:color .15s,border-color .15s}
+  .code .bar button[aria-selected=true]{color:var(--ink);border-bottom-color:var(--teal)}
+  .code pre{margin:0;padding:24px 26px;overflow:auto;font-family:var(--mono);font-size:13.5px;line-height:1.8;color:var(--ink)}
+  .code pre[hidden]{display:none}
+  .c{color:var(--faint)} .k{color:var(--violet)} .s{color:var(--teal)} .n{color:var(--amber)} .f{color:var(--sky)}
+
+  /* ── footer ── */
+  footer{margin-top:132px;border-top:1px solid var(--hair);padding:42px 0 64px}
+  .foot-row{display:flex;flex-wrap:wrap;justify-content:space-between;gap:20px;align-items:baseline}
+  .foot-mark{font-family:var(--serif);font-size:26px}
+  .foot-links{display:flex;gap:24px;font-weight:500;font-size:14px}
+  .foot-links a{color:var(--mist)} .foot-links a:hover{color:var(--teal)}
+  .foot-note{font-size:13px;color:var(--faint);margin-top:22px}
+
+  @media (max-width:760px){
+    .caps,.rail{grid-template-columns:1fr}
+    section{padding:90px 0 0}
+    .presets{gap:6px 22px}
+  }
+  @media (prefers-reduced-motion:reduce){
+    html{scroll-behavior:auto}
+    .preset.on::after{animation:none}
+  }
+</style>
+</head>
+<body>
+<canvas id="field" aria-hidden="true"></canvas>
+<div class="moodglow" id="moodglow"></div>
+<div class="scrim"></div>
+<div class="grain"></div>
+
+<main>
+  <!-- HERO -->
+  <header class="hero col">
+    <p class="eyebrow kicker">Helix Noise — divergence-free flow fields</p>
+    <h1>Give anything the <em>motion of a&nbsp;fluid</em></h1>
+    <p class="sub">One function tells you which way things drift at any point in space — and it always
+      moves like water: <b>swirling, folding, never clumping</b>. This whole page is one field.</p>
+
+    <div class="currents" role="group" aria-label="Field presets">
+      <span class="currents-label kicker">Pick a current</span>
+      <div class="presets">
+        <button class="preset on" data-p="silk">Silk</button>
+        <button class="preset" data-p="whirlpool">Whirlpool</button>
+        <button class="preset" data-p="nebula">Nebula</button>
+        <button class="preset" data-p="storm">Storm</button>
+        <button class="preset" data-p="aurora">Aurora</button>
+      </div>
+      <p class="stir">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+          <path d="M12 3a9 9 0 1 0 9 9" stroke-linecap="round"/><path d="M21 12l-3-2m3 2l-2 3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        …or <b>drag anywhere</b> to stir the current yourself.</p>
+    </div>
+
+    <div class="actions">
+      <a class="btn go" href="examples/index.html">▶&nbsp; See it move</a>
+      <a class="btn" href="sandbox.html">3-D sandbox</a>
+      <a class="btn" href="https://github.com/rifatjumagulov/helix-noise">GitHub <span class="ar">↗</span></a>
+      <a class="btn" href="https://www.npmjs.com/package/helix-noise">npm <span class="ar">↗</span></a>
+    </div>
+  </header>
+
+  <div class="col">
+    <!-- WHAT -->
+    <section id="what">
+      <p class="lead-in kicker">What you're looking at</p>
+      <p class="say">You're standing inside an invisible <em>current</em> that fills all of space.</p>
+      <p class="body">Ask it about any point and it tells you which way things drift there — so you can carry
+        <b>smoke, water, particles, hair, or a whole crowd</b> along that flow and it looks alive. No fluid
+        solver, no bake, no grid to fill. The current above is the real library, running as you read.</p>
+      <p class="body">The reason it feels like a fluid is one guarantee: it's <b>divergence-free</b> — nothing
+        piles up and nothing vanishes, exactly like real, incompressible water. That's why tracers swirl and
+        fold instead of collapsing into blobs the way ordinary noise makes them. Three qualities shape the
+        look — how <b>big</b> the swirls are, which way they <b>spin</b>, and whether it reads as <b>calm noise
+        or organized eddies</b> — and each current above is one blend of the three.</p>
+      <p class="fine">For the curious: the field is a grid-free sum of divergence-free helical (Beltrami)
+        modes; the three qualities are spectral <code>slope</code>, <code>helicity</code>, and phase
+        <code>coherence</code>. Full details in the <a href="README.md">README</a>.</p>
+    </section>
+
+    <!-- CAPABILITIES -->
+    <section id="why">
+      <p class="lead-in kicker">Why it's built this way</p>
+      <p class="say">Real physics underneath, <em>art direction</em> on top.</p>
+      <div class="caps">
+        <div class="cap" style="--ac:var(--teal)">
+          <p class="k kicker">Incompressible</p>
+          <h3>Moves like real fluid</h3>
+          <p>Nothing piles up, nothing vanishes — ink stretches and folds but never tears, and particles
+            never clump into blobs.</p>
+          <span class="term">divergence-free — exact to machine precision</span>
+        </div>
+        <div class="cap" style="--ac:var(--amber)">
+          <p class="k kicker">Art-directable</p>
+          <h3>Qualities you can dial</h3>
+          <p>Set the size of the swirls, which way they spin, and how organized the flow reads. Handedness
+            and structure are things ordinary curl-noise simply can't do.</p>
+          <span class="term">slope · helicity · coherence</span>
+        </div>
+        <div class="cap" style="--ac:var(--violet)">
+          <p class="k kicker">Grid-free</p>
+          <h3>Works anywhere, endless</h3>
+          <p>Ask about any point in space — no grid to fill, no boundary, no tiling seam, no simulation to
+            step. It just answers, in constant time.</p>
+          <span class="term">one call is O(modes)</span>
+        </div>
+        <div class="cap" style="--ac:var(--sky)">
+          <p class="k kicker">CPU &amp; GPU</p>
+          <h3>Same field on the GPU</h3>
+          <p>One call drops the exact field into your shader, matching the CPU version bit-for-bit — so a
+            million particles is no problem. Zero dependencies.</p>
+          <span class="term">field.glsl() · WASM SIMD batches</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- DEMOS -->
+    <section id="see">
+      <p class="lead-in kicker">See it move</p>
+      <p class="say">One field, <em>every</em> renderer.</p>
+      <div class="rail">
+        <a class="demo" href="examples/nebula.html">
+          <div class="thumb"><span class="tag">webgl2 · analytic</span><canvas class="minifield" data-slope="1.5" data-hel="-0.7" data-coh="0.75" data-seed="3" data-count="480" data-ws="0.02" data-speed="1.1"></canvas></div>
+          <div class="meta"><p class="t">Living nebula</p><p class="d">No bake — rays march the field itself. Density = vorticity, colour = handedness.</p></div>
+        </a>
+        <a class="demo" href="examples/smoke.html">
+          <div class="thumb gif"><span class="tag">webgl2 · bake3D</span><img src="assets/smoke.gif" alt="Volumetric smoke raymarched through the field" loading="lazy"></div>
+          <div class="meta"><p class="t">Volumetric smoke</p><p class="d">A 48³ dye volume advected and raymarched with self-shadowing. Draw it with the pointer.</p></div>
+        </a>
+        <a class="demo" href="examples/water.html">
+          <div class="thumb gif"><span class="tag">canvas · bake2D</span><img src="assets/water.gif" alt="Flowing water surface bent along the streamlines" loading="lazy"></div>
+          <div class="meta"><p class="t">Flowing water</p><p class="d">Ripples bent along the streamlines, with caustics and moving sun-glints.</p></div>
+        </a>
+        <a class="demo" href="examples/million.html">
+          <div class="thumb gif"><span class="tag">webgl2 · glsl</span><img src="assets/million.gif" alt="A dense swarm of particles advected through the flow field" loading="lazy"></div>
+          <div class="meta"><p class="t">A million particles</p><p class="d">1–4 M particles advected entirely on the GPU — zero CPU field calls per frame.</p></div>
+        </a>
+        <a class="demo" href="examples/tubes.html">
+          <div class="thumb gif"><span class="tag">three.js · sampleUW</span><img src="assets/tubes.gif" alt="Coherent teal vortex tubes traced through the field" loading="lazy"></div>
+          <div class="meta"><p class="t">Vortex tubes</p><p class="d">Streamtubes coloured by helicity. At ±1 every tube corkscrews the same way.</p></div>
+        </a>
+        <a class="demo" href="examples/cirrus.html">
+          <div class="thumb gif"><span class="tag">webgl2 · anisotropy</span><img src="assets/cirrus.gif" alt="Amber cirrus wisps combed along a sheared jetstream" loading="lazy"></div>
+          <div class="meta"><p class="t">Jetstream cirrus</p><p class="d">One dial shears an advected-dye sky — wisps combed along the jet, bands across it.</p></div>
+        </a>
+      </div>
+      <a class="all-demos" href="examples/index.html">All 14 demos — three.js · p5 · raw WebGL2 · audio-reactive →</a>
+    </section>
+
+    <!-- INSTALL -->
+    <section id="install">
+      <p class="lead-in kicker">Get it running</p>
+      <p class="say">In your project in <em>two lines</em>.</p>
+      <div class="code">
+        <div class="bar" role="tablist" aria-label="Install method">
+          <button role="tab" aria-selected="true" data-tab="npm">npm</button>
+          <button role="tab" aria-selected="false" data-tab="cdn">cdn / script</button>
+          <button role="tab" aria-selected="false" data-tab="use">use it</button>
+        </div>
+        <pre data-panel="npm"><span class="c"># zero runtime dependencies · ESM · CJS · IIFE · TS types</span>
+npm install helix-noise</pre>
+        <pre data-panel="cdn" hidden>&lt;<span class="k">script</span> <span class="f">src</span>=<span class="s">"https://cdn.jsdelivr.net/npm/helix-noise/dist/helix-noise.global.js"</span>&gt;&lt;/<span class="k">script</span>&gt;
+&lt;<span class="k">script</span>&gt;
+  <span class="k">const</span> field = HelixNoise.<span class="f">create</span>({ helicity: <span class="n">0.8</span> });
+&lt;/<span class="k">script</span>&gt;</pre>
+        <pre data-panel="use" hidden><span class="k">import</span> { create } <span class="k">from</span> <span class="s">"helix-noise"</span>;
+
+<span class="k">const</span> field = <span class="f">create</span>({ helicity: <span class="n">0.8</span>, coherence: <span class="n">0.5</span> });
+<span class="k">const</span> [ux, uy, uz] = field.<span class="f">sample</span>(x, y, z);      <span class="c">// divergence-free, anywhere</span>
+<span class="k">const</span> [ax, ay, az] = field.<span class="f">sample</span>(x, y, z, t);   <span class="c">// …the same field, later in time</span></pre>
+      </div>
+    </section>
+  </div>
+
+  <footer class="col">
+    <div class="foot-row">
+      <span class="foot-mark">Helix Noise</span>
+      <nav class="foot-links">
+        <a href="examples/index.html">Demos</a>
+        <a href="gallery.html">Gallery</a>
+        <a href="sandbox.html">Sandbox</a>
+        <a href="README.md">Docs</a>
+        <a href="https://github.com/rifatjumagulov/helix-noise">GitHub</a>
+        <a href="https://www.npmjs.com/package/helix-noise">npm</a>
+      </nav>
+    </div>
+    <p class="foot-note">MIT © Rifat Jumagulov · ~11 kB · grid-free, divergence-free, zero dependencies</p>
+  </footer>
+</main>
+
+<script src="dist/helix-noise.global.js"></script>
+<script>
+(() => {
+  const REDUCED = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const cv = document.getElementById("field"), ctx = cv.getContext("2d", { alpha:false });
+  const glow = document.getElementById("moodglow");
+  const DPR = Math.min(devicePixelRatio || 1, 1.75);
+  let W=0, H=0, N=0, px, py, plife;
+
+  let field = HelixNoise.create({ modes: 46, slope: 2.4, helicity: 0.85, coherence: 0.8, seed: 7 });
+  const WS = 0.011;
+  const uw = [0,0,0,0,0,0];
+  let ft = 0;
+
+  // ── moods: each is one blend of the three qualities + a signature glow ──
+  const P = (slope,hel,coh,speed,glowRGB) => ({ slope, hel, coh, speed, r:glowRGB[0], g:glowRGB[1], b:glowRGB[2] });
+  const PRESETS = {
+    silk:      P(2.4, 0.85, 0.80, 1.00, [53,224,199]),
+    whirlpool: P(1.9, 1.00, 0.96, 1.20, [80,215,255]),
+    nebula:    P(1.2,-0.62, 0.28, 1.30, [246,165,66]),
+    storm:     P(1.5, 0.02, 0.48, 1.85, [150,172,196]),
+    aurora:    P(2.6, 0.70, 0.92, 0.85, [167,139,250]),
+  };
+  const KEYS = ["slope","hel","coh","speed","r","g","b"];
+  let state = Object.assign({}, PRESETS.silk);
+  let goal  = Object.assign({}, PRESETS.silk);
+
+  // pointer stir
+  let mx=-1e4, my=-1e4, pdown=false, stirT=0;
+
+  function seed(){
+    N = Math.min(5200, Math.round(W*H/820));
+    px=new Float32Array(N); py=new Float32Array(N); plife=new Float32Array(N);
+    for(let i=0;i<N;i++){ px[i]=Math.random()*W; py[i]=Math.random()*H; plife[i]=Math.random()*260; }
+  }
+  function fit(){
+    W=innerWidth; H=innerHeight;
+    cv.width=Math.round(W*DPR); cv.height=Math.round(H*DPR);
+    cv.style.width=W+"px"; cv.style.height=H+"px";
+    ctx.setTransform(DPR,0,0,DPR,0,0);
+    ctx.fillStyle="#05070b"; ctx.fillRect(0,0,W,H);
+    seed();
+  }
+  addEventListener("resize", fit, { passive:true }); fit();
+
+  addEventListener("pointermove", e=>{ mx=e.clientX; my=e.clientY; if(pdown) stirT=1; }, { passive:true });
+  addEventListener("pointerdown", e=>{ if(e.target.closest("a,button")) return; pdown=true; mx=e.clientX; my=e.clientY; stirT=1; }, { passive:true });
+  addEventListener("pointerup",   ()=>{ pdown=false; }, { passive:true });
+  addEventListener("pointerleave",()=>{ mx=-1e4; my=-1e4; }, { passive:true });
+
+  const BASE=1.35, STIR_R=210;
+  function paintGlow(){ glow.style.background =
+    `radial-gradient(80% 60% at 80% 8%, rgba(${state.r|0},${state.g|0},${state.b|0},.15), transparent 62%)`; }
+
+  function step(draw){
+    // ease live state toward the chosen mood; only touch the field while it's actually moving
+    let moving=false;
+    for(const k of KEYS){
+      const d=goal[k]-state[k], eps=(k==="r"||k==="g"||k==="b")?0.4:1e-4;
+      if(Math.abs(d)>eps){ state[k]+=d*0.055; moving=true; } else state[k]=goal[k];
+    }
+    if(moving){ field.set({ slope:state.slope, helicity:state.hel, coherence:state.coh }); paintGlow(); }
+
+    if(draw){ ctx.fillStyle="rgba(5,7,11,0.075)"; ctx.fillRect(0,0,W,H); ctx.globalCompositeOperation="lighter"; }
+    ctx.lineWidth=1.15; ctx.lineCap="round";
+    ft += REDUCED ? 0 : 0.028;
+    stirT *= 0.94;
+    const SP = BASE*state.speed;
+    for(let i=0;i<N;i++){
+      let x=px[i], y=py[i];
+      field.sampleUW(x*WS, y*WS, 0, uw, ft);
+      let vx=uw[0], vy=uw[1];
+      const dx=x-mx, dy=y-my, r2=dx*dx+dy*dy;
+      if(r2<STIR_R*STIR_R){ const r=Math.sqrt(r2)||1, f=(1-r/STIR_R)*(0.9+2.2*stirT); vx+=(-dy/r)*f*2.4; vy+=(dx/r)*f*2.4; }
+      const nx=x+vx*SP, ny=y+vy*SP;
+      if(draw){
+        const hel=uw[0]*uw[3]+uw[1]*uw[4]+uw[2]*uw[5];
+        const sp=Math.min(1, Math.hypot(vx,vy)*0.6);
+        ctx.strokeStyle = hel>=0 ? `rgba(53,224,199,${0.13+0.62*sp})` : `rgba(246,165,66,${0.13+0.62*sp})`;
+        ctx.beginPath(); ctx.moveTo(x,y); ctx.lineTo(nx,ny); ctx.stroke();
+      }
+      px[i]=nx; py[i]=ny;
+      if(--plife[i]<=0 || nx<-20||nx>W+20||ny<-20||ny>H+20){ px[i]=Math.random()*W; py[i]=Math.random()*H; plife[i]=180+Math.random()*220; }
+    }
+    if(draw) ctx.globalCompositeOperation="source-over";
+  }
+
+  let running=true;
+  function frame(){ if(running) step(true); requestAnimationFrame(frame); }
+  document.addEventListener("visibilitychange", ()=>{ running=!document.hidden; });
+  paintGlow();
+  if(REDUCED){ for(let k=0;k<90;k++) step(false); step(true); } else frame();
+
+  // ── presets ──
+  const btns=[...document.querySelectorAll(".preset")];
+  function pick(name){
+    goal=Object.assign({}, PRESETS[name]);
+    btns.forEach(b=>b.classList.toggle("on", b.dataset.p===name));
+    if(REDUCED){ state=Object.assign({}, PRESETS[name]); field.set({slope:state.slope,helicity:state.hel,coherence:state.coh}); paintGlow(); for(let k=0;k<40;k++) step(false); step(true); }
+  }
+  btns.forEach(b=>b.addEventListener("click", ()=>pick(b.dataset.p)));
+
+  // ── live mini-fields in the demo thumbnails; each runs only while on-screen ──
+  document.querySelectorAll("canvas.minifield").forEach(el => {
+    const d=el.dataset, c=el.getContext("2d",{alpha:false});
+    const f=HelixNoise.create({ modes:+(d.modes||30), slope:+d.slope, helicity:+d.hel, coherence:+d.coh, seed:+(d.seed||1) });
+    const count=+(d.count||460), ws=+(d.ws||0.02), speed=+(d.speed||1.1);
+    let w=0,h=0,px,py,t=0,vis=false,raf=0; const o=[0,0,0,0,0,0];
+    function tick(draw){
+      if(!w) return; t+=0.03;
+      if(draw){ c.fillStyle="rgba(4,6,10,0.1)"; c.fillRect(0,0,w,h); c.globalCompositeOperation="lighter"; c.lineWidth=1; }
+      for(let i=0;i<count;i++){
+        const x=px[i], y=py[i]; f.sampleUW(x*ws, y*ws, 0, o, t);
+        const nx=x+o[0]*speed, ny=y+o[1]*speed;
+        if(draw){ const hel=o[0]*o[3]+o[1]*o[4]+o[2]*o[5];
+          c.strokeStyle = hel>=0 ? "rgba(53,224,199,0.5)" : "rgba(246,165,66,0.5)";
+          c.beginPath(); c.moveTo(x,y); c.lineTo(nx,ny); c.stroke(); }
+        px[i]=nx; py[i]=ny;
+        if(nx<0||nx>w||ny<0||ny>h){ px[i]=Math.random()*w; py[i]=Math.random()*h; }
+      }
+      if(draw) c.globalCompositeOperation="source-over";
+    }
+    function loop(){ if(!vis){ raf=0; return; } tick(true); raf=requestAnimationFrame(loop); }
+    new ResizeObserver(()=>{ w=el.clientWidth; h=el.clientHeight; if(!w) return;
+      el.width=Math.round(w*DPR); el.height=Math.round(h*DPR); c.setTransform(DPR,0,0,DPR,0,0);
+      c.fillStyle="#04060a"; c.fillRect(0,0,w,h);
+      px=new Float32Array(count); py=new Float32Array(count);
+      for(let i=0;i<count;i++){ px[i]=Math.random()*w; py[i]=Math.random()*h; }
+      if(REDUCED){ for(let k=0;k<60;k++) tick(false); tick(true); }
+    }).observe(el);
+    if(!REDUCED) new IntersectionObserver(es=>{ vis=es[0].isIntersecting; if(vis&&!raf) loop(); },{threshold:0.04}).observe(el);
+  });
+
+  // ── install tabs ──
+  const tabs=[...document.querySelectorAll(".code .bar button")], panels=[...document.querySelectorAll(".code pre")];
+  tabs.forEach(t=>t.addEventListener("click", ()=>{
+    tabs.forEach(x=>x.setAttribute("aria-selected", x===t));
+    panels.forEach(p=>p.hidden = p.dataset.panel !== t.dataset.tab);
+  }));
+})();
+</script>
+</body>
+</html>

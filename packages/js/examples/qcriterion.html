@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Helix Noise — Q-criterion vortex isosurfaces</title>
+<style>
+  html,body{margin:0;background:#070a0e;color:#cdd6dd;font-family:system-ui,sans-serif}
+  .wrap{max-width:980px;margin:0 auto;padding:22px 16px}
+  h1{font-size:19px;font-weight:600;margin:0 0 6px}
+  h1 code{color:#f4a13c}
+  p{color:#8a97a2;font-size:13.5px;line-height:1.6;margin:0 0 14px}
+  p b{color:#cdd6dd;font-weight:500}
+  code{font-family:ui-monospace,Menlo,monospace;color:#f4a13c;font-size:12.5px}
+  #stage{position:relative;width:100%;aspect-ratio:16/10;border:1px solid rgba(150,180,200,.15);
+    border-radius:10px;overflow:hidden;background:#070a0e}
+  .badge{position:absolute;top:10px;left:12px;font-family:ui-monospace,monospace;font-size:10.5px;
+    letter-spacing:.12em;text-transform:uppercase;color:#93a3b0;background:rgba(7,10,14,.55);
+    border:1px solid rgba(150,180,200,.14);border-radius:6px;padding:4px 8px;pointer-events:none}
+  .ro{position:absolute;top:10px;right:12px;font-family:ui-monospace,monospace;font-size:11px;color:#93a3b0;
+    background:rgba(7,10,14,.55);border:1px solid rgba(150,180,200,.14);border-radius:6px;padding:5px 9px;
+    text-align:right;line-height:1.5;pointer-events:none}
+  .row{display:flex;flex-wrap:wrap;gap:14px;align-items:center;margin-top:12px;font-family:ui-monospace,monospace;font-size:12px;color:#93a3b0}
+  .row label{display:flex;align-items:center;gap:8px}
+  input[type=range]{width:104px}
+  button{font-family:ui-monospace,monospace;font-size:11.5px;color:#cdd6dd;background:#0c1016;
+    border:1px solid rgba(150,180,200,.22);border-radius:7px;padding:6px 11px;cursor:pointer}
+  button:hover{border-color:#38d9d1}
+  .note{margin-top:12px;font-size:12px;color:#5d6b77;font-family:ui-monospace,monospace}
+  .sci{margin-top:16px;background:#0b1017;border:1px solid rgba(150,180,200,.12);border-radius:10px;padding:14px 16px}
+  .sci h3{font-size:12px;font-family:ui-monospace,monospace;letter-spacing:.16em;text-transform:uppercase;color:#38d9d1;margin:0 0 8px;font-weight:400}
+  .sci p{font-size:12.5px;color:#8a97a2;line-height:1.62;margin:0}
+  .sci code{color:#f4a13c}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Q-criterion — the coherent vortices, extracted</h1>
+  <p>The <b>Q-criterion</b> is how fluid dynamicists <b>see</b> a turbulent flow's skeleton. Split the
+    velocity gradient into strain <b>S</b> (stretching) and rotation <b>Ω</b> (spin); then
+    <code>Q = ½(‖Ω‖² − ‖S‖²)</code>. Where <code>Q &gt; 0</code>, rotation wins — you are inside a
+    vortex tube. Here that scalar is computed on a grid from the Helix Noise velocity and its
+    <b>isosurface</b> is extracted by marching cubes, tinted by <b>helicity sign</b>
+    (<span style="color:#2fd6bf">teal</span> right / <span style="color:#f4a13c">amber</span> left).
+    Raise <b>coherence</b> and watch a formless tangle <b>condense into distinct tubes</b>. Drag to orbit.</p>
+  <div id="stage"><div class="badge">helix-noise · Q = ½(‖Ω‖²−‖S‖²) · marching cubes</div><div class="ro" id="ro">—</div></div>
+  <div class="row">
+    <label>coherence <input id="coh" type="range" min="0" max="1" step="0.05" value="0.7"><span id="v-coh">70%</span></label>
+    <label>helicity <input id="heli" type="range" min="-1" max="1" step="0.05" value="0.6"><span id="v-heli">+0.60</span></label>
+    <label>slope <input id="slope" type="range" min="1" max="3" step="0.1" value="1.7"><span id="v-slope">1.7</span></label>
+    <label>threshold <input id="iso" type="range" min="0.05" max="0.6" step="0.02" value="0.22"><span id="v-iso">0.22</span></label>
+    <button id="reseed">↻ seed</button>
+  </div>
+  <div class="note" id="note">loading three.js…</div>
+  <div class="sci">
+    <h3>Why this is here</h3>
+    <p>The Q-criterion is the standard way to visualize a flow's vortex skeleton: it isolates the
+      regions where rotation <b>Ω</b> beats strain <b>S</b>. Because Helix Noise gives an analytic,
+      divergence-free velocity field, computing <code>Q</code> on a grid and extracting its isosurface
+      is cheap and exact — a direct window onto the coherent structures the <code>coherence</code>
+      knob builds.</p>
+  </div>
+</div>
+
+<script src="../dist/helix-noise.global.js"></script>
+<script src="marching-cubes.js"></script>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+  import * as THREE from "three";
+  import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+  const params = { coh: 0.7, heli: 0.6, slope: 1.7, iso: 0.22, seed: 12 };
+  const field = HelixNoise.create({ modes: 40, slope: params.slope, helicity: params.heli,
+    coherence: params.coh, seed: params.seed, kmin: 1.0, kmax: 5.0 });
+
+  const stage = document.getElementById("stage");
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(Math.min(2, devicePixelRatio));
+  stage.appendChild(renderer.domElement);
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x070a0e);
+  const camera = new THREE.PerspectiveCamera(45, 16/10, 0.1, 100);
+  camera.position.set(9, 6, 12);
+  const controls = new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true; controls.autoRotate = true; controls.autoRotateSpeed = 0.65;
+
+  scene.add(new THREE.HemisphereLight(0x9db4c8, 0x0a0d12, 0.9));
+  const key = new THREE.DirectionalLight(0xffffff, 1.5); key.position.set(6, 9, 4); scene.add(key);
+  const rim = new THREE.DirectionalLight(0x6f87ff, 0.6); rim.position.set(-6, -3, -5); scene.add(rim);
+
+  const box = new THREE.LineSegments(
+    new THREE.EdgesGeometry(new THREE.BoxGeometry(10, 10, 10)),
+    new THREE.LineBasicMaterial({ color: 0x1c2a34 }));
+  scene.add(box);
+
+  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.4, metalness: 0.15,
+    side: THREE.DoubleSide, flatShading: false });
+  let mesh = null;
+
+  // grid: velocity on a G³ lattice (1-cell halo for central differences), Q on the inner (G-2)³
+  const G = 52, SPAN = 2.3 * Math.PI, H = SPAN / (G - 1), BOX = 10;
+  const GU = new Float32Array(G*G*G), GV = new Float32Array(G*G*G), GW = new Float32Array(G*G*G);
+  const Q = new Float32Array(G*G*G);
+  const teal = new THREE.Color(0x2fd6bf), amber = new THREE.Color(0xf4a13c);
+
+  function sampleVelocities(){
+    const uw = [0,0,0,0,0,0];
+    let o = 0;
+    for (let z = 0; z < G; z++) for (let y = 0; y < G; y++) for (let x = 0; x < G; x++, o++){
+      field.sampleUW(x*H, y*H, z*H, uw);
+      GU[o] = uw[0]; GV[o] = uw[1]; GW[o] = uw[2];
+    }
+  }
+
+  function computeQ(){
+    const idx = (x,y,z) => (z*G + y)*G + x;
+    const inv2h = 1/(2*H);
+    let qmax = 1e-9;
+    Q.fill(0);
+    for (let z = 1; z < G-1; z++) for (let y = 1; y < G-1; y++) for (let x = 1; x < G-1; x++){
+      const o = idx(x,y,z);
+      // velocity gradient J_ij = d u_i / d x_j  (central differences)
+      const ux = (GU[idx(x+1,y,z)]-GU[idx(x-1,y,z)])*inv2h;
+      const uy = (GU[idx(x,y+1,z)]-GU[idx(x,y-1,z)])*inv2h;
+      const uz = (GU[idx(x,y,z+1)]-GU[idx(x,y,z-1)])*inv2h;
+      const vx = (GV[idx(x+1,y,z)]-GV[idx(x-1,y,z)])*inv2h;
+      const vy = (GV[idx(x,y+1,z)]-GV[idx(x,y-1,z)])*inv2h;
+      const vz = (GV[idx(x,y,z+1)]-GV[idx(x,y,z-1)])*inv2h;
+      const wx = (GW[idx(x+1,y,z)]-GW[idx(x-1,y,z)])*inv2h;
+      const wy = (GW[idx(x,y+1,z)]-GW[idx(x,y-1,z)])*inv2h;
+      const wz = (GW[idx(x,y,z+1)]-GW[idx(x,y,z-1)])*inv2h;
+      // symmetric S and antisymmetric Omega parts
+      const s11=ux, s22=vy, s33=wz;
+      const s12=0.5*(uy+vx), s13=0.5*(uz+wx), s23=0.5*(vz+wy);
+      const o12=0.5*(uy-vx), o13=0.5*(uz-wx), o23=0.5*(vz-wy);
+      const S2 = s11*s11+s22*s22+s33*s33 + 2*(s12*s12+s13*s13+s23*s23);
+      const O2 = 2*(o12*o12+o13*o13+o23*o23);
+      const q = 0.5*(O2 - S2);
+      Q[o] = q;
+      if (q > qmax) qmax = q;
+    }
+    return qmax;
+  }
+
+  function rebuild(){
+    const t0 = performance.now();
+    field.set({ slope:params.slope, helicity:params.heli, coherence:params.coh, seed:params.seed });
+    sampleVelocities();
+    const qmax = computeQ();
+    const iso = params.iso * qmax;
+
+    const positions = [], colors = [];
+    const uw = [0,0,0,0,0,0], c = new THREE.Color();
+    const gw = BOX/(G-1);                      // grid cell -> world size
+    marchingCubes(Q, G, G, G, iso, (gx, gy, gz) => {
+      // grid coords -> world (centered), and -> field coords for helicity colour
+      positions.push((gx-(G-1)/2)*gw, (gy-(G-1)/2)*gw, (gz-(G-1)/2)*gw);
+      field.sampleUW(gx*H, gy*H, gz*H, uw);
+      const h = uw[0]*uw[3]+uw[1]*uw[4]+uw[2]*uw[5];
+      c.copy(h>=0?teal:amber);
+      colors.push(c.r, c.g, c.b);
+    });
+
+    if (mesh){ scene.remove(mesh); mesh.geometry.dispose(); }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+    geo.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+    geo.computeVertexNormals();
+    mesh = new THREE.Mesh(geo, mat);
+    scene.add(mesh);
+
+    const tris = positions.length/9;
+    document.getElementById("ro").innerHTML =
+      `coherence <b style="color:#38d9d1">${Math.round(params.coh*100)}%</b><br>` +
+      `Q&gt;0 iso <b>${iso.toFixed(2)}</b><br>${tris.toLocaleString()} triangles`;
+    document.getElementById("note").textContent =
+      `${G}³ grid · Q from central-difference ∇u · ${tris.toLocaleString()} triangles · rebuilt in ${(performance.now()-t0).toFixed(0)} ms · three.js r160`;
+  }
+
+  function size(){ renderer.setSize(stage.clientWidth, stage.clientHeight);
+    camera.aspect = stage.clientWidth/stage.clientHeight; camera.updateProjectionMatrix(); }
+  addEventListener("resize", size);
+
+  const $ = id => document.getElementById(id);
+  function bind(id, key, fmt, rebuildOnChange){
+    $(id).addEventListener("input", e => { params[key]=parseFloat(e.target.value); $("v-"+id).textContent=fmt(params[key]); });
+    $(id).addEventListener("change", () => rebuild());
+  }
+  bind("coh","coh", v => Math.round(v*100)+"%");
+  bind("heli","heli", v => (v>0?"+":"")+v.toFixed(2));
+  bind("slope","slope", v => v.toFixed(1));
+  // threshold is cheap (no re-sample) but rebuild() re-samples anyway; keep it on change
+  $("iso").addEventListener("input", e => { params.iso=parseFloat(e.target.value); $("v-iso").textContent=params.iso.toFixed(2); });
+  $("iso").addEventListener("change", () => rebuild());
+  $("reseed").addEventListener("click", () => { params.seed=(params.seed*1103515245+12345)>>>0; rebuild(); });
+
+  size(); rebuild();
+  if (window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches) controls.autoRotate=false;
+  (function loop(){ controls.update(); renderer.render(scene, camera); requestAnimationFrame(loop); })();
+</script>
+</body>
+</html>

@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Helix Noise — draw the walls</title>
+<style>
+  html,body{margin:0;height:100%;background:#070a0e;color:#c8d2dc;font:15px/1.5 system-ui,sans-serif}
+  .wrap{max-width:960px;margin:0 auto;padding:24px 16px}
+  h1{font-size:20px;margin:0 0 6px} code{color:#f4a13c;font-size:0.92em}
+  p{color:#8b98a5;margin:0 0 14px}
+  #stage{position:relative}
+  canvas{width:100%;height:64vh;display:block;border-radius:10px;background:#070a0e;cursor:crosshair;touch-action:none}
+  .bar{display:flex;gap:10px;align-items:center;margin-top:8px;color:#5c6873;font-size:13px}
+  button{background:#121820;color:#c8d2dc;border:1px solid #263241;border-radius:7px;padding:5px 14px;font:inherit;cursor:pointer}
+  button:hover{border-color:#3b4d63}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Draw the walls — <code>field.withBoundary(sdf)</code>, live</h1>
+  <p>The word below is an obstacle: a signed distance field the flow slides along. <b>Draw with the
+     pointer</b> to add walls and carve channels — the boundary is just a function, so the flow obeys
+     instantly, stays exactly divergence-free, and keeps churning in time. No solver, no grid.</p>
+  <div id="stage"><canvas id="cv"></canvas></div>
+  <div class="bar">
+    <button id="clear">Clear drawing</button>
+    <span>drag = wall &nbsp;·&nbsp; colour = helicity u·ω</span>
+  </div>
+</div>
+<script src="../dist/helix-noise.global.js"></script>
+<script>
+window.addEventListener("error", (e) => { window.__err = e.message + " @ " + e.filename + ":" + e.lineno; });
+(function(){
+  const TAU = 2 * Math.PI;
+  const cv = document.getElementById("cv"), ctx = cv.getContext("2d", { alpha: false });
+  let W = TAU, H = TAU * 0.6, sx = 1, sy = 1;              // world size (H follows canvas aspect)
+
+  // ---- text obstacle: chamfer signed-distance grid + precomputed gradient ----
+  const GW = 320; let GH = 192, sd, gx, gy, px = W / GW;
+  function buildTextSDF(){
+    GH = Math.max(32, Math.round(GW * H / W)); px = W / GW;
+    const oc = document.createElement("canvas"); oc.width = GW; oc.height = GH;
+    const o = oc.getContext("2d");
+    o.fillStyle = "#000"; o.fillRect(0, 0, GW, GH);
+    o.fillStyle = "#fff"; o.textAlign = "center"; o.textBaseline = "middle";
+    let fs = GH * 0.52;
+    o.font = `900 ${fs}px system-ui, sans-serif`;
+    const w0 = o.measureText("HELIX").width;
+    fs *= Math.min(1, (GW * 0.86) / w0);
+    o.font = `900 ${fs}px system-ui, sans-serif`;
+    o.fillText("HELIX", GW / 2, GH / 2 + fs * 0.03);
+    const img = o.getImageData(0, 0, GW, GH).data;
+    const inside = new Uint8Array(GW * GH);
+    for (let i = 0; i < inside.length; i++) inside[i] = img[4 * i] > 127 ? 1 : 0;
+    const INF = 1e9, D1 = 1, D2 = Math.SQRT2;
+    const dist = (target) => {                             // chamfer 3×3, two passes
+      const d = new Float32Array(GW * GH);
+      for (let i = 0; i < d.length; i++) d[i] = inside[i] === target ? 0 : INF;
+      const at = (x, y) => (x < 0 || y < 0 || x >= GW || y >= GH) ? INF : d[y * GW + x];
+      for (let y = 0; y < GH; y++) for (let x = 0; x < GW; x++) {
+        const i = y * GW + x;
+        d[i] = Math.min(d[i], at(x-1,y)+D1, at(x,y-1)+D1, at(x-1,y-1)+D2, at(x+1,y-1)+D2);
+      }
+      for (let y = GH - 1; y >= 0; y--) for (let x = GW - 1; x >= 0; x--) {
+        const i = y * GW + x;
+        d[i] = Math.min(d[i], at(x+1,y)+D1, at(x,y+1)+D1, at(x+1,y+1)+D2, at(x-1,y+1)+D2);
+      }
+      return d;
+    };
+    const dOut = dist(1), dIn = dist(0);                   // px units
+    sd = new Float32Array(GW * GH);
+    for (let i = 0; i < sd.length; i++) sd[i] = (dOut[i] - dIn[i]) * px;   // world units, <0 inside
+    gx = new Float32Array(GW * GH); gy = new Float32Array(GW * GH);
+    for (let y = 0; y < GH; y++) for (let x = 0; x < GW; x++) {
+      const i = y * GW + x, xm = Math.max(0,x-1), xp = Math.min(GW-1,x+1), ym = Math.max(0,y-1), yp = Math.min(GH-1,y+1);
+      gx[i] = (sd[y*GW+xp] - sd[y*GW+xm]) / ((xp - xm) * px);
+      gy[i] = (sd[yp*GW+x] - sd[ym*GW+x]) / ((yp - ym) * px);
+    }
+  }
+  function gridAt(g, x, y){                                // bilinear, clamped
+    let fx = x / px - 0.5, fy = y / px - 0.5;
+    fx = Math.max(0, Math.min(GW - 1.001, fx)); fy = Math.max(0, Math.min(GH - 1.001, fy));
+    const i0 = fx | 0, j0 = fy | 0, dx = fx - i0, dy = fy - j0, b = j0 * GW + i0;
+    return g[b]*(1-dx)*(1-dy) + g[b+1]*dx*(1-dy) + g[b+GW]*(1-dx)*dy + g[b+GW+1]*dx*dy;
+  }
+
+  // ---- drawn obstacles: capsule strokes (analytic SDF + gradient) ----
+  const SEGS = [], MAX_SEGS = 420, R = 0.16;
+  function strokeSdf(x, y, out){                           // out = [d, gx, gy]
+    let best = 1e9, bx = 1, by = 0;
+    for (let i = 0; i < SEGS.length; i++) {
+      const s = SEGS[i];
+      const vx = s[2] - s[0], vy = s[3] - s[1];
+      let tt = ((x - s[0]) * vx + (y - s[1]) * vy) / (vx * vx + vy * vy || 1);
+      tt = Math.max(0, Math.min(1, tt));
+      const qx = x - (s[0] + tt * vx), qy = y - (s[1] + tt * vy);
+      const d = Math.hypot(qx, qy);
+      if (d - R < best) { best = d - R; if (d > 1e-9) { bx = qx / d; by = qy / d; } }
+    }
+    out[0] = best; out[1] = bx; out[2] = by;
+  }
+
+  // ---- combined SDF (z-independent → any slice works) ----
+  const so = [0, 0, 0];
+  const sdf = (x, y, z) => {
+    const dt = gridAt(sd, x, y);
+    if (!SEGS.length) return dt;
+    strokeSdf(x, y, so);
+    return Math.min(dt, so[0]);
+  };
+  const gradient = (x, y, z) => {
+    const dt = gridAt(sd, x, y);
+    let dxv, dyv;
+    if (SEGS.length) { strokeSdf(x, y, so); if (so[0] < dt) { dxv = so[1]; dyv = so[2]; } }
+    if (dxv === undefined) {
+      dxv = gridAt(gx, x, y); dyv = gridAt(gy, x, y);
+      const n = Math.hypot(dxv, dyv) || 1; dxv /= n; dyv /= n;
+    }
+    return [dxv, dyv, 0];
+  };
+
+  // ---- field + particles ----
+  const field = HelixNoise.create({ modes: 40, slope: 1.7, helicity: 0.75, coherence: 0.4, seed: 7 });
+  const bounded = field.withBoundary(sdf, { thickness: 0.5, gradient });
+  const N = 2600, pxr = new Float32Array(N), pyr = new Float32Array(N);
+  function spawn(i){ let n = 0; do { pxr[i] = Math.random() * W; pyr[i] = Math.random() * H; } while (sdf(pxr[i], pyr[i], 0) < 0.05 && ++n < 40); }
+  const uw = [0, 0, 0, 0, 0, 0];
+  let ft = 0;
+
+  function fit(){
+    cv.width = cv.clientWidth; cv.height = cv.clientHeight;
+    H = W * cv.height / cv.width; sx = cv.width / W; sy = cv.height / H;
+    buildTextSDF();
+    for (let i = 0; i < N; i++) spawn(i);
+    ctx.fillStyle = "#070a0e"; ctx.fillRect(0, 0, cv.width, cv.height);
+  }
+  addEventListener("resize", fit); fit();
+
+  function frame(){
+    ctx.fillStyle = "rgba(7,10,14,0.075)"; ctx.fillRect(0, 0, cv.width, cv.height);
+    ctx.globalCompositeOperation = "lighter";
+    ctx.lineWidth = 1.3; ctx.lineCap = "round";
+    ft += 0.028;
+    for (let i = 0; i < N; i++) {
+      const u = bounded.sample(pxr[i], pyr[i], 1.7, ft);
+      const x0 = pxr[i], y0 = pyr[i];
+      pxr[i] = ((pxr[i] + u[0] * 0.13) % W + W) % W;
+      pyr[i] = ((pyr[i] + u[1] * 0.13) % H + H) % H;
+      if (sdf(pxr[i], pyr[i], 0) < 0) { spawn(i); continue; }
+      field.sampleUW(pxr[i], pyr[i], 1.7, uw, ft);
+      const h = uw[0]*uw[3] + uw[1]*uw[4] + uw[2]*uw[5];
+      ctx.strokeStyle = h >= 0 ? "rgba(47,214,191,0.8)" : "rgba(244,161,60,0.8)";
+      if (Math.abs(pxr[i]-x0) < W*0.5 && Math.abs(pyr[i]-y0) < H*0.5) {
+        ctx.beginPath(); ctx.moveTo(x0*sx, y0*sy); ctx.lineTo(pxr[i]*sx, pyr[i]*sy); ctx.stroke();
+      }
+    }
+    ctx.globalCompositeOperation = "source-over";
+    // obstacles on top: the text (from the SDF grid's source shape) + drawn strokes
+    ctx.fillStyle = "rgba(10,14,19,0.9)"; ctx.strokeStyle = "rgba(139,152,165,0.65)"; ctx.lineWidth = 1.2;
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    let fs = cv.height * 0.52;
+    ctx.font = `900 ${fs}px system-ui, sans-serif`;
+    fs *= Math.min(1, (cv.width * 0.86) / ctx.measureText("HELIX").width);
+    ctx.font = `900 ${fs}px system-ui, sans-serif`;
+    ctx.fillText("HELIX", cv.width / 2, cv.height / 2 + fs * 0.03);
+    ctx.strokeText("HELIX", cv.width / 2, cv.height / 2 + fs * 0.03);
+    if (SEGS.length) {
+      ctx.lineWidth = 2 * R * sx; ctx.lineCap = "round";
+      ctx.strokeStyle = "rgba(120,136,152,0.55)";
+      ctx.beginPath();
+      for (const s of SEGS) { ctx.moveTo(s[0]*sx, s[1]*sy); ctx.lineTo(s[2]*sx, s[3]*sy); }
+      ctx.stroke();
+    }
+    requestAnimationFrame(frame);
+  }
+  frame();
+
+  // ---- drawing ----
+  let drawing = false, lx = 0, ly = 0;
+  const toWorld = (e) => {
+    const r = cv.getBoundingClientRect();
+    return [ (e.clientX - r.left) / r.width * W, (e.clientY - r.top) / r.height * H ];
+  };
+  cv.addEventListener("pointerdown", (e) => { [lx, ly] = toWorld(e); drawing = true; cv.setPointerCapture(e.pointerId); });
+  cv.addEventListener("pointermove", (e) => {
+    if (!drawing) return;
+    const [x, y] = toWorld(e);
+    if (Math.hypot(x - lx, y - ly) > 0.09) {
+      SEGS.push([lx, ly, x, y]);
+      if (SEGS.length > MAX_SEGS) SEGS.splice(0, SEGS.length - MAX_SEGS);
+      lx = x; ly = y;
+    }
+  });
+  const stop = () => { drawing = false; };
+  cv.addEventListener("pointerup", stop); cv.addEventListener("pointercancel", stop);
+  document.getElementById("clear").addEventListener("click", () => { SEGS.length = 0; });
+})();
+</script>
+</body>
+</html>

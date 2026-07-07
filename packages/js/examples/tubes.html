@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Helix Noise — vortex tubes (the helicity knob made visible)</title>
+<style>
+  html,body{margin:0;background:#070a0e;color:#cdd6dd;font-family:system-ui,sans-serif}
+  .wrap{max-width:980px;margin:0 auto;padding:22px 16px}
+  h1{font-size:19px;font-weight:600;margin:0 0 6px}
+  h1 code{color:#f4a13c}
+  p{color:#8a97a2;font-size:13.5px;line-height:1.6;margin:0 0 14px}
+  p b{color:#cdd6dd;font-weight:500}
+  code{font-family:ui-monospace,Menlo,monospace;color:#f4a13c;font-size:12.5px}
+  #stage{position:relative;width:100%;aspect-ratio:16/10;border:1px solid rgba(150,180,200,.15);border-radius:10px;overflow:hidden;background:#070a0e}
+  .badge{position:absolute;top:10px;left:12px;font-family:ui-monospace,monospace;font-size:10.5px;
+    letter-spacing:.12em;text-transform:uppercase;color:#93a3b0;background:rgba(7,10,14,.55);
+    border:1px solid rgba(150,180,200,.14);border-radius:6px;padding:4px 8px;pointer-events:none}
+  .ro{position:absolute;top:10px;right:12px;font-family:ui-monospace,monospace;font-size:11px;color:#93a3b0;
+    background:rgba(7,10,14,.55);border:1px solid rgba(150,180,200,.14);border-radius:6px;padding:5px 9px;
+    text-align:right;line-height:1.5;pointer-events:none}
+  .ro b{font-weight:400;color:#2fd6bf}
+  .row{display:flex;flex-wrap:wrap;gap:14px;align-items:center;margin-top:12px;font-family:ui-monospace,monospace;font-size:12px;color:#93a3b0}
+  .row label{display:flex;align-items:center;gap:8px}
+  input[type=range]{width:120px}
+  button{font-family:ui-monospace,monospace;font-size:11.5px;color:#cdd6dd;background:#0c1016;
+    border:1px solid rgba(150,180,200,.22);border-radius:7px;padding:6px 11px;cursor:pointer}
+  button:hover{border-color:#38d9d1}
+  .note{margin-top:12px;font-size:12px;color:#5d6b77;font-family:ui-monospace,monospace}
+  .key{display:inline-flex;align-items:center;gap:6px;margin-right:14px}
+  .sw{width:10px;height:10px;border-radius:2px;display:inline-block}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Vortex tubes — <code>helicity</code> made visible</h1>
+  <p>Streamlines of one Helix Noise field, integrated with <code>field.sampleUW()</code> (velocity
+    <b>and</b> vorticity in a single call) and skinned as tubes. Colour is the genuine <b>helicity
+    density u·ω</b>: <span style="color:#2fd6bf">teal = right-handed</span>,
+    <span style="color:#f4a13c">amber = left-handed</span>. Slide <b>helicity</b> to ±1 and watch every
+    tube corkscrew the <b>same way</b> — a Beltrami flow; at 0 the two handednesses coexist. This is the
+    axis plain curl-noise doesn't have. Drag to orbit.</p>
+  <div id="stage"><div class="badge">helix-noise · streamtubes · three.js</div><div class="ro" id="ro">—</div></div>
+  <div class="row">
+    <label>helicity <input id="heli" type="range" min="-1" max="1" step="0.05" value="1"><span id="v-heli">+1.00</span></label>
+    <label>coherence <input id="coh" type="range" min="0" max="1" step="0.05" value="0.35"><span id="v-coh">35%</span></label>
+    <label>slope <input id="slope" type="range" min="0.8" max="3" step="0.1" value="2.2"><span id="v-slope">2.2</span></label>
+    <button id="p-left">left −1</button>
+    <button id="p-mirror">mirror 0</button>
+    <button id="p-right">right +1</button>
+    <button id="reseed">↻ seed</button>
+  </div>
+  <div class="note" style="margin-top:10px">
+    <span class="key"><span class="sw" style="background:#2fd6bf"></span>u·ω &gt; 0 (right-handed)</span>
+    <span class="key"><span class="sw" style="background:#f4a13c"></span>u·ω &lt; 0 (left-handed)</span>
+  </div>
+  <div class="note" id="note">loading three.js…</div>
+</div>
+
+<script src="../dist/helix-noise.global.js"></script>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+  import * as THREE from "three";
+  import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+  const TAU = Math.PI * 2, PI = Math.PI;
+  const params = { heli: 1.0, coh: 0.35, slope: 2.2, seed: 16 };
+  const field = HelixNoise.create({ modes: 44, kmax: 4.6, slope: params.slope,
+    helicity: params.heli, coherence: params.coh, seed: params.seed });
+
+  const stage = document.getElementById("stage");
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(Math.min(2, devicePixelRatio));
+  stage.appendChild(renderer.domElement);
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x070a0e);
+  scene.fog = new THREE.Fog(0x070a0e, 7.5, 14.5);
+  const camera = new THREE.PerspectiveCamera(45, 16/10, 0.1, 100);
+  camera.position.set(0, 2.4, 7.6);
+  const controls = new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true; controls.autoRotate = true; controls.autoRotateSpeed = 0.65;
+
+  scene.add(new THREE.HemisphereLight(0x9db4c8, 0x0a0d12, 0.75));
+  const key = new THREE.DirectionalLight(0xffffff, 1.5); key.position.set(4, 6, 3); scene.add(key);
+  const rim = new THREE.DirectionalLight(0x6f87ff, 0.5); rim.position.set(-5, -2, -4); scene.add(rim);
+
+  const group = new THREE.Group(); scene.add(group);
+  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.42, metalness: 0.12 });
+
+  // deterministic seeds for the streamline start points
+  function mulberry(s){ return function(){ s|=0; s=s+0x6D2B79F5|0; let t=Math.imul(s^s>>>15,1|s);
+    t=t+Math.imul(t^t>>>7,61|t)^t; return ((t^t>>>14)>>>0)/4294967296; }; }
+
+  const NLINES = 46, STEPS = 170, DS = 0.05, RADIUS = 0.055, RSEG = 7;
+  const uw = [0,0,0,0,0,0];
+  const CX = PI, R_STOP = 3.4;
+
+  // one RK2 step of unit-speed streamline integration; returns u·ω at the point
+  function dir(p, out){
+    field.sampleUW(p[0], p[1], p[2], uw);
+    const m = Math.hypot(uw[0], uw[1], uw[2]) || 1e-9;
+    out[0] = uw[0]/m; out[1] = uw[1]/m; out[2] = uw[2]/m;
+    return uw[0]*uw[3] + uw[1]*uw[4] + uw[2]*uw[5];
+  }
+  const d1=[0,0,0], d2=[0,0,0], mid=[0,0,0];
+  function trace(px, py, pz, sgn){
+    const pts=[], hs=[];
+    let p=[px,py,pz];
+    for(let i=0;i<STEPS;i++){
+      const h = dir(p, d1);
+      pts.push(new THREE.Vector3(p[0]-CX, p[1]-CX, p[2]-CX)); hs.push(h);
+      mid[0]=p[0]+sgn*d1[0]*DS*0.5; mid[1]=p[1]+sgn*d1[1]*DS*0.5; mid[2]=p[2]+sgn*d1[2]*DS*0.5;
+      dir(mid, d2);
+      p=[p[0]+sgn*d2[0]*DS, p[1]+sgn*d2[1]*DS, p[2]+sgn*d2[2]*DS];
+      if(Math.hypot(p[0]-CX,p[1]-CX,p[2]-CX) > R_STOP) break;
+    }
+    return {pts, hs};
+  }
+
+  const teal = new THREE.Color(0x2fd6bf), amber = new THREE.Color(0xf4a13c),
+        dim = new THREE.Color(0x2a3038);
+  function rebuild(){
+    const t0 = performance.now();
+    field.set({ slope: params.slope, helicity: params.heli, coherence: params.coh, seed: params.seed });
+    // clear previous tubes
+    for(const m of group.children) m.geometry.dispose();
+    group.clear();
+
+    const rng = mulberry(params.seed * 2654435761 >>> 0);
+    const lines = [];
+    let allH = [];
+    for(let i=0;i<NLINES;i++){
+      // seed inside a ball around the domain centre
+      let sx, sy, sz, rr;
+      do { sx=(rng()*2-1)*2.2; sy=(rng()*2-1)*2.2; sz=(rng()*2-1)*2.2; rr=Math.hypot(sx,sy,sz); } while(rr>2.2);
+      const fwd = trace(CX+sx, CX+sy, CX+sz, +1);
+      const bwd = trace(CX+sx, CX+sy, CX+sz, -1);
+      const pts = bwd.pts.slice(1).reverse().concat(fwd.pts);
+      const hs  = bwd.hs.slice(1).reverse().concat(fwd.hs);
+      if(pts.length < 46) continue;
+      lines.push({pts, hs});
+      for(const h of hs) allH.push(Math.abs(h));
+    }
+    allH.sort((a,b)=>a-b);
+    const H90 = allH[(allH.length*0.9)|0] || 1;
+
+    let rho = field.relativeHelicity(10), nT=0;
+    const c = new THREE.Color();
+    for(const {pts, hs} of lines){
+      const curve = new THREE.CatmullRomCurve3(pts);
+      const segs = pts.length-1;
+      const geo = new THREE.TubeGeometry(curve, segs, RADIUS, RSEG, false);
+      const nv = geo.attributes.position.count;
+      const colors = new Float32Array(nv*3);
+      const ring = RSEG+1;
+      for(let v=0; v<nv; v++){
+        const i = Math.min(hs.length-1, (v/ring)|0);
+        const h = hs[i], s = Math.min(1, Math.abs(h)/H90);
+        c.copy(dim).lerp(h>=0?teal:amber, 0.25+0.75*s);
+        colors[v*3]=c.r; colors[v*3+1]=c.g; colors[v*3+2]=c.b;
+      }
+      geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+      group.add(new THREE.Mesh(geo, mat));
+      nT++;
+    }
+    document.getElementById("ro").innerHTML =
+      `p <b style="color:${params.heli>=0?'#2fd6bf':'#f4a13c'}">${params.heli>0?'+':''}${params.heli.toFixed(2)}</b><br>` +
+      `&#10216;u&#183;&#969;&#10217; <b>${rho>0?'+':''}${rho.toFixed(2)}</b>`;
+    document.getElementById("note").textContent =
+      `${nT} streamtubes · ${STEPS*2} sampleUW steps each · rebuilt in ${(performance.now()-t0).toFixed(0)} ms · three.js r160`;
+  }
+
+  function size(){ renderer.setSize(stage.clientWidth, stage.clientHeight);
+    camera.aspect = stage.clientWidth/stage.clientHeight; camera.updateProjectionMatrix(); }
+  addEventListener("resize", size);
+
+  const $ = id => document.getElementById(id);
+  function bind(id, key, fmt){
+    $(id).addEventListener("input", e => { params[key]=parseFloat(e.target.value); $("v-"+id).textContent=fmt(params[key]); });
+    $(id).addEventListener("change", rebuild);
+  }
+  bind("heli","heli", v => (v>0?"+":"")+v.toFixed(2));
+  bind("coh","coh", v => Math.round(v*100)+"%");
+  bind("slope","slope", v => v.toFixed(1));
+  function setHeli(v){ params.heli=v; $("heli").value=v; $("v-heli").textContent=(v>0?"+":"")+v.toFixed(2); rebuild(); }
+  $("p-left").addEventListener("click", ()=>setHeli(-1));
+  $("p-mirror").addEventListener("click", ()=>setHeli(0));
+  $("p-right").addEventListener("click", ()=>setHeli(1));
+  $("reseed").addEventListener("click", ()=>{ params.seed=(params.seed*1103515245+12345)>>>0; rebuild(); });
+
+  size(); rebuild();
+  if(window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches) controls.autoRotate=false;
+  (function loop(){ controls.update(); renderer.render(scene, camera); requestAnimationFrame(loop); })();
+</script>
+</body>
+</html>

@@ -1,0 +1,83 @@
+{
+  "name": "helix-noise",
+  "version": "1.0.0",
+  "description": "Helix Noise — divergence-free helical flow fields, grid-free. Sample a 3-D incompressible velocity field at any point with three artist controls: spectral slope, helicity, phase coherence. No FFT, no grid, no simulation.",
+  "keywords": [
+    "helix-noise",
+    "procedural",
+    "flow",
+    "flow-field",
+    "curl-noise",
+    "divergence-free",
+    "incompressible",
+    "helicity",
+    "beltrami",
+    "turbulence",
+    "vector-field",
+    "particles",
+    "vfx",
+    "generative-art",
+    "noise",
+    "webgl",
+    "shader",
+    "typescript"
+  ],
+  "author": "Rifat Jumagulov <jum.rifm@gmail.com>",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/helix-noise.cjs",
+  "module": "./dist/helix-noise.js",
+  "types": "./dist/helix-noise.d.ts",
+  "unpkg": "./dist/helix-noise.global.js",
+  "jsdelivr": "./dist/helix-noise.global.js",
+  "exports": {
+    ".": {
+      "types": "./dist/helix-noise.d.ts",
+      "import": "./dist/helix-noise.js",
+      "require": "./dist/helix-noise.cjs"
+    }
+  },
+  "sideEffects": false,
+  "files": [
+    "dist",
+    "src",
+    "docs/API.md",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "npm run build:wasm && tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test test/*.test.ts",
+    "check": "npm run typecheck && npm run test",
+    "bench": "node scripts/bench.mjs",
+    "assets": "node scripts/render-assets.mjs",
+    "prepublishOnly": "npm run build",
+    "demo": "python3 -m http.server 8080",
+    "build:wasm": "node scripts/build-wasm.mjs",
+    "docs:dev": "vitepress dev docs",
+    "docs:build": "vitepress build docs",
+    "docs:preview": "vitepress preview docs"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "gifenc": "^1.0.3",
+    "tsup": "^8.0.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.4.0",
+    "vitepress": "^1.6.4",
+    "wabt": "^1.0.39"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rifatjumagulov/helix-noise.git"
+  },
+  "homepage": "https://github.com/rifatjumagulov/helix-noise#readme",
+  "bugs": {
+    "url": "https://github.com/rifatjumagulov/helix-noise/issues"
+  },
+  "engines": {
+    "node": ">=14"
+  }
+}

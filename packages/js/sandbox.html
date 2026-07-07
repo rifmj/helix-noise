@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Helix Noise — sandbox</title>
+<style>
+  :root{
+    --bg:#070a0e; --bg2:#0c1016; --panel:#0f151c; --hair:rgba(150,180,200,.12);
+    --hair2:rgba(150,180,200,.22); --ink:#e4ecf1; --ink2:#93a3b0; --ink3:#5d6b77;
+    --teal:#2fd6bf; --amber:#f4a13c; --cyan:#38d9d1;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1060px;margin:0 auto;padding:20px 18px 40px}
+  .top{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin:0 0 4px}
+  h1{font-size:20px;font-weight:600;margin:0;letter-spacing:-.01em}
+  h1 code{font-family:var(--mono);color:var(--teal);font-size:17px}
+  .tag{font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--cyan)}
+  .sub{color:var(--ink2);font-size:13.5px;line-height:1.55;margin:6px 0 16px;max-width:70ch}
+  .sub code{font-family:var(--mono);font-size:12.5px;color:var(--amber)}
+  .stage{position:relative;border:1px solid var(--hair);border-radius:13px;overflow:hidden;background:#070a0e;aspect-ratio:16/9;cursor:grab;touch-action:none}
+  .stage.drag{cursor:grabbing}
+  canvas{display:block;width:100%;height:100%}
+  .badge{position:absolute;top:11px;left:13px;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink2);background:rgba(7,10,14,.5);border:1px solid var(--hair);border-radius:6px;padding:4px 8px;backdrop-filter:blur(3px)}
+  .readout{position:absolute;top:11px;right:13px;font-family:var(--mono);font-size:11px;color:var(--ink2);background:rgba(7,10,14,.5);border:1px solid var(--hair);border-radius:6px;padding:5px 9px;text-align:right;backdrop-filter:blur(3px);line-height:1.5}
+  .readout b{font-weight:400;color:var(--teal)}
+  .hint{position:absolute;bottom:11px;left:13px;font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3)}
+  .panel{margin-top:13px;background:var(--panel);border:1px solid var(--hair);border-radius:13px;padding:16px 18px}
+  .knobs{display:grid;grid-template-columns:repeat(3,1fr);gap:16px 22px}
+  @media(max-width:680px){.knobs{grid-template-columns:1fr 1fr}}
+  @media(max-width:460px){.knobs{grid-template-columns:1fr}}
+  .kh{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:3px}
+  .kname{font-size:13px;font-weight:500}
+  .kname.star{color:var(--cyan)}
+  .kval{font-family:var(--mono);font-size:12px;color:var(--teal)}
+  .kpoles{display:flex;justify-content:space-between;font-family:var(--mono);font-size:9.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--ink3);margin-top:2px}
+  input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:20px;background:transparent;cursor:pointer;margin:0}
+  input[type=range]::-webkit-slider-runnable-track{height:3px;border-radius:3px;background:linear-gradient(90deg,var(--amber),#1b6f66,var(--teal))}
+  input[type=range]::-moz-range-track{height:3px;border-radius:3px;background:#1b6f66}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:14px;height:14px;border-radius:50%;background:var(--ink);margin-top:-5.5px;border:2px solid var(--cyan);box-shadow:0 0 0 3px rgba(56,217,209,.13)}
+  input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;background:var(--ink);border:2px solid var(--cyan)}
+  input[type=range]:focus-visible{outline:2px solid var(--cyan);outline-offset:4px;border-radius:4px}
+  .bar{display:flex;flex-wrap:wrap;gap:9px;align-items:center;margin-top:16px;padding-top:14px;border-top:1px solid var(--hair)}
+  button{font-family:var(--sans);font-size:12.5px;color:var(--ink);background:var(--bg2);border:1px solid var(--hair2);border-radius:8px;padding:7px 12px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;transition:border-color .15s,background .15s}
+  button:hover{border-color:var(--cyan);background:#111922}
+  button:active{transform:scale(.98)}
+  button:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+  button .dot{width:7px;height:7px;border-radius:50%;background:var(--teal)}
+  button.off .dot{background:var(--ink3)}
+  .spacer{flex:1}
+  .mini{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ink2);font-family:var(--mono)}
+  .mini input{width:72px}
+  .preset{font-family:var(--mono);font-size:11px}
+  .foot{margin-top:16px;color:var(--ink3);font-size:12px;line-height:1.6;font-family:var(--mono)}
+  .foot code{color:var(--amber)}
+  .foot a{color:var(--teal)}
+  .key{display:inline-flex;align-items:center;gap:6px;margin-right:14px}
+  .sw{width:10px;height:10px;border-radius:2px;display:inline-block}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <span class="tag">sandbox</span>
+    <h1><code>Helix&nbsp;Noise</code> — divergence-free helical flow, grid-free</h1>
+  </div>
+  <p class="sub">Every particle is advected by <code>field.sample(x,y,z)</code> — a live, analytic sum of Beltrami modes,
+    no grid and no simulation. Three controls: <b>spectral slope</b> (size), <b>helicity</b> (handedness), <b>phase
+    coherence</b> (noise&nbsp;→&nbsp;structure). Colour is the genuine helicity density <code>u·ω</code>. Drag to orbit,
+    scroll to zoom.</p>
+
+  <div class="stage" id="stage">
+    <canvas id="cv"></canvas>
+    <div class="badge" id="badge">starting…</div>
+    <div class="readout" id="ro">—</div>
+    <div class="hint">drag to rotate · scroll / pinch to zoom</div>
+  </div>
+
+  <div class="panel">
+    <div class="knobs">
+      <div>
+        <div class="kh"><span class="kname star">Helicity — p</span><span class="kval" id="v-heli">+0.70</span></div>
+        <input type="range" id="heli" min="-1" max="1" step="0.02" value="0.7">
+        <div class="kpoles"><span style="color:var(--amber)">left −1</span><span style="color:var(--teal)">right +1</span></div>
+      </div>
+      <div>
+        <div class="kh"><span class="kname">Spectral slope</span><span class="kval" id="v-slope">1.6</span></div>
+        <input type="range" id="slope" min="0.6" max="3.0" step="0.1" value="1.6">
+        <div class="kpoles"><span>fine</span><span>large</span></div>
+      </div>
+      <div>
+        <div class="kh"><span class="kname">Phase coherence</span><span class="kval" id="v-coh">45%</span></div>
+        <input type="range" id="coh" min="0" max="1" step="0.01" value="0.45">
+        <div class="kpoles"><span>noise</span><span>structure</span></div>
+      </div>
+    </div>
+    <div class="bar">
+      <button id="btn-play"><span class="dot"></span><span id="play-lbl">Pause</span></button>
+      <button id="btn-rot"><span class="dot" style="background:var(--cyan)"></span>Auto-orbit</button>
+      <button id="btn-seed"><span class="dot" style="background:var(--amber)"></span>Seed</button>
+      <div class="mini"><span>modes</span><input type="range" id="modes" min="12" max="80" step="4" value="48"><span id="v-modes" style="color:var(--teal)">48</span></div>
+      <div class="spacer"></div>
+      <button id="p-beltrami" class="preset">◇ Beltrami</button>
+      <button id="p-turb" class="preset">◇ turbulent</button>
+      <button id="p-mirror" class="preset">◇ mirror</button>
+    </div>
+    <div class="bar" style="border-top:0;padding-top:2px;margin-top:8px">
+      <div class="mini"><span>speed</span><input type="range" id="spd" min="0.2" max="3" step="0.1" value="1"><span id="v-spd" style="color:var(--teal)">1.0×</span></div>
+      <div class="mini"><span>zoom</span><input type="range" id="zm" min="0.6" max="2.6" step="0.05" value="1"><span id="v-zm" style="color:var(--teal)">1.0×</span></div>
+      <div class="mini"><span>particles</span><input type="range" id="np" min="1000" max="6000" step="500" value="3000"><span id="v-np" style="color:var(--teal)">3.0k</span></div>
+      <div class="mini"><span>trail</span><input type="range" id="tl" min="4" max="22" step="1" value="14"><span id="v-tl" style="color:var(--teal)">14</span></div>
+    </div>
+  </div>
+
+  <div class="foot">
+    <span class="key"><span class="sw" style="background:var(--teal)"></span>right-handed (u·ω &gt; 0)</span>
+    <span class="key"><span class="sw" style="background:var(--amber)"></span>left-handed (u·ω &lt; 0)</span>
+    <br><br>
+    Powered by <code>Helix Noise</code> — the whole field is <code>HelixNoise.create({modes,slope,helicity,coherence,seed})</code>
+    and one <code>.sample()</code> call per particle. See <a href="README.md">README.md</a> for the API and how to embed it.
+  </div>
+</div>
+
+<script src="dist/helix-noise.global.js"></script>
+<script>
+(function(){
+  var TAU = 2*Math.PI;
+  var $=function(id){return document.getElementById(id);};
+  var cv=$("cv"), ctx=cv.getContext("2d",{alpha:false});
+  var params={heli:0.7, slope:1.6, coh:0.45, modes:48, seed:7};
+  var SPEED=1, ZOOM=1;
+  var field = HelixNoise.create({modes:params.modes, slope:params.slope, helicity:params.heli, coherence:params.coh, seed:params.seed});
+
+  // ---- particles + comet trails (domain [0,TAU)^3, periodic) ----
+  var TMAX=22, TRAIL=14, NP=0, px,py,pz,life,tx,ty,tz,thead,tcnt;
+  var rs=1234567; function rr(){rs=(rs*1664525+1013904223)>>>0;return rs/4294967296;}
+  function initP(n){
+    NP=n; px=new Float32Array(n);py=new Float32Array(n);pz=new Float32Array(n);life=new Float32Array(n);
+    tx=new Float32Array(n*TMAX);ty=new Float32Array(n*TMAX);tz=new Float32Array(n*TMAX);
+    thead=new Int16Array(n);tcnt=new Int16Array(n);
+    for(var i=0;i<n;i++)spawn(i,true);
+  }
+  function spawn(i,fresh){px[i]=rr()*TAU;py[i]=rr()*TAU;pz[i]=rr()*TAU;life[i]=(fresh?rr():1)*(50+rr()*120);tcnt[i]=0;thead[i]=0;pushT(i);}
+  function pushT(i){thead[i]=(thead[i]+1)%TMAX;var o=i*TMAX+thead[i];tx[o]=px[i];ty[o]=py[i];tz[o]=pz[i];if(tcnt[i]<TMAX)tcnt[i]++;}
+
+  var uw=[0,0,0,0,0,0];
+  var BASESTEP=0.11, ft=0; // ft: field time — the field itself churns (sampleUW(..., t))
+  function advance(){
+    var step=BASESTEP*SPEED;
+    ft+=step*0.25;
+    for(var i=0;i<NP;i++){
+      field.sampleUW(px[i],py[i],pz[i],uw,ft);
+      var nx=px[i]+uw[0]*step, ny=py[i]+uw[1]*step, nz=pz[i]+uw[2]*step;
+      life[i]-=1;
+      if(life[i]<=0){spawn(i,false);continue;}
+      px[i]=((nx%TAU)+TAU)%TAU; py[i]=((ny%TAU)+TAU)%TAU; pz[i]=((nz%TAU)+TAU)%TAU; pushT(i);
+    }
+  }
+
+  var cw=0,ch=0,dpr=1;
+  function resize(){var r=cv.getBoundingClientRect();dpr=Math.min(2,window.devicePixelRatio||1);cw=Math.max(1,Math.round(r.width*dpr));ch=Math.max(1,Math.round(r.height*dpr));cv.width=cw;cv.height=ch;ctx.fillStyle="#070a0e";ctx.fillRect(0,0,cw,ch);}
+
+  var yaw=0.6,pitch=0.32,autoRot=true,playing=true;
+  var DEP_A=[0.4,0.72,1.0];
+  var prX=new Float32Array(TMAX),prY=new Float32Array(TMAX),prOK=new Uint8Array(TMAX);
+  var draggingRot=false;
+  function render(){
+    ctx.fillStyle="#070a0e";ctx.fillRect(0,0,cw,ch);
+    var cyw=Math.cos(yaw),syw=Math.sin(yaw),cp=Math.cos(pitch),sp=Math.sin(pitch);
+    var S=0.46*Math.min(cw,ch)*ZOOM, cx=cw/2, ccy=ch/2;
+    var glowT=new Path2D(),glowA=new Path2D(),headT=[new Path2D(),new Path2D(),new Path2D()],headA=[new Path2D(),new Path2D(),new Path2D()];
+    var gt=[new Path2D(),new Path2D(),new Path2D()], ga=[new Path2D(),new Path2D(),new Path2D()];
+    for(var i=0;i<NP;i++){
+      var m=Math.min(tcnt[i],TRAIL); if(m<2)continue;
+      var base=i*TMAX, hd=0;
+      for(var j=0;j<m;j++){
+        var slot=(thead[i]-j+2*TMAX)%TMAX, o=base+slot;
+        var wx=(tx[o]/TAU)*2-1, wy=(ty[o]/TAU)*2-1, wz=(tz[o]/TAU)*2-1;
+        var x1=wx*cyw+wz*syw, z1=-wx*syw+wz*cyw;
+        var y2=wy*cp-z1*sp, z2=wy*sp+z1*cp;
+        var persp=1/(1+0.26*z2);
+        prX[j]=cx+x1*S*persp; prY[j]=ccy-y2*S*persp;
+        if(j===0)hd=z2;
+        if(j>0){var po=base+((thead[i]-j+1+2*TMAX)%TMAX);
+          prOK[j]=(Math.abs(tx[o]-tx[po])<TAU*0.5&&Math.abs(ty[o]-ty[po])<TAU*0.5&&Math.abs(tz[o]-tz[po])<TAU*0.5)?1:0;}
+      }
+      var db=(((hd+1.4)/2.8)*3)|0; if(db<0)db=0; if(db>2)db=2; db=2-db;
+      field.sampleUW(px[i],py[i],pz[i],uw,ft);
+      var h=uw[0]*uw[3]+uw[1]*uw[4]+uw[2]*uw[5];
+      var gp=(h>=0?gt:ga)[db], hp=(h>=0?headT:headA)[db];
+      for(var j2=1;j2<m;j2++){ if(!prOK[j2])continue; gp.moveTo(prX[j2],prY[j2]); gp.lineTo(prX[j2-1],prY[j2-1]); }
+      var hn=Math.min(m,4);
+      for(var j3=1;j3<hn;j3++){ if(!prOK[j3])continue; hp.moveTo(prX[j3],prY[j3]); hp.lineTo(prX[j3-1],prY[j3-1]); }
+    }
+    ctx.globalCompositeOperation="lighter"; ctx.lineCap="round";
+    for(var d=0;d<3;d++){
+      ctx.lineWidth=Math.max(0.6,dpr*(0.55+d*0.5));
+      ctx.strokeStyle="rgba(47,214,191,"+(0.10*DEP_A[d]).toFixed(3)+")"; ctx.stroke(gt[d]);
+      ctx.strokeStyle="rgba(244,161,60,"+(0.10*DEP_A[d]).toFixed(3)+")"; ctx.stroke(ga[d]);
+      ctx.lineWidth=Math.max(0.7,dpr*(0.7+d*0.55));
+      ctx.strokeStyle="rgba(47,214,191,"+(0.5*DEP_A[d]).toFixed(3)+")"; ctx.stroke(headT[d]);
+      ctx.strokeStyle="rgba(244,161,60,"+(0.5*DEP_A[d]).toFixed(3)+")"; ctx.stroke(headA[d]);
+    }
+    ctx.globalCompositeOperation="source-over";
+  }
+
+  function frame(){ if(autoRot&&!draggingRot)yaw+=0.0022; if(playing)advance(); render(); requestAnimationFrame(frame); }
+  function prime(){for(var k=0;k<TRAIL;k++)advance();}
+
+  var rho=0;
+  function rebuild(){ field.set({modes:params.modes, slope:params.slope, helicity:params.heli, coherence:params.coh, seed:params.seed}); rho=field.relativeHelicity(10); updateBadge(); }
+  function updateBadge(){
+    $("badge").textContent="Helix Noise · "+params.modes+" modes · "+(NP/1000).toFixed(1)+"k particles";
+    $("ro").innerHTML="p <b style=\"color:"+(params.heli>=0?"var(--teal)":"var(--amber)")+"\">"+(params.heli>0?"+":"")+params.heli.toFixed(2)+"</b><br>coherence <b>"+Math.round(params.coh*100)+"%</b><br>&#10216;u&#183;&#969;&#10217; <b style=\"color:var(--cyan)\">"+(rho>0?"+":"")+rho.toFixed(2)+"</b>";
+  }
+
+  function bind(id,key,fmt,rebuildOnChange){
+    $(id).addEventListener("input",function(e){params[key]=parseFloat(e.target.value);$("v-"+id).textContent=fmt(params[key]);if(rebuildOnChange)rebuild();});
+  }
+  bind("heli","heli",function(v){return (v>0?"+":"")+v.toFixed(2);},true);
+  bind("slope","slope",function(v){return v.toFixed(1);},true);
+  bind("coh","coh",function(v){return Math.round(v*100)+"%";},true);
+  $("modes").addEventListener("input",function(e){params.modes=parseInt(e.target.value,10);$("v-modes").textContent=params.modes;rebuild();});
+  $("spd").addEventListener("input",function(e){SPEED=parseFloat(e.target.value);$("v-spd").textContent=SPEED.toFixed(1)+"×";});
+  function setZoom(z){ZOOM=Math.max(0.6,Math.min(2.6,z));$("zm").value=ZOOM;$("v-zm").textContent=(Math.round(ZOOM*20)/20).toFixed(2).replace(/(\.\d)0$/,"$1")+"×";}
+  $("zm").addEventListener("input",function(e){setZoom(parseFloat(e.target.value));});
+  $("np").addEventListener("input",function(e){var n=parseInt(e.target.value,10);$("v-np").textContent=(n/1000).toFixed(1)+"k";initP(n);prime();updateBadge();});
+  $("tl").addEventListener("input",function(e){TRAIL=parseInt(e.target.value,10);$("v-tl").textContent=TRAIL;});
+  $("btn-play").addEventListener("click",function(){playing=!playing;$("play-lbl").textContent=playing?"Pause":"Play";$("btn-play").classList.toggle("off",!playing);});
+  $("btn-rot").addEventListener("click",function(){autoRot=!autoRot;$("btn-rot").classList.toggle("off",!autoRot);});
+  $("btn-seed").addEventListener("click",function(){params.seed=(params.seed*1103515245+12345)>>>0;rs=(rs+0x9E3779B9)>>>0;rebuild();});
+  function preset(h,s,c){
+    params.heli=h;params.slope=s;params.coh=c;
+    $("heli").value=h;$("slope").value=s;$("coh").value=c;
+    $("v-heli").textContent=(h>0?"+":"")+h.toFixed(2);$("v-slope").textContent=s.toFixed(1);$("v-coh").textContent=Math.round(c*100)+"%";
+    rebuild();
+  }
+  $("p-beltrami").addEventListener("click",function(){preset(1.0,2.2,0.55);});
+  $("p-turb").addEventListener("click",function(){preset(0.3,1.1,0.2);});
+  $("p-mirror").addEventListener("click",function(){preset(0.0,1.7,0.4);});
+
+  var lx=0,ly=0,pinchD=0,ptrs=new Map(),stage=$("stage");
+  stage.addEventListener("pointerdown",function(e){ptrs.set(e.pointerId,{x:e.clientX,y:e.clientY});stage.setPointerCapture(e.pointerId);
+    if(ptrs.size===1){draggingRot=true;lx=e.clientX;ly=e.clientY;stage.classList.add("drag");}
+    else if(ptrs.size===2){draggingRot=false;var pp=Array.from(ptrs.values());pinchD=Math.hypot(pp[0].x-pp[1].x,pp[0].y-pp[1].y);}});
+  stage.addEventListener("pointermove",function(e){if(!ptrs.has(e.pointerId))return;ptrs.set(e.pointerId,{x:e.clientX,y:e.clientY});
+    if(ptrs.size===2){var pp=Array.from(ptrs.values());var d=Math.hypot(pp[0].x-pp[1].x,pp[0].y-pp[1].y);if(pinchD>0)setZoom(ZOOM*d/pinchD);pinchD=d;}
+    else if(draggingRot){yaw+=(e.clientX-lx)*0.006;pitch+=(e.clientY-ly)*0.006;pitch=Math.max(-1.25,Math.min(1.25,pitch));lx=e.clientX;ly=e.clientY;}});
+  function pend(e){ptrs.delete(e.pointerId);if(ptrs.size<2)pinchD=0;if(ptrs.size===1){var pp=Array.from(ptrs.values())[0];draggingRot=true;lx=pp.x;ly=pp.y;}if(ptrs.size===0){draggingRot=false;stage.classList.remove("drag");}}
+  stage.addEventListener("pointerup",pend);stage.addEventListener("pointercancel",pend);
+  stage.addEventListener("wheel",function(e){e.preventDefault();setZoom(ZOOM*Math.exp(-e.deltaY*0.0012));},{passive:false});
+
+  if(window.matchMedia&&matchMedia("(prefers-reduced-motion: reduce)").matches){playing=false;autoRot=false;$("play-lbl").textContent="Play";$("btn-play").classList.add("off");$("btn-rot").classList.add("off");}
+
+  resize(); window.addEventListener("resize",resize);
+  initP(3000); rho=field.relativeHelicity(10); prime(); updateBadge();
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

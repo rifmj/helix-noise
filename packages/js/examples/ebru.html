@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Helix Noise — ebru marbling (incompressible advection)</title>
+<style>
+  :root{ --ink:#e7ded0; --ink2:#9a8f7d; --ink3:#6b6252; --amber:#c98a3c; --paper:#efe6d4; }
+  html,body{margin:0;background:#16130d;color:var(--ink);font-family:system-ui,sans-serif}
+  .wrap{max-width:980px;margin:0 auto;padding:22px 16px}
+  h1{font-size:19px;font-weight:600;margin:0 0 6px}
+  h1 code{color:var(--amber)}
+  p{color:var(--ink2);font-size:13.5px;line-height:1.6;margin:0 0 14px}
+  p b{color:var(--ink);font-weight:500}
+  code{font-family:ui-monospace,Menlo,monospace;color:var(--amber);font-size:12.5px}
+  #stage{position:relative;width:100%;max-width:720px;margin:0 auto;aspect-ratio:1/1;
+    border:1px solid rgba(200,180,140,.18);border-radius:10px;overflow:hidden;background:var(--paper);cursor:crosshair;touch-action:none}
+  canvas{display:block;width:100%;height:100%;image-rendering:auto}
+  .badge{position:absolute;top:10px;left:12px;font-family:ui-monospace,monospace;font-size:10.5px;
+    letter-spacing:.12em;text-transform:uppercase;color:#5b5140;background:rgba(239,230,212,.7);
+    border:1px solid rgba(120,100,70,.2);border-radius:6px;padding:4px 8px;pointer-events:none}
+  .row{display:flex;flex-wrap:wrap;gap:14px;align-items:center;margin-top:14px;font-family:ui-monospace,monospace;font-size:12px;color:var(--ink2)}
+  .row label{display:flex;align-items:center;gap:8px}
+  input[type=range]{width:100px}
+  .sw{width:22px;height:22px;border-radius:50%;border:2px solid transparent;cursor:pointer;padding:0}
+  .sw.on{border-color:var(--ink)}
+  button{font-family:ui-monospace,monospace;font-size:11.5px;color:var(--ink);background:#221d14;
+    border:1px solid rgba(200,180,140,.22);border-radius:7px;padding:6px 11px;cursor:pointer}
+  button:hover{border-color:var(--amber)}
+  .note{margin-top:12px;font-size:12px;color:var(--ink3);font-family:ui-monospace,monospace;text-align:center}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Ebru marbling — incompressibility you can see</h1>
+  <p>Turkish paper-marbling floats ink on a still bath and rakes it into swirls. Here the bath is a
+    Helix Noise field: each frame the pigment is carried along it by <b>semi-Lagrangian advection</b>.
+    Because the flow is <b>divergence-free</b>, the ink is only ever <b>rearranged</b> — bands stretch
+    and fold but never tear open or pile up. That is the defining property of an incompressible flow,
+    made directly visible. <b>Swirl</b> is the field's <code>coherence</code>; click or drag to drop
+    pigment, pick a colour below.</p>
+  <div id="stage"><canvas id="cv"></canvas><div class="badge">helix-noise · semi-Lagrangian advection · div-free</div></div>
+  <div class="row" style="justify-content:center">
+    <span style="color:var(--ink3)">ink</span>
+    <button class="sw" data-c="26,58,120" style="background:#1a3a78"></button>
+    <button class="sw" data-c="150,30,45" style="background:#961e2d"></button>
+    <button class="sw" data-c="210,150,40" style="background:#d29628"></button>
+    <button class="sw" data-c="30,120,105" style="background:#1e7869"></button>
+    <button class="sw" data-c="240,238,228" style="background:#f0eee4"></button>
+    <button class="sw" data-c="20,18,16" style="background:#141210"></button>
+  </div>
+  <div class="row" style="justify-content:center">
+    <label>swirl <input id="coh" type="range" min="0" max="1" step="0.05" value="0.75"><span id="v-coh">75%</span></label>
+    <label>flow <input id="spd" type="range" min="0.2" max="2.5" step="0.1" value="1"><span id="v-spd">1.0×</span></label>
+    <label>scale <input id="scale" type="range" min="2.5" max="8" step="0.3" value="4.6"><span id="v-scale">4.6</span></label>
+    <button id="stones">◇ drop stones</button>
+    <button id="rake">◇ rake</button>
+    <button id="play"><span id="play-lbl">pause</span></button>
+    <button id="reset">◇ clear</button>
+    <button id="reseed">↻ seed</button>
+  </div>
+  <div class="note" id="note">drag on the paper to pour ink · the flow does the marbling</div>
+</div>
+
+<script src="../dist/helix-noise.global.js"></script>
+<script>
+(function(){
+  var $=function(id){return document.getElementById(id);};
+  var cv=$("cv"), stage=$("stage"), ctx=cv.getContext("2d");
+  var N=280;                                   // simulation grid (square)
+  cv.width=N; cv.height=N;
+  var params={ coh:0.75, spd:1.0, scale:4.6, seed:7 };
+  var ink=[26,58,120];
+  var playing=true;
+
+  var field=HelixNoise.create({ modes:38, slope:1.4, helicity:0.4, coherence:params.coh,
+    seed:params.seed, kmin:1.0, kmax:params.scale, tileable:true });
+
+  // baked velocity grid (static field -> bake once per param change)
+  var U=new Float32Array(N*N), V=new Float32Array(N*N);
+  function bakeField(){
+    field.set({ coherence:params.coh, kmax:params.scale, seed:params.seed });
+    var b=field.bake2D(N,N,0.0);              // rgb = velocity on a z=0 slice
+    var d=b.data, s=0;
+    for(var o=0;o<N*N;o++){ U[o]=d[o*4]; V[o]=d[o*4+1]; s+=U[o]*U[o]+V[o]*V[o]; }
+    var sc=1/(Math.sqrt(s/(N*N))||1);         // unit-RMS so "flow" is the only speed knob
+    for(o=0;o<N*N;o++){ U[o]*=sc; V[o]*=sc; }
+  }
+
+  // dye field = ink colour (0..255) carried with the pigment; `cover` = ink coverage (0..1 over paper).
+  // Both are advected by the same divergence-free flow, ping-ponged each frame.
+  var dye=new Float32Array(N*N*3), dye2=new Float32Array(N*N*3);
+  var cover=new Float32Array(N*N), cover2=new Float32Array(N*N);
+  var img=ctx.createImageData(N,N);
+
+  function advectAll(dt){
+    var K=dt*params.spd*46.0;
+    for(var y=0;y<N;y++)for(var x=0;x<N;x++){
+      var o=y*N+x;
+      var px=x-U[o]*K, py=y-V[o]*K;
+      var x0=Math.floor(px), y0=Math.floor(py);
+      var fx=px-x0, fy=py-y0;
+      var xa=(((x0%N)+N)%N), xb=(xa+1)%N;
+      var ya=(((y0%N)+N)%N), yb=(ya+1)%N;
+      var i00=ya*N+xa, i10=ya*N+xb, i01=yb*N+xa, i11=yb*N+xb;
+      var w00=(1-fx)*(1-fy), w10=fx*(1-fy), w01=(1-fx)*fy, w11=fx*fy;
+      var d=o*3, d00=i00*3,d10=i10*3,d01=i01*3,d11=i11*3;
+      for(var c=0;c<3;c++)
+        dye2[d+c]=dye[d00+c]*w00+dye[d10+c]*w10+dye[d01+c]*w01+dye[d11+c]*w11;
+      cover2[o]=cover[i00]*w00+cover[i10]*w10+cover[i01]*w01+cover[i11]*w11;
+    }
+    var t=dye; dye=dye2; dye2=t; t=cover; cover=cover2; cover2=t;
+  }
+
+  function draw(){
+    var p=img.data;
+    for(var o=0;o<N*N;o++){
+      var cov=cover[o]; if(cov>1)cov=1;
+      var d=o*3;
+      // dye[d..] stores the ink colour (0..255) carried with the pigment
+      var r=239*(1-cov)+dye[d]*cov;
+      var g=230*(1-cov)+dye[d+1]*cov;
+      var b=212*(1-cov)+dye[d+2]*cov;
+      p[o*4]=r; p[o*4+1]=g; p[o*4+2]=b; p[o*4+3]=255;
+    }
+    ctx.putImageData(img,0,0);
+  }
+
+  function blot(cx,cy,rad,col){
+    var R=Math.ceil(rad);
+    for(var dy=-R;dy<=R;dy++)for(var dx=-R;dx<=R;dx++){
+      var x=Math.round(cx)+dx, y=Math.round(cy)+dy;
+      if(x<0||x>=N||y<0||y>=N)continue;
+      var r2=dx*dx+dy*dy; if(r2>rad*rad)continue;
+      var a=Math.exp(-r2/(rad*rad)*2.2);
+      var o=y*N+x, d=o*3;
+      // paint over: lerp existing ink colour toward new, add coverage
+      var nc=Math.min(1, cover[o]+a);
+      var mix=a/(nc+1e-6);
+      dye[d]  =dye[d]  *(1-mix)+col[0]*mix;
+      dye[d+1]=dye[d+1]*(1-mix)+col[1]*mix;
+      dye[d+2]=dye[d+2]*(1-mix)+col[2]*mix;
+      cover[o]=nc;
+    }
+  }
+
+  var PAL=[[26,58,120],[150,30,45],[210,150,40],[30,120,105],[240,238,228],[20,18,16]];
+  function stones(){
+    // scatter concentric ink stones like a fresh marbling tray
+    var rs=(params.seed*99+1)>>>0; function rr(){rs=(rs*1664525+1013904223)>>>0;return rs/4294967296;}
+    for(var i=0;i<26;i++){
+      var col=PAL[(rr()*5)|0];
+      blot(rr()*N, rr()*N, 8+rr()*20, col);
+    }
+  }
+  function rake(){
+    // vertical rake lines of alternating ink — the classic comb before combing
+    for(var x=10;x<N;x+=26){
+      var col=PAL[((x/26)|0)%5];
+      for(var y=0;y<N;y++) blot(x, y, 3.0, col);
+    }
+  }
+  function reset(){ dye.fill(0); cover.fill(0); }
+
+  // ---- interaction ----
+  function evtXY(e){
+    var r=stage.getBoundingClientRect();
+    return [ (e.clientX-r.left)/r.width*N, (e.clientY-r.top)/r.height*N ];
+  }
+  var painting=false, lastP=null;
+  stage.addEventListener("pointerdown",function(e){ painting=true; stage.setPointerCapture(e.pointerId);
+    var p=evtXY(e); blot(p[0],p[1],9,ink); lastP=p; });
+  stage.addEventListener("pointermove",function(e){ if(!painting)return; var p=evtXY(e);
+    // paint along the segment so fast drags stay continuous
+    if(lastP){ var dx=p[0]-lastP[0], dy=p[1]-lastP[1], n=Math.max(1,Math.hypot(dx,dy)/4);
+      for(var i=0;i<n;i++) blot(lastP[0]+dx*i/n, lastP[1]+dy*i/n, 7, ink); }
+    lastP=p; });
+  function endPaint(){ painting=false; lastP=null; }
+  stage.addEventListener("pointerup",endPaint); stage.addEventListener("pointercancel",endPaint);
+
+  var $sw=document.querySelectorAll(".sw");
+  $sw.forEach(function(b){ b.addEventListener("click",function(){
+    ink=b.dataset.c.split(",").map(Number);
+    $sw.forEach(function(x){x.classList.remove("on");}); b.classList.add("on");
+  }); });
+  $sw[0].classList.add("on");
+
+  $("coh").addEventListener("input",function(e){ params.coh=parseFloat(e.target.value); $("v-coh").textContent=Math.round(params.coh*100)+"%"; bakeField(); });
+  $("spd").addEventListener("input",function(e){ params.spd=parseFloat(e.target.value); $("v-spd").textContent=params.spd.toFixed(1)+"×"; });
+  $("scale").addEventListener("input",function(e){ params.scale=parseFloat(e.target.value); $("v-scale").textContent=params.scale.toFixed(1); bakeField(); });
+  $("stones").addEventListener("click",stones);
+  $("rake").addEventListener("click",rake);
+  $("reset").addEventListener("click",reset);
+  $("reseed").addEventListener("click",function(){ params.seed=(params.seed*1103515245+12345)>>>0; bakeField(); });
+  $("play").addEventListener("click",function(){ playing=!playing; $("play-lbl").textContent=playing?"pause":"play"; });
+
+  bakeField(); stones();
+  for(var w=0;w<70;w++) advectAll(0.02);        // pre-roll: land already marbled (also runs if rAF is throttled)
+  if(window.matchMedia&&matchMedia("(prefers-reduced-motion: reduce)").matches) playing=false;
+  var last=0;
+  function loop(t){
+    var dt = last ? Math.min(0.05,(t-last)*0.001) : 0.016;
+    last = t || 0;                               // guard: first rAF t may be 0/undefined -> avoid NaN dt
+    if(playing) advectAll(dt);
+    draw(); requestAnimationFrame(loop);
+  }
+  draw(); requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>

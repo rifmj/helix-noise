@@ -1,0 +1,534 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Helix Noise — GPU smoke around an obstacle (curl of a baked potential)</title>
+<style>
+  :root{
+    --bg:#070a0e; --bg2:#0c1016; --panel:#0f151c; --hair:rgba(150,180,200,.12);
+    --hair2:rgba(150,180,200,.22); --ink:#e4ecf1; --ink2:#93a3b0; --ink3:#5d6b77;
+    --teal:#2fd6bf; --amber:#f4a13c; --cyan:#38d9d1;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg)}
+  .wrap{max-width:1120px;margin:0 auto;padding:22px 20px 40px;color:var(--ink);
+    font-family:var(--sans);-webkit-font-smoothing:antialiased}
+  .eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.28em;text-transform:uppercase;
+    color:var(--cyan);margin:0 0 10px}
+  h1{font-size:clamp(24px,4.2vw,36px);line-height:1.04;margin:0 0 12px;font-weight:600;
+    letter-spacing:-.02em;text-wrap:balance}
+  h1 .thin{color:var(--ink2);font-weight:400}
+  .lede{max-width:72ch;color:var(--ink2);font-size:15px;line-height:1.65;margin:0 0 22px}
+  .lede b{color:var(--ink);font-weight:500}
+  .lede code{font-family:var(--mono);font-size:13px;color:var(--amber)}
+  .stage{position:relative;border:1px solid var(--hair);border-radius:14px;overflow:hidden;
+    background:#070a0e;aspect-ratio:16/9;cursor:grab;touch-action:none}
+  .stage.draw{cursor:crosshair}
+  .stage.drag{cursor:grabbing}
+  canvas{display:block;width:100%;height:100%}
+  .badge{position:absolute;top:12px;left:14px;font-family:var(--mono);font-size:10.5px;
+    letter-spacing:.14em;text-transform:uppercase;color:var(--ink2);
+    background:rgba(7,10,14,.5);border:1px solid var(--hair);border-radius:6px;
+    padding:5px 9px;backdrop-filter:blur(3px)}
+  .readout{position:absolute;top:12px;right:14px;font-family:var(--mono);font-size:11px;
+    color:var(--ink2);background:rgba(7,10,14,.5);border:1px solid var(--hair);
+    border-radius:6px;padding:6px 10px;text-align:right;backdrop-filter:blur(3px);line-height:1.55}
+  .readout b{font-weight:400;color:var(--teal)}
+  .hint{position:absolute;bottom:12px;left:14px;font-family:var(--mono);font-size:10px;
+    letter-spacing:.1em;text-transform:uppercase;color:var(--ink3)}
+  .panel{margin-top:14px;background:var(--panel);border:1px solid var(--hair);border-radius:14px;padding:18px 20px}
+  .knobs{display:grid;grid-template-columns:repeat(3,1fr);gap:22px}
+  @media(max-width:760px){.knobs{grid-template-columns:1fr;gap:16px}}
+  .knob .kh{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:4px}
+  .knob .kname{font-size:13.5px;font-weight:500}
+  .knob.star .kname{color:var(--cyan)}
+  .knob .kval{font-family:var(--mono);font-size:12.5px;color:var(--teal)}
+  .knob .kdesc{font-size:12px;color:var(--ink3);line-height:1.5;margin-top:7px;min-height:32px}
+  .knob .kpoles{display:flex;justify-content:space-between;font-family:var(--mono);
+    font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:var(--ink3);margin-top:3px}
+  input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:22px;background:transparent;cursor:pointer;margin:0}
+  input[type=range]::-webkit-slider-runnable-track{height:3px;border-radius:3px;background:linear-gradient(90deg,var(--amber),#1b6f66,var(--teal))}
+  input[type=range]::-moz-range-track{height:3px;border-radius:3px;background:#1b6f66}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:15px;height:15px;
+    border-radius:50%;background:var(--ink);margin-top:-6px;border:2px solid var(--cyan);
+    box-shadow:0 0 0 3px rgba(56,217,209,.14)}
+  input[type=range]::-moz-range-thumb{width:15px;height:15px;border-radius:50%;background:var(--ink);border:2px solid var(--cyan)}
+  input[type=range]:focus-visible{outline:2px solid var(--cyan);outline-offset:4px;border-radius:4px}
+  .bar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:18px;padding-top:16px;border-top:1px solid var(--hair)}
+  button{font-family:var(--sans);font-size:13px;color:var(--ink);background:var(--bg2);
+    border:1px solid var(--hair2);border-radius:8px;padding:8px 14px;cursor:pointer;
+    display:inline-flex;align-items:center;gap:7px;transition:border-color .15s,background .15s}
+  button:hover{border-color:var(--cyan);background:#111922}
+  button:active{transform:scale(.98)}
+  button:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+  button.on{border-color:var(--cyan);background:#111922}
+  button .dot{width:7px;height:7px;border-radius:50%;background:var(--teal)}
+  button.off .dot{background:var(--ink3)}
+  .spacer{flex:1}
+  .miniknob{display:flex;align-items:center;gap:9px;font-size:12px;color:var(--ink2);font-family:var(--mono)}
+  .miniknob input{width:76px}
+  .obst{font-family:var(--mono);font-size:11.5px;letter-spacing:.04em}
+  .foot{margin-top:20px;display:grid;grid-template-columns:1fr 1fr;gap:22px}
+  @media(max-width:760px){.foot{grid-template-columns:1fr}}
+  .foot h3{font-size:12px;font-family:var(--mono);letter-spacing:.18em;text-transform:uppercase;color:var(--cyan);margin:0 0 8px;font-weight:400}
+  .foot p{font-size:13px;color:var(--ink2);line-height:1.62;margin:0 0 8px}
+  .foot code{font-family:var(--mono);font-size:12px;color:var(--amber);background:rgba(244,161,60,.08);padding:1px 5px;border-radius:4px}
+  .key{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--ink3);font-family:var(--mono);margin-right:14px}
+  .sw{width:10px;height:10px;border-radius:2px;display:inline-block}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <p class="eyebrow">Helix Noise · GPU smoke · obstacle · curl of a baked potential</p>
+  <h1>Smoke around an obstacle <span class="thin">— the whole sim on the <code style="color:var(--amber);font-size:.7em">GPU</code></span></h1>
+  <p class="lede">The velocity is never baked directly. Instead <code>field.withBoundary(sdf)</code> wraps the field
+    against an obstacle, <code>bounded.bakePotential3D(64)</code> stores the <b>vector potential A</b> (rgb) and the
+    <b>signed distance</b> (alpha) in one RGBA16F volume, and the advection shader reconstructs the velocity on the fly
+    as <code>u = ∇×A</code> — a curl of the trilinear samples. Because it is a curl, the interpolated velocity is
+    <b>discretely divergence-free</b> (a directly-baked velocity leaks divergence and makes smoke pool or vanish); the
+    same alpha channel carves the solid out of the smoke and shades its surface in the raymarcher. Dye advects entirely
+    in 3-D textures — no CPU per-frame work. Drag to orbit, scroll to zoom, toggle <b>draw</b> to inject smoke.</p>
+
+  <div class="stage" id="stage">
+    <canvas id="cv"></canvas>
+    <div class="badge" id="badge">building field…</div>
+    <div class="readout" id="ro">—</div>
+    <div class="hint" id="hint">drag to rotate · scroll / pinch to zoom</div>
+  </div>
+
+  <div class="panel">
+    <div class="knobs">
+      <div class="knob star">
+        <div class="kh"><span class="kname">Helicity</span><span class="kval" id="v-heli">+0.70</span></div>
+        <input type="range" id="heli" min="-1" max="1" step="0.02" value="0.7">
+        <div class="kpoles"><span style="color:var(--amber)">left-handed −1</span><span style="color:var(--teal)">right-handed +1</span></div>
+        <div class="kdesc">The wake corkscrews with a single handedness as the flow wraps the obstacle.</div>
+      </div>
+      <div class="knob">
+        <div class="kh"><span class="kname">Spectral slope</span><span class="kval" id="v-slope">1.9</span></div>
+        <input type="range" id="slope" min="0.6" max="3.2" step="0.1" value="1.9">
+        <div class="kpoles"><span>fine · ragged</span><span>large · silky</span></div>
+        <div class="kdesc">Steep = a few silky folds; shallow = ragged multi-scale billows.</div>
+      </div>
+      <div class="knob">
+        <div class="kh"><span class="kname">Phase coherence</span><span class="kval" id="v-coh">45%</span></div>
+        <input type="range" id="coh" min="0" max="1" step="0.01" value="0.45">
+        <div class="kpoles"><span>diffuse</span><span>organised</span></div>
+        <div class="kdesc">Same spectrum, phases random → structured: haze becomes distinct rolling cells.</div>
+      </div>
+    </div>
+    <div class="bar">
+      <span class="glabel" style="font-family:var(--mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink3)">Obstacle</span>
+      <button class="obst on" data-o="sphere">◇ sphere</button>
+      <button class="obst" data-o="torus">◇ torus</button>
+      <button class="obst" data-o="bar">◇ bar</button>
+      <div class="spacer"></div>
+      <span class="glabel" style="font-family:var(--mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink3)">Colour</span>
+      <button class="grad on" data-g="0">native</button>
+      <button class="grad" data-g="1">ember</button>
+      <button class="grad" data-g="2">ice</button>
+    </div>
+    <div class="bar" style="margin-top:12px;padding-top:14px">
+      <button id="btn-play"><span class="dot"></span><span id="play-lbl">Pause</span></button>
+      <button id="btn-draw" class="off"><span class="dot" style="background:var(--cyan)"></span>Draw</button>
+      <button id="btn-rot"><span class="dot" style="background:var(--cyan)"></span>Auto-orbit</button>
+      <button id="btn-clear"><span class="dot" style="background:var(--ink3)"></span>Clear</button>
+      <button id="btn-seed"><span class="dot" style="background:var(--amber)"></span>Seed</button>
+      <div class="miniknob">speed<input type="range" id="spd" min="0.2" max="3" step="0.1" value="1"><span id="v-spd" style="color:var(--teal)">1.0×</span></div>
+      <div class="miniknob">rise<input type="range" id="rise" min="0" max="1.2" step="0.05" value="0.45"><span id="v-rise" style="color:var(--teal)">0.45</span></div>
+      <div class="miniknob">emit<input type="range" id="emit" min="0" max="2" step="0.1" value="1"><span id="v-emit" style="color:var(--teal)">1.0×</span></div>
+      <div class="miniknob">zoom<input type="range" id="zm" min="0.6" max="2.6" step="0.05" value="1"><span id="v-zm" style="color:var(--teal)">1.0×</span></div>
+    </div>
+  </div>
+
+  <div style="margin-top:16px;display:flex;flex-wrap:wrap;">
+    <span class="key"><span class="sw" style="background:var(--teal)"></span>left emitter</span>
+    <span class="key"><span class="sw" style="background:var(--amber)"></span>right emitter</span>
+    <span class="key"><span class="sw" style="background:#cfd8de"></span>drawn smoke</span>
+    <span class="key"><span class="sw" style="background:#6b7681"></span>obstacle (from the SDF channel)</span>
+  </div>
+
+  <div class="foot">
+    <div>
+      <h3>Why the potential, not the velocity</h3>
+      <p>Trilinearly interpolating a baked <em>velocity</em> destroys its divergence-free property — the reconstructed
+        field gains O(voxel²) divergence, which shows up as smoke piling into some cells and thinning out of others.
+        Baking the <b>vector potential</b> and taking a finite-difference <b>curl in the shader</b> keeps the velocity
+        discretely divergence-free to machine precision, because the discrete curl of an interpolant has exactly zero
+        discrete divergence. The <code>bakePotential3D()</code> call hands you rgb = A and alpha = the obstacle's signed
+        distance, so one texture drives both the flow and the solid.</p>
+    </div>
+    <div>
+      <h3>Honest limits</h3>
+      <p>64³ is demo resolution and the field is frozen per seed (smoke moves through it; the obstacle is respected
+        <em>kinematically</em> — free-slip, no wake shedding or pressure feedback, because this is an authoring field,
+        not a solver). Semi-Lagrangian advection adds numerical diffusion — the smoke's softness. Needs WebGL2 +
+        <code>EXT_color_buffer_float</code>; the canvas says so if either is missing.</p>
+    </div>
+  </div>
+</div>
+
+<script src="../dist/helix-noise.global.js"></script>
+<script>
+(function(){
+  const DN=64;                                   // volume resolution (N³)
+  const params={heli:0.7, slope:1.9, coh:0.45, seed:2027, obst:"sphere"};
+  let SPEED=1.0, RISE=0.45, EMIT=1.0, ZOOM=1.0;
+  const $=id=>document.getElementById(id);
+  const cv=$("cv"), stage=$("stage");
+
+  const gl=cv.getContext("webgl2",{antialias:false,alpha:false});
+  if(!gl){ $("badge").textContent="webgl2 not available in this browser"; return; }
+  if(!gl.getExtension("EXT_color_buffer_float")){ $("badge").textContent="needs EXT_color_buffer_float"; return; }
+
+  // --- the obstacle SDFs (domain [0, 2π)³, matching bakePotential3D's sampling) -----------
+  const C=Math.PI, TH=1.0;
+  const OBST={
+    sphere:(x,y,z)=>Math.hypot(x-C,y-C,z-C)-1.05,
+    torus:(x,y,z)=>{ const a=Math.hypot(x-C,z-C)-1.25; return Math.hypot(a,y-C)-0.42; },
+    bar:(x,y,z)=>Math.hypot(y-C,x-C)-0.5,          // cylinder along z
+  };
+
+  // --- the field + its obstacle-bounded potential bake ------------------------------------
+  const field = HelixNoise.create({
+    modes: 44, slope: params.slope, helicity: params.heli, coherence: params.coh, seed: params.seed>>>0
+  });
+  let potData=null;                              // Float32Array, rgb = ramp(d)·A, a = sdf
+  function bakePotential(){
+    field.set({ slope:params.slope, helicity:params.heli, coherence:params.coh, seed:params.seed>>>0 });
+    const bounded = field.withBoundary(OBST[params.obst], { thickness: TH });
+    potData = bounded.bakePotential3D(DN).data;
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_3D, potTex);
+    gl.texSubImage3D(gl.TEXTURE_3D,0,0,0,0,DN,DN,DN,gl.RGBA,gl.FLOAT,potData);
+  }
+
+  // ============================ GL resources =============================================
+  function shader(type,src){
+    const s=gl.createShader(type); gl.shaderSource(s,src); gl.compileShader(s);
+    if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s)+"\n"+src);
+    return s;
+  }
+  function program(vs,fs){
+    const p=gl.createProgram();
+    gl.attachShader(p,shader(gl.VERTEX_SHADER,vs));
+    gl.attachShader(p,shader(gl.FRAGMENT_SHADER,fs));
+    gl.linkProgram(p);
+    if(!gl.getProgramParameter(p,gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+    return p;
+  }
+  const VS=`#version 300 es
+void main(){ vec2 p=vec2(float(gl_VertexID<<1&2),float(gl_VertexID&2)); gl_Position=vec4(p*2.0-1.0,0.0,1.0); }`;
+
+  // 3-D texture factory (RGBA16F, linear, clamp)
+  function tex3D(){
+    const t=gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_3D,t);
+    gl.texParameteri(gl.TEXTURE_3D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_3D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_3D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_3D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_3D,gl.TEXTURE_WRAP_R,gl.CLAMP_TO_EDGE);
+    gl.texImage3D(gl.TEXTURE_3D,0,gl.RGBA16F,DN,DN,DN,0,gl.RGBA,gl.FLOAT,null);
+    return t;
+  }
+  const potTex=tex3D();
+  const dye=[tex3D(),tex3D()];                   // ping-pong dye volumes
+  let cur=0;                                      // index of the freshest dye texture
+  const fbo=gl.createFramebuffer();
+  const zeros=new Float32Array(DN*DN*DN*4);
+  function clearDye(){
+    for(const t of dye){ gl.bindTexture(gl.TEXTURE_3D,t); gl.texSubImage3D(gl.TEXTURE_3D,0,0,0,0,DN,DN,DN,gl.RGBA,gl.FLOAT,zeros); }
+  }
+
+  const vao=gl.createVertexArray(); gl.bindVertexArray(vao);
+
+  // --------------------- advection program (curl of the potential) -----------------------
+  const ADV_FS=`#version 300 es
+precision highp float; precision highp sampler3D;
+uniform sampler3D dye, pot;
+uniform float zc, texel, advK, rise, dissip, emitAmt, splatAmt;
+uniform vec3 e1p, e2p, splatP;
+out vec4 outC;
+void main(){
+  vec3 p = vec3(gl_FragCoord.xy*texel, zc);      // this voxel's centre in [0,1]³
+  float sdf = texture(pot,p).a;
+  if(sdf < 0.0){ outC=vec4(0.0); return; }        // inside the obstacle: no smoke
+
+  // velocity = curl of the (trilinearly interpolated) vector potential A = pot.rgb.
+  vec3 dx=vec3(texel,0,0), dy=vec3(0,texel,0), dz=vec3(0,0,texel);
+  vec3 dAx = texture(pot,p+dx).xyz - texture(pot,p-dx).xyz;   // ∂A/∂x (×2texel, folded into advK)
+  vec3 dAy = texture(pot,p+dy).xyz - texture(pot,p-dy).xyz;
+  vec3 dAz = texture(pot,p+dz).xyz - texture(pot,p-dz).xyz;
+  vec3 vel = vec3(dAy.z-dAz.y, dAz.x-dAx.z, dAx.y-dAy.x);      // ∇×A — discretely divergence-free
+
+  // semi-Lagrangian backtrace (+ buoyant rise), open boundaries
+  vec3 src = p - vel*advK;
+  src.y -= rise*texel;
+  vec3 dcol = vec3(0.0);
+  if(all(greaterThan(src,vec3(texel))) && all(lessThan(src,vec3(1.0-texel)))){
+    dcol = texture(dye,src).rgb * dissip;
+  }
+
+  // emitters (bottom) + pointer splat, each into its own channel
+  float r2=0.0072;
+  dcol.r += emitAmt*exp(-dot(p-e1p,p-e1p)/r2);
+  dcol.g += emitAmt*exp(-dot(p-e2p,p-e2p)/r2);
+  if(splatAmt>0.0) dcol.b += splatAmt*exp(-dot(p-splatP,p-splatP)/0.006);
+
+  outC = vec4(min(dcol,vec3(6.0)), 1.0);
+}`;
+  const advProg=program(VS,ADV_FS);
+  gl.useProgram(advProg);
+  gl.uniform1i(gl.getUniformLocation(advProg,"dye"),0);
+  gl.uniform1i(gl.getUniformLocation(advProg,"pot"),1);
+  const aU=n=>gl.getUniformLocation(advProg,n);
+  const aZc=aU("zc"),aTexel=aU("texel"),aAdvK=aU("advK"),aRise=aU("rise"),aDissip=aU("dissip"),
+        aEmit=aU("emitAmt"),aSplat=aU("splatAmt"),aE1=aU("e1p"),aE2=aU("e2p"),aSp=aU("splatP");
+  gl.uniform1f(aTexel,1.0/DN);
+  gl.uniform1f(aDissip,0.987);
+  gl.uniform3f(aE1,0.40,0.12,0.5);
+  gl.uniform3f(aE2,0.60,0.12,0.5);
+
+  // ------------------------- raymarch program (smoke + solid) ----------------------------
+  const RAY_FS=`#version 300 es
+precision highp float; precision highp sampler3D;
+uniform sampler3D dye, pot;
+uniform sampler2D grad; uniform int gradMode;
+uniform vec3 camPos,camR,camU,camF;
+uniform vec2 res; uniform float fovT,aspect,texel;
+out vec4 outC;
+float sdfAt(vec3 tc){ return texture(pot,tc).a; }
+void main(){
+  vec2 uv=(gl_FragCoord.xy/res)*2.0-1.0;
+  vec3 rd=normalize(camF+uv.x*fovT*aspect*camR+uv.y*fovT*camU);
+  vec3 invd=1.0/rd;
+  vec3 t0=(vec3(-0.5)-camPos)*invd, t1=(vec3(0.5)-camPos)*invd;
+  vec3 tmn=min(t0,t1), tmx=max(t0,t1);
+  float tn=max(max(tmn.x,tmn.y),tmn.z), tf=min(min(tmx.x,tmx.y),tmx.z);
+  vec3 col=vec3(0.027,0.039,0.055);
+  float g=uv.y*0.5+0.5; col+=vec3(0.010,0.016,0.024)*(1.0-g);
+  if(tf>max(tn,0.0)){
+    const int STEPS=96;
+    float T=1.0; vec3 acc=vec3(0.0);
+    float t=max(tn,0.0); float dt=(tf-t)/float(STEPS); t+=dt*0.5;
+    vec3 L=normalize(vec3(0.45,0.8,0.4));
+    for(int i=0;i<STEPS;i++){
+      vec3 tc=camPos+rd*t+0.5;
+      float sdf=sdfAt(tc);
+      if(sdf<0.0){                                // hit the solid: shade from the SDF gradient, occlude
+        vec3 n=normalize(vec3(
+          sdfAt(tc+vec3(texel,0,0))-sdfAt(tc-vec3(texel,0,0)),
+          sdfAt(tc+vec3(0,texel,0))-sdfAt(tc-vec3(0,texel,0)),
+          sdfAt(tc+vec3(0,0,texel))-sdfAt(tc-vec3(0,0,texel))));
+        float dif=max(dot(n,L),0.0);
+        float rim=pow(1.0-max(dot(n,-rd),0.0),2.5);
+        vec3 oc=vec3(0.30,0.35,0.42)*(0.28+0.72*dif)+vec3(0.18,0.42,0.5)*rim;
+        acc+=T*oc; T=0.0; break;
+      }
+      vec3 s=texture(dye,tc).rgb;
+      float sd=s.r+s.g+s.b;
+      if(sd>0.004){
+        float a=1.0-exp(-sd*26.0*dt);
+        vec3 c;
+        if(gradMode>0){
+          float q=clamp(0.12+(1.0-tc.y)*0.7+smoothstep(0.0,0.7,sd)*0.28,0.0,1.0);
+          c=texture(grad,vec2(q,0.5)).rgb;
+        }else{
+          c=(vec3(0.20,0.86,0.77)*s.r+vec3(0.96,0.64,0.25)*s.g+vec3(0.88,0.92,0.96)*s.b)/sd;
+        }
+        float ab=dot(texture(dye,tc+vec3(0.0,0.045,0.0)).rgb,vec3(1.0));
+        float sh=0.32+0.68*exp(-ab*2.2);
+        acc+=T*a*c*sh; T*=1.0-a;
+        if(T<0.02)break;
+      }
+      t+=dt;
+    }
+    col=col*T+acc;
+  }
+  col=pow(col,vec3(0.909));
+  outC=vec4(col,1.0);
+}`;
+  const rayProg=program(VS,RAY_FS);
+  gl.useProgram(rayProg);
+  gl.uniform1i(gl.getUniformLocation(rayProg,"dye"),0);
+  gl.uniform1i(gl.getUniformLocation(rayProg,"pot"),1);
+  gl.uniform1i(gl.getUniformLocation(rayProg,"grad"),2);
+  const rU=n=>gl.getUniformLocation(rayProg,n);
+  const rCamPos=rU("camPos"),rCamR=rU("camR"),rCamU=rU("camU"),rCamF=rU("camF"),
+        rRes=rU("res"),rFovT=rU("fovT"),rAspect=rU("aspect"),rGradMode=rU("gradMode"),rTexel=rU("texel");
+  gl.uniform1f(rTexel,1.0/DN);
+  gl.uniform1i(rGradMode,0);
+
+  // --- gradient LUT (unit 2) --------------------------------------------------------------
+  const GRADS={
+    1:[[0,.05,.02,.06],[.32,.45,.06,.05],[.58,.95,.35,.08],[.8,.99,.72,.22],[1,1,.95,.80]],  // ember
+    2:[[0,.02,.05,.10],[.4,.06,.30,.55],[.72,.30,.75,.92],[1,.92,.98,1.0]],                    // ice
+  };
+  const gradTex=gl.createTexture();
+  gl.activeTexture(gl.TEXTURE2);
+  gl.bindTexture(gl.TEXTURE_2D,gradTex);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA8,256,1,0,gl.RGBA,gl.UNSIGNED_BYTE,null);
+  const lutBuf=new Uint8Array(256*4);
+  function buildLUT(stops){
+    for(let i=0;i<256;i++){
+      const q=i/255; let a=stops[0], b=stops[stops.length-1];
+      for(let k=0;k<stops.length-1;k++){ if(q>=stops[k][0]&&q<=stops[k+1][0]){a=stops[k];b=stops[k+1];break;} }
+      const f=(q-a[0])/((b[0]-a[0])||1);
+      lutBuf[i*4]=Math.round(255*(a[1]+(b[1]-a[1])*f));
+      lutBuf[i*4+1]=Math.round(255*(a[2]+(b[2]-a[2])*f));
+      lutBuf[i*4+2]=Math.round(255*(a[3]+(b[3]-a[3])*f));
+      lutBuf[i*4+3]=255;
+    }
+    gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D,gradTex);
+    gl.texSubImage2D(gl.TEXTURE_2D,0,0,0,256,1,gl.RGBA,gl.UNSIGNED_BYTE,lutBuf);
+  }
+  let gradName="native", gradMode=0;
+  function setGrad(m){
+    gradMode=m; if(m>0)buildLUT(GRADS[m]);
+    gradName=["native","ember","ice"][m];
+    document.querySelectorAll(".grad").forEach(b=>b.classList.toggle("on",+b.dataset.g===m));
+    updateBadge();
+  }
+
+  // ============================ simulation + render loop =================================
+  const RW=896, RH=504;
+  cv.width=RW; cv.height=RH;
+
+  let splatP=[0,0,0], splatAmt=0;
+  function advect(){
+    gl.useProgram(advProg);
+    gl.bindFramebuffer(gl.FRAMEBUFFER,fbo);
+    gl.viewport(0,0,DN,DN);
+    gl.disable(gl.DEPTH_TEST); gl.disable(gl.BLEND);
+    const src=dye[cur], dst=dye[1-cur];
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_3D,src);
+    gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_3D,potTex);
+    gl.uniform1f(aAdvK,0.16*SPEED);
+    gl.uniform1f(aRise,RISE);
+    gl.uniform1f(aEmit,0.42*EMIT);
+    gl.uniform1f(aSplat,splatAmt); gl.uniform3fv(aSp,splatP);
+    for(let z=0;z<DN;z++){
+      gl.framebufferTextureLayer(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,dst,0,z);
+      gl.uniform1f(aZc,(z+0.5)/DN);
+      gl.drawArrays(gl.TRIANGLES,0,3);
+    }
+    cur=1-cur;                                    // dst is now the freshest
+    splatAmt*=0.55;                               // decay the pointer splat
+  }
+
+  let yaw=0.6, pitch=0.16, autoRot=true, playing=true, needBuild=true, drawMode=false;
+  let camPos=[0,0,2], camR=[1,0,0], camU=[0,1,0], camF=[0,0,-1];
+  function camera(){
+    const dd=2.1/ZOOM, cp=Math.cos(pitch), sp=Math.sin(pitch), cy=Math.cos(yaw), sy=Math.sin(yaw);
+    camPos=[dd*cp*sy, dd*sp, dd*cp*cy];
+    const f=[-camPos[0],-camPos[1],-camPos[2]], fl=Math.hypot(f[0],f[1],f[2]);
+    camF=[f[0]/fl,f[1]/fl,f[2]/fl];
+    const r=[-camF[2],0,camF[0]], rl=Math.hypot(r[0],r[1],r[2])||1;
+    camR=[r[0]/rl,r[1]/rl,r[2]/rl];
+    camU=[camR[1]*camF[2]-camR[2]*camF[1], camR[2]*camF[0]-camR[0]*camF[2], camR[0]*camF[1]-camR[1]*camF[0]];
+  }
+  function render(){
+    gl.useProgram(rayProg);
+    gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+    gl.viewport(0,0,RW,RH);
+    gl.uniform2f(rRes,RW,RH); gl.uniform1f(rAspect,RW/RH); gl.uniform1f(rFovT,0.42);
+    gl.uniform1f(rGradMode,gradMode);
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_3D,dye[cur]);
+    gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_3D,potTex);
+    camera();
+    gl.uniform3fv(rCamPos,camPos); gl.uniform3fv(rCamR,camR); gl.uniform3fv(rCamU,camU); gl.uniform3fv(rCamF,camF);
+    gl.drawArrays(gl.TRIANGLES,0,3);
+  }
+  function frame(){
+    if(needBuild){ bakePotential(); needBuild=false; updateBadge(); }
+    if(autoRot&&!draggingRot)yaw+=0.0022;
+    if(playing)advect();
+    render();
+    requestAnimationFrame(frame);
+  }
+
+  function updateBadge(){
+    $("badge").textContent=`helix-noise · 64³ potential bake · GPU curl · ${params.obst}`;
+    const hn=params.heli;
+    $("ro").innerHTML=`u = ∇×A <b style="color:var(--cyan)">div-free</b><br>helicity <b style="color:${hn>=0?'var(--teal)':'var(--amber)'}">${hn>0?'+':''}${hn.toFixed(2)}</b><br>slope <b style="color:var(--ink)">${params.slope.toFixed(1)}</b><br>gradient <b style="color:var(--cyan)">${gradName}</b>`;
+  }
+
+  // --- controls ---------------------------------------------------------------------------
+  function bindKnob(id,key,fmt){
+    $(id).addEventListener("input",e=>{ params[key]=parseFloat(e.target.value); $("v-"+id).textContent=fmt(params[key]); needBuild=true; updateBadge(); });
+  }
+  bindKnob("heli","heli",v=>(v>0?"+":"")+v.toFixed(2));
+  bindKnob("slope","slope",v=>v.toFixed(1));
+  bindKnob("coh","coh",v=>Math.round(v*100)+"%");
+  $("spd").addEventListener("input",e=>{SPEED=parseFloat(e.target.value);$("v-spd").textContent=SPEED.toFixed(1)+"×";});
+  $("rise").addEventListener("input",e=>{RISE=parseFloat(e.target.value);$("v-rise").textContent=RISE.toFixed(2);});
+  $("emit").addEventListener("input",e=>{EMIT=parseFloat(e.target.value);$("v-emit").textContent=EMIT.toFixed(1)+"×";});
+  function setZoom(z){ ZOOM=Math.max(0.6,Math.min(2.6,z)); $("zm").value=ZOOM; $("v-zm").textContent=(Math.round(ZOOM*20)/20).toFixed(2).replace(/(\.\d)0$/,"$1")+"×"; }
+  $("zm").addEventListener("input",e=>setZoom(parseFloat(e.target.value)));
+  $("btn-play").addEventListener("click",()=>{playing=!playing;$("play-lbl").textContent=playing?"Pause":"Play";$("btn-play").classList.toggle("off",!playing);});
+  $("btn-rot").addEventListener("click",()=>{autoRot=!autoRot;$("btn-rot").classList.toggle("off",!autoRot);});
+  $("btn-clear").addEventListener("click",clearDye);
+  $("btn-seed").addEventListener("click",()=>{params.seed=(params.seed*1103515245+12345)>>>0;needBuild=true;});
+  $("btn-draw").addEventListener("click",()=>{
+    drawMode=!drawMode; $("btn-draw").classList.toggle("off",!drawMode); stage.classList.toggle("draw",drawMode);
+    $("hint").textContent=drawMode?"drag to inject smoke · toggle draw off to rotate":"drag to rotate · scroll / pinch to zoom";
+  });
+  document.querySelectorAll(".obst").forEach(b=>b.addEventListener("click",()=>{
+    params.obst=b.dataset.o; document.querySelectorAll(".obst").forEach(x=>x.classList.toggle("on",x===b)); needBuild=true;
+  }));
+  document.querySelectorAll(".grad").forEach(b=>b.addEventListener("click",()=>setGrad(+b.dataset.g)));
+
+  // pointer: orbit / zoom / draw-inject
+  function pointRay(e){
+    const r=stage.getBoundingClientRect();
+    const ux=((e.clientX-r.left)/r.width)*2-1, uy=-(((e.clientY-r.top)/r.height)*2-1);
+    const fovT=0.42, aspect=RW/RH;
+    return [camF[0]+ux*fovT*aspect*camR[0]+uy*fovT*camU[0], camF[1]+ux*fovT*aspect*camR[1]+uy*fovT*camU[1], camF[2]+ux*fovT*aspect*camR[2]+uy*fovT*camU[2]];
+  }
+  function inject(e){
+    const rd=pointRay(e);
+    const t=-(camPos[0]*camF[0]+camPos[1]*camF[1]+camPos[2]*camF[2])/(rd[0]*camF[0]+rd[1]*camF[1]+rd[2]*camF[2]);
+    let px=camPos[0]+rd[0]*t, py=camPos[1]+rd[1]*t, pz=camPos[2]+rd[2]*t;
+    splatP=[Math.max(0.05,Math.min(0.95,px+0.5)),Math.max(0.05,Math.min(0.95,py+0.5)),Math.max(0.05,Math.min(0.95,pz+0.5))];
+    splatAmt=0.9;
+  }
+  let draggingRot=false,lx=0,ly=0,pinchD=0; const ptrs=new Map();
+  stage.addEventListener("pointerdown",e=>{
+    ptrs.set(e.pointerId,{x:e.clientX,y:e.clientY}); stage.setPointerCapture(e.pointerId);
+    if(ptrs.size===1){ if(drawMode)inject(e); else{draggingRot=true;lx=e.clientX;ly=e.clientY;stage.classList.add("drag");} }
+    else if(ptrs.size===2){ draggingRot=false; const p=[...ptrs.values()]; pinchD=Math.hypot(p[0].x-p[1].x,p[0].y-p[1].y); }
+  });
+  stage.addEventListener("pointermove",e=>{
+    if(!ptrs.has(e.pointerId))return; ptrs.set(e.pointerId,{x:e.clientX,y:e.clientY});
+    if(ptrs.size===2){ const p=[...ptrs.values()]; const d=Math.hypot(p[0].x-p[1].x,p[0].y-p[1].y); if(pinchD>0)setZoom(ZOOM*d/pinchD); pinchD=d; }
+    else if(drawMode&&ptrs.size===1){ inject(e); }
+    else if(draggingRot){ yaw+=(e.clientX-lx)*0.006; pitch+=(e.clientY-ly)*0.006; pitch=Math.max(-1.2,Math.min(1.2,pitch)); lx=e.clientX; ly=e.clientY; }
+  });
+  function ptrEnd(e){
+    ptrs.delete(e.pointerId); if(ptrs.size<2)pinchD=0;
+    if(ptrs.size===1&&!drawMode){const p=[...ptrs.values()][0];draggingRot=true;lx=p.x;ly=p.y;}
+    if(ptrs.size===0){draggingRot=false;stage.classList.remove("drag");}
+  }
+  stage.addEventListener("pointerup",ptrEnd); stage.addEventListener("pointercancel",ptrEnd);
+  stage.addEventListener("wheel",e=>{e.preventDefault();setZoom(ZOOM*Math.exp(-e.deltaY*0.0012));},{passive:false});
+
+  // --- boot -------------------------------------------------------------------------------
+  clearDye();
+  bakePotential(); needBuild=false; updateBadge();
+  for(let k=0;k<60;k++)advect();                  // prime the volume
+  if(window.matchMedia&&matchMedia("(prefers-reduced-motion: reduce)").matches){
+    playing=false;autoRot=false;$("play-lbl").textContent="Play";$("btn-play").classList.add("off");$("btn-rot").classList.add("off");
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

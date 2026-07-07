@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Helix Noise — demos</title>
+<style>
+  :root{
+    --bg:#070a0e; --panel:#0f151c; --hair:rgba(150,180,200,.13); --hair2:rgba(150,180,200,.25);
+    --ink:#e4ecf1; --ink2:#93a3b0; --ink3:#5d6b77;
+    --teal:#2fd6bf; --amber:#f4a13c; --cyan:#38d9d1; --violet:#a78bfa;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1120px;margin:0 auto;padding:30px 20px 48px}
+  .eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.28em;text-transform:uppercase;color:var(--cyan);margin:0 0 10px}
+  h1{font-size:clamp(24px,4vw,34px);margin:0 0 10px;font-weight:600;letter-spacing:-.02em}
+  .lede{max-width:72ch;color:var(--ink2);font-size:14.5px;line-height:1.6;margin:0 0 26px}
+  .lede code{font-family:var(--mono);font-size:12.5px;color:var(--amber)}
+  h2{font-size:12px;font-family:var(--mono);letter-spacing:.2em;text-transform:uppercase;color:var(--ink3);
+    font-weight:400;margin:30px 0 12px;border-bottom:1px solid var(--hair);padding-bottom:8px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:14px}
+  a.card{display:block;background:var(--panel);border:1px solid var(--hair);border-radius:12px;
+    padding:16px 16px 14px;text-decoration:none;color:var(--ink);position:relative;overflow:hidden;
+    transition:border-color .15s,transform .15s}
+  a.card:hover{border-color:var(--hair2);transform:translateY(-2px)}
+  a.card::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--ac,var(--teal))}
+  .t{font-size:14.5px;font-weight:600;margin:0 0 5px;display:flex;align-items:baseline;gap:8px}
+  .t code{font-family:var(--mono);font-size:11px;color:var(--ink3);font-weight:400}
+  .d{font-size:12.5px;color:var(--ink2);line-height:1.55;margin:0}
+  .d b{color:var(--ink);font-weight:500}
+  .tag{position:absolute;top:13px;right:13px;font-family:var(--mono);font-size:9.5px;
+    letter-spacing:.1em;text-transform:uppercase;color:var(--ink3)}
+  .foot{margin-top:34px;font-family:var(--mono);font-size:12px;color:var(--ink3)}
+  .foot a{color:var(--cyan);text-decoration:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <p class="eyebrow">Helix Noise · demos</p>
+  <h1>One field, every renderer</h1>
+  <p class="lede">Every page below drives its visuals from the same <code>HelixNoise.create(...)</code> —
+    a grid-free, divergence-free helical flow field with four dials: <b>slope</b> (size of things),
+    <b>helicity</b> (handedness), <b>coherence</b> (noise → structure) and <b>churn</b> (time).
+    Plain HTML, no build; serve the repo root (<code>npm run demo</code>) and click around.</p>
+
+  <h2>Flagship</h2>
+  <div class="grid">
+    <a class="card" style="--ac:var(--violet)" href="nebula.html">
+      <p class="t">Nebula <code>glsl · time</code></p>
+      <p class="d">No bake, no sim: rays march <b>hx(p, t)</b> analytically. Density = |vorticity|, colour = handedness, churn = Kolmogorov time.</p>
+      <span class="tag">webgl2</span>
+    </a>
+    <a class="card" style="--ac:var(--teal)" href="tubes.html">
+      <p class="t">Vortex tubes <code>sampleUW</code></p>
+      <p class="d">Streamtubes coloured by <b>u·ω</b>. Slide helicity to ±1 — every tube winds the same way. The axis curl-noise doesn't have.</p>
+      <span class="tag">three.js</span>
+    </a>
+    <a class="card" style="--ac:var(--cyan)" href="million.html">
+      <p class="t">A million particles <code>glsl · TF</code></p>
+      <p class="d">1–4 M particles advected in a <b>transform-feedback</b> shader. Zero CPU field calls per frame.</p>
+      <span class="tag">webgl2</span>
+    </a>
+  </div>
+
+  <h2>Motion, art &amp; science</h2>
+  <div class="grid">
+    <a class="card" style="--ac:#8fe6a8" href="kelp.html">
+      <p class="t">Kelp forest <code>sampleUW · t</code></p>
+      <p class="d">Every frond bent by the field at its own height and <b>at field time</b>. The sway is the library's own churn — turn it to 0 and the forest freezes mid-current.</p>
+      <span class="tag">three.js</span>
+    </a>
+    <a class="card" style="--ac:#961e2d" href="ebru.html">
+      <p class="t">Ebru marbling <code>bake2D</code></p>
+      <p class="d">Ink advected through the flow. Because it's <b>divergence-free</b>, bands stretch and fold but never tear — incompressibility made visible.</p>
+      <span class="tag">canvas</span>
+    </a>
+    <a class="card" style="--ac:#38d9d1" href="qcriterion.html">
+      <p class="t">Q-criterion <code>marching cubes</code></p>
+      <p class="d">Vortex tubes extracted where rotation beats strain, <code>Q = ½(‖Ω‖²−‖S‖²)</code>. Raise coherence → the tangle condenses.</p>
+      <span class="tag">three.js</span>
+    </a>
+    <a class="card" style="--ac:#e6a45c" href="cirrus.html">
+      <p class="t">Jetstream cirrus <code>anisotropy · glsl</code></p>
+      <p class="d">One dial — <b>anisotropy γ</b> — shears an advected dye sky: wisps combed <b>along</b> the jet at γ&lt;0, billow bands <b>across</b> it at γ&gt;0. Same field, one number.</p>
+      <span class="tag">webgl2</span>
+    </a>
+  </div>
+
+  <h2>Simulation &amp; surfaces</h2>
+  <div class="grid">
+    <a class="card" style="--ac:#cfd8de" href="smoke.html">
+      <p class="t">Volumetric smoke <code>bake3D</code></p>
+      <p class="d">A 48³ dye volume advected semi-Lagrangian and raymarched with self-shadowing. Draw smoke with the pointer.</p>
+      <span class="tag">webgl2</span>
+    </a>
+    <a class="card" style="--ac:#4aa3ff" href="water.html">
+      <p class="t">Flowing water <code>bake2D</code></p>
+      <p class="d">Ripple layers bent along the streamlines, with caustics and sun-glints.</p>
+      <span class="tag">canvas</span>
+    </a>
+    <a class="card" style="--ac:var(--amber)" href="obstacle.html">
+      <p class="t">Flow around an obstacle <code>withBoundary</code></p>
+      <p class="d">A cylinder given only by its SDF — the flow slides along the wall, still exactly divergence-free.</p>
+      <span class="tag">boundary</span>
+    </a>
+    <a class="card" style="--ac:#cfd8de" href="smoke_obstacle.html">
+      <p class="t">GPU smoke + obstacle <code>bakePotential3D</code></p>
+      <p class="d">The whole sim on the GPU: velocity is the <b>curl of a baked potential</b> (div-free after interpolation); the SDF's alpha channel carves and shades the solid. Sphere, torus, or bar.</p>
+      <span class="tag">webgl2</span>
+    </a>
+    <a class="card" style="--ac:var(--teal)" href="atoms.html">
+      <p class="t">Atom engine <code>createAtoms</code></p>
+      <p class="d">Spatially-varying dials: right-handed on the left, left-handed on the right — one seamless field.</p>
+      <span class="tag">atoms</span>
+    </a>
+    <a class="card" style="--ac:var(--amber)" href="audio.html">
+      <p class="t">Audio-reactive <code>WebAudio</code></p>
+      <p class="d">Bass pumps <b>amplitude</b>, treble drives <b>churn</b>, stereo balance tips <b>helicity</b>. Built-in demo beat, or your mic / a track.</p>
+      <span class="tag">audio</span>
+    </a>
+  </div>
+
+  <h2>Integrations</h2>
+  <div class="grid">
+    <a class="card" style="--ac:var(--ink3)" href="three.html">
+      <p class="t">three.js points</p>
+      <p class="d">16 k particles advected by <b>sample()</b>, coloured by helicity. OrbitControls.</p>
+      <span class="tag">three.js</span>
+    </a>
+    <a class="card" style="--ac:var(--ink3)" href="p5.html">
+      <p class="t">p5.js sketch</p>
+      <p class="d">The minimal creative-coding loop — a flow field in a dozen lines.</p>
+      <span class="tag">p5.js</span>
+    </a>
+    <a class="card" style="--ac:var(--ink3)" href="shader.html">
+      <p class="t">GPU LIC <code>glsl</code></p>
+      <p class="d">The exact field as a fragment shader — line-integral convolution per pixel.</p>
+      <span class="tag">webgl2</span>
+    </a>
+    <a class="card" style="--ac:var(--ink3)" href="basic.html">
+      <p class="t">Minimal canvas</p>
+      <p class="d">2 500 particles, one <b>sampleUW</b> per particle, zero dependencies.</p>
+      <span class="tag">canvas</span>
+    </a>
+  </div>
+
+  <h2>Root demos</h2>
+  <div class="grid">
+    <a class="card" style="--ac:var(--cyan)" href="../gallery.html">
+      <p class="t">Gallery</p>
+      <p class="d">One field, nine renderers, three shared sliders re-tuning all of them at once.</p>
+      <span class="tag">canvas</span>
+    </a>
+    <a class="card" style="--ac:var(--cyan)" href="../sandbox.html">
+      <p class="t">Sandbox</p>
+      <p class="d">The full 3-D view: orbit camera, comet-trail streamlines, every control, live field time.</p>
+      <span class="tag">canvas</span>
+    </a>
+  </div>
+
+  <p class="foot">helix-noise · MIT · <a href="../README.md">README</a></p>
+</div>
+</body>
+</html>

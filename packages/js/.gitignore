@@ -1,0 +1,15 @@
+node_modules/
+*.log
+*.tgz
+.DS_Store
+.vscode/
+.idea/
+.claude/
+coverage/
+*.tsbuildinfo
+.tsup/
+docs/.vitepress/dist/
+docs/.vitepress/cache/
+
+# dist/ is committed so the demos and CDN work without a build step.
+# Regenerate with `npm run build`.

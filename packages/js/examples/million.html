@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Helix Noise — a million particles on the GPU (transform feedback)</title>
+<style>
+  html,body{margin:0;background:#070a0e;color:#cdd6dd;font-family:system-ui,sans-serif}
+  .wrap{max-width:980px;margin:0 auto;padding:22px 16px}
+  h1{font-size:19px;font-weight:600;margin:0 0 6px}
+  h1 code{color:#f4a13c}
+  p{color:#8a97a2;font-size:13.5px;line-height:1.6;margin:0 0 14px}
+  p b{color:#cdd6dd;font-weight:500}
+  code{font-family:ui-monospace,Menlo,monospace;color:#f4a13c;font-size:12.5px}
+  #stage{position:relative;width:100%;aspect-ratio:16/9;border:1px solid rgba(150,180,200,.15);
+    border-radius:10px;overflow:hidden;background:#070a0e;cursor:grab;touch-action:none}
+  #stage.drag{cursor:grabbing}
+  canvas{display:block;width:100%;height:100%}
+  .badge{position:absolute;top:10px;left:12px;font-family:ui-monospace,monospace;font-size:10.5px;
+    letter-spacing:.12em;text-transform:uppercase;color:#93a3b0;background:rgba(7,10,14,.55);
+    border:1px solid rgba(150,180,200,.14);border-radius:6px;padding:4px 8px;pointer-events:none}
+  .fps{position:absolute;top:10px;right:12px;font-family:ui-monospace,monospace;font-size:11px;color:#93a3b0;
+    background:rgba(7,10,14,.55);border:1px solid rgba(150,180,200,.14);border-radius:6px;padding:5px 9px;
+    text-align:right;line-height:1.5;pointer-events:none}
+  .fps b{font-weight:400;color:#2fd6bf}
+  .row{display:flex;flex-wrap:wrap;gap:14px;align-items:center;margin-top:12px;font-family:ui-monospace,monospace;font-size:12px;color:#93a3b0}
+  .row label{display:flex;align-items:center;gap:8px}
+  input[type=range]{width:104px}
+  select{font-family:ui-monospace,monospace;font-size:12px;color:#cdd6dd;background:#0c1016;
+    border:1px solid rgba(150,180,200,.22);border-radius:7px;padding:5px 8px}
+  button{font-family:ui-monospace,monospace;font-size:11.5px;color:#cdd6dd;background:#0c1016;
+    border:1px solid rgba(150,180,200,.22);border-radius:7px;padding:6px 11px;cursor:pointer}
+  button:hover{border-color:#38d9d1}
+  .note{margin-top:12px;font-size:12px;color:#5d6b77;font-family:ui-monospace,monospace}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>A million particles — <code>field.glsl()</code> + transform feedback</h1>
+  <p>The advection loop never touches JavaScript: a WebGL2 <b>transform-feedback</b> vertex shader
+    steps every particle through the field emitted by <code>field.glsl()</code> — the same
+    divergence-free velocities as the CPU API, evaluated on the GPU — and writes the new positions
+    straight into the next frame's vertex buffer. <b>Zero CPU field calls, zero uploads per
+    frame.</b> The field is <code>tileable: true</code>, so particles wrap seamlessly through the
+    2π-periodic box. Colour = local relative helicity (<span style="color:#2fd6bf">teal
+    right-handed</span> / <span style="color:#f4a13c">amber left-handed</span>); the field itself
+    churns via the time-aware <code>hx(p, t)</code> overload. Drag to orbit, scroll to zoom.</p>
+  <div id="stage">
+    <canvas id="cv"></canvas>
+    <div class="badge">helix-noise · transform feedback · 0 cpu/frame</div>
+    <div class="fps" id="fps">—</div>
+  </div>
+  <div class="row">
+    <label>particles <select id="count">
+      <option value="250000">250 k</option>
+      <option value="1000000" selected>1 M</option>
+      <option value="2000000">2 M</option>
+      <option value="4000000">4 M</option>
+    </select></label>
+    <label>helicity <input id="heli" type="range" min="-1" max="1" step="0.05" value="0.8"><span id="v-heli">+0.80</span></label>
+    <label>coherence <input id="coh" type="range" min="0" max="1" step="0.05" value="0.65"><span id="v-coh">65%</span></label>
+    <label>slope <input id="slope" type="range" min="1" max="3" step="0.1" value="1.7"><span id="v-slope">1.7</span></label>
+    <label>churn <input id="churn" type="range" min="0" max="2.5" step="0.05" value="0.8"><span id="v-churn">0.8×</span></label>
+    <button id="reseed">↻ seed</button>
+  </div>
+  <div class="note" id="note">compiling…</div>
+</div>
+
+<script src="../dist/helix-noise.global.js"></script>
+<script>
+(function(){
+  var $=function(id){return document.getElementById(id);};
+  var cv=$("cv"), stage=$("stage"), gl=cv.getContext("webgl2",{antialias:false,alpha:false});
+  if(!gl){ $("note").textContent="WebGL2 not available in this browser."; return; }
+
+  var params={ heli:0.8, coh:0.65, slope:1.7, seed:9, modes:40 };
+  var N=1000000, CHURN=0.8, ZOOM=1.0;
+  var TAU=6.283185307179586;
+
+  // ---------- programs ------------------------------------------------------
+  function compile(type,src){
+    var s=gl.createShader(type); gl.shaderSource(s,src); gl.compileShader(s);
+    if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+    return s;
+  }
+  // update program: advect + colour, output captured by transform feedback
+  var updProg=null, SPD=[1.0,2.0,2.6];
+  function calibrate(field){
+    // measure the field's speed percentiles -> glow thresholds (robust to any params)
+    var n=1200, pos=new Float64Array(3*n);
+    var rs=987654321; function rr(){rs=(rs*1664525+1013904223)>>>0;return rs/4294967296;}
+    for(var i=0;i<3*n;i++)pos[i]=rr()*TAU;
+    var out=field.sampleMany(pos);
+    var sp=new Float64Array(n);
+    for(var j=0;j<n;j++)sp[j]=Math.hypot(out[3*j],out[3*j+1],out[3*j+2]);
+    sp.sort();
+    SPD=[sp[(n*0.62)|0], sp[(n*0.97)|0], sp[(n*0.995)|0]];
+  }
+  function buildUpdate(){
+    var field=HelixNoise.create({ modes:params.modes, slope:params.slope, helicity:params.heli,
+      coherence:params.coh, seed:params.seed, tileable:true });
+    calibrate(field);
+    var vs="#version 300 es\nprecision highp float;\n"
+      + field.glsl({name:"hx"}) + "\n"
+      + "in vec3 a_pos; in vec2 a_aux;\n"
+      + "out vec3 v_pos; out vec2 v_aux;\n"
+      + "uniform float uDt,uT;\n"
+      + "void main(){\n"
+      + "  vec3 p=a_pos;\n"
+      + "  vec3 u=hx(p,uT);\n"
+      + "  vec3 w=hxCurl(p,uT);\n"
+      + "  float sp=length(u);\n"
+      + "  float h=dot(u,w)/(sp*length(w)+1e-6);\n"
+      + "  p+=u*uDt;\n"
+      + "  v_pos=mod(p,6.283185307);\n"          /* tileable field -> seamless wrap */
+      + "  v_aux=vec2(mix(a_aux.x,h,0.06), sp);\n" /* smoothed helicity hue + local speed */
+      + "  gl_Position=vec4(0.0);\n"
+      + "}";
+    var fs="#version 300 es\nprecision mediump float;\nvoid main(){}";
+    var p=gl.createProgram();
+    gl.attachShader(p,compile(gl.VERTEX_SHADER,vs));
+    gl.attachShader(p,compile(gl.FRAGMENT_SHADER,fs));
+    gl.transformFeedbackVaryings(p,["v_pos","v_aux"],gl.INTERLEAVED_ATTRIBS);
+    gl.linkProgram(p);
+    if(!gl.getProgramParameter(p,gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+    if(updProg)gl.deleteProgram(updProg);
+    updProg=p;
+    U.uDt=gl.getUniformLocation(p,"uDt");
+    U.uT=gl.getUniformLocation(p,"uT");
+    var kb=(vs.length/1024).toFixed(1);
+    $("note").textContent=params.modes+" modes → "+kb+" kB update shader · "
+      +(N/1e6>=1?(N/1e6)+" M":(N/1e3)+" k")+" particles advected and coloured entirely on the GPU · seed "+params.seed;
+    return field;
+  }
+  // render program: project + additive splat
+  var rndProg=(function(){
+    var vs="#version 300 es\nprecision highp float;\n"
+      + "in vec3 a_pos; in vec2 a_aux;\n"
+      + "out vec2 f_aux; out float f_z;\n"
+      + "uniform vec3 uEye,uR,uU,uF; uniform float uFovT,uAspect,uPt;\n"
+      + "void main(){\n"
+      + "  vec3 rel=a_pos-vec3(3.14159265)-uEye;\n"
+      + "  float xv=dot(rel,uR), yv=dot(rel,uU), zv=dot(rel,uF);\n"
+      + "  if(zv<0.12){ gl_Position=vec4(2.0,2.0,2.0,1.0); gl_PointSize=0.0; f_aux=vec2(0.0); f_z=1.0; return; }\n"
+      + "  gl_Position=vec4(xv/(uFovT*uAspect), yv/uFovT, 0.0, zv);\n"
+      + "  gl_PointSize=clamp(uPt*13.0/zv,1.4,5.0);\n"
+      + "  f_aux=a_aux; f_z=zv;\n"
+      + "}";
+    var fs="#version 300 es\nprecision mediump float;\n"
+      + "in vec2 f_aux; in float f_z;\n"
+      + "uniform float uAlpha; uniform vec3 uSpd;\n"   /* measured speed p62 / p97 / p99.5 */
+      + "out vec4 o;\n"
+      + "void main(){\n"
+      + "  vec2 d=gl_PointCoord*2.0-1.0; float r2=dot(d,d); if(r2>1.0)discard;\n"
+      + "  float t=clamp(f_aux.x*0.8+0.5,0.0,1.0);\n"
+      + "  vec3 c=mix(vec3(0.96,0.55,0.18),vec3(0.18,0.86,0.76),t);\n"
+      + "  c+=vec3(0.85,0.88,0.9)*smoothstep(uSpd.y,uSpd.z,f_aux.y)*0.22; // hottest cores whiten\n"
+      + "  float bright=0.035+2.0*smoothstep(uSpd.x,uSpd.y,f_aux.y); // only fast filaments glow\n"
+      + "  float fade=clamp(6.0/f_z,0.5,1.5);\n"
+      + "  o=vec4(c*uAlpha*bright*fade*(1.0-r2),1.0);\n"
+      + "}";
+    var p=gl.createProgram();
+    gl.attachShader(p,compile(gl.VERTEX_SHADER,vs));
+    gl.attachShader(p,compile(gl.FRAGMENT_SHADER,fs));
+    gl.linkProgram(p);
+    if(!gl.getProgramParameter(p,gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+    return p;
+  })();
+  var U={
+    uEye:gl.getUniformLocation(rndProg,"uEye"), uR:gl.getUniformLocation(rndProg,"uR"),
+    uU:gl.getUniformLocation(rndProg,"uU"), uF:gl.getUniformLocation(rndProg,"uF"),
+    uFovT:gl.getUniformLocation(rndProg,"uFovT"), uAspect:gl.getUniformLocation(rndProg,"uAspect"),
+    uPt:gl.getUniformLocation(rndProg,"uPt"), uAlpha:gl.getUniformLocation(rndProg,"uAlpha"),
+    uSpd:gl.getUniformLocation(rndProg,"uSpd"),
+    uDt:null, uT:null
+  };
+
+  // ---------- particle buffers (ping-pong) ----------------------------------
+  var bufs=[null,null], vaoUpd=[null,null], vaoRnd=[null,null], cur=0;
+  function makeBuffers(){
+    for(var i=0;i<2;i++){
+      if(bufs[i]){ gl.deleteBuffer(bufs[i]); gl.deleteVertexArray(vaoUpd[i]); gl.deleteVertexArray(vaoRnd[i]); }
+    }
+    var init=new Float32Array(N*5);
+    var rs=(params.seed*2654435761)>>>0; function rr(){rs=(rs*1664525+1013904223)>>>0;return rs/4294967296;}
+    for(var j=0;j<N;j++){ init[j*5]=rr()*TAU; init[j*5+1]=rr()*TAU; init[j*5+2]=rr()*TAU; init[j*5+3]=0; init[j*5+4]=1; }
+    for(var k=0;k<2;k++){
+      bufs[k]=gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER,bufs[k]);
+      gl.bufferData(gl.ARRAY_BUFFER,init,gl.DYNAMIC_COPY);
+      vaoUpd[k]=gl.createVertexArray(); gl.bindVertexArray(vaoUpd[k]);
+      gl.bindBuffer(gl.ARRAY_BUFFER,bufs[k]);
+      gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0,3,gl.FLOAT,false,20,0);
+      gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1,2,gl.FLOAT,false,20,12);
+      vaoRnd[k]=gl.createVertexArray(); gl.bindVertexArray(vaoRnd[k]);
+      gl.bindBuffer(gl.ARRAY_BUFFER,bufs[k]);
+      gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0,3,gl.FLOAT,false,20,0);
+      gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1,2,gl.FLOAT,false,20,12);
+      gl.bindVertexArray(null);
+    }
+    cur=0;
+  }
+
+  // ---------- camera ---------------------------------------------------------
+  var yaw=0.55, pitch=0.2, autoRot=true, draggingRot=false;
+  var eye,R,Uv,F;
+  function camera(){
+    var dd=10.6/ZOOM;
+    var cp=Math.cos(pitch),sp=Math.sin(pitch),cy=Math.cos(yaw),sy=Math.sin(yaw);
+    eye=[dd*cp*sy,dd*sp,dd*cp*cy];
+    var f=[-eye[0],-eye[1],-eye[2]];
+    var fl=Math.hypot(f[0],f[1],f[2]); F=[f[0]/fl,f[1]/fl,f[2]/fl];
+    var r=[-F[2],0,F[0]];
+    var rl=Math.hypot(r[0],r[1],r[2])||1; R=[r[0]/rl,r[1]/rl,r[2]/rl];
+    Uv=[R[1]*F[2]-R[2]*F[1], R[2]*F[0]-R[0]*F[2], R[0]*F[1]-R[1]*F[0]];
+  }
+
+  function resize(){
+    var dpr=Math.min(2,window.devicePixelRatio||1);
+    cv.width=Math.round(cv.clientWidth*dpr); cv.height=Math.round(cv.clientHeight*dpr);
+  }
+
+  // ---------- frame loop -----------------------------------------------------
+  var ft=0,lastT=0,ema=0;
+  function frame(tms){
+    var dt=lastT?Math.min(0.05,(tms-lastT)*0.001):0.016; lastT=tms;
+    ema=ema?ema*0.95+dt*0.05:dt;
+    ft+=dt*CHURN;
+    if(autoRot&&!draggingRot)yaw+=0.0014;
+
+    // 1) update pass: advect every particle on the GPU, capture into the other buffer
+    gl.useProgram(updProg);
+    gl.uniform1f(U.uDt,dt*0.55);
+    gl.uniform1f(U.uT,ft);
+    gl.enable(gl.RASTERIZER_DISCARD);
+    gl.bindVertexArray(vaoUpd[cur]);
+    gl.bindBufferBase(gl.TRANSFORM_FEEDBACK_BUFFER,0,bufs[1-cur]);
+    gl.beginTransformFeedback(gl.POINTS);
+    gl.drawArrays(gl.POINTS,0,N);
+    gl.endTransformFeedback();
+    gl.bindBufferBase(gl.TRANSFORM_FEEDBACK_BUFFER,0,null);
+    gl.disable(gl.RASTERIZER_DISCARD);
+    cur=1-cur;
+
+    // 2) render pass: additive splats
+    camera();
+    gl.viewport(0,0,cv.width,cv.height);
+    gl.clearColor(0.027,0.039,0.055,1); gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.useProgram(rndProg);
+    gl.uniform3fv(U.uEye,eye); gl.uniform3fv(U.uR,R); gl.uniform3fv(U.uU,Uv); gl.uniform3fv(U.uF,F);
+    gl.uniform1f(U.uFovT,0.36); gl.uniform1f(U.uAspect,cv.width/cv.height);
+    gl.uniform1f(U.uPt,Math.min(2,window.devicePixelRatio||1));
+    gl.uniform1f(U.uAlpha,Math.min(0.8,220000/N+0.05));
+    gl.uniform3f(U.uSpd,SPD[0],SPD[1],SPD[2]);
+    gl.enable(gl.BLEND); gl.blendFunc(gl.ONE,gl.ONE);
+    gl.bindVertexArray(vaoRnd[cur]);
+    gl.drawArrays(gl.POINTS,0,N);
+    gl.bindVertexArray(null);
+    gl.disable(gl.BLEND);
+
+    $("fps").innerHTML=(N/1e6>=1?(N/1e6)+"M":(N/1e3)+"k")+" particles<br><b>"+(1/ema).toFixed(0)+" fps</b>";
+    requestAnimationFrame(frame);
+  }
+
+  // ---------- ui -------------------------------------------------------------
+  function bind(id,key,fmt){
+    $(id).addEventListener("input",function(e){ params[key]=parseFloat(e.target.value); $("v-"+id).textContent=fmt(params[key]); });
+    $(id).addEventListener("change",buildUpdate);
+  }
+  bind("heli","heli",function(v){return (v>0?"+":"")+v.toFixed(2);});
+  bind("coh","coh",function(v){return Math.round(v*100)+"%";});
+  bind("slope","slope",function(v){return v.toFixed(1);});
+  $("churn").addEventListener("input",function(e){ CHURN=parseFloat(e.target.value); $("v-churn").textContent=CHURN.toFixed(1)+"×"; });
+  $("count").addEventListener("change",function(e){ N=parseInt(e.target.value,10); makeBuffers(); buildUpdate(); });
+  $("reseed").addEventListener("click",function(){ params.seed=(params.seed*1103515245+12345)>>>0; makeBuffers(); buildUpdate(); });
+
+  var lx=0,ly=0;
+  stage.addEventListener("pointerdown",function(e){ draggingRot=true; lx=e.clientX; ly=e.clientY;
+    stage.setPointerCapture(e.pointerId); stage.classList.add("drag"); });
+  stage.addEventListener("pointermove",function(e){ if(!draggingRot)return;
+    yaw+=(e.clientX-lx)*0.006; pitch+=(e.clientY-ly)*0.006;
+    pitch=Math.max(-1.2,Math.min(1.2,pitch)); lx=e.clientX; ly=e.clientY; });
+  function up(){ draggingRot=false; stage.classList.remove("drag"); }
+  stage.addEventListener("pointerup",up); stage.addEventListener("pointercancel",up);
+  stage.addEventListener("wheel",function(e){ e.preventDefault(); ZOOM=Math.max(0.5,Math.min(3,ZOOM*Math.exp(-e.deltaY*0.0012))); },{passive:false});
+
+  if(window.matchMedia&&matchMedia("(prefers-reduced-motion: reduce)").matches){ autoRot=false; CHURN=0; }
+  resize(); window.addEventListener("resize",resize);
+  try{ makeBuffers(); buildUpdate(); requestAnimationFrame(frame); }
+  catch(e){ $("note").textContent="Shader error: "+e.message; }
+})();
+</script>
+</body>
+</html>
