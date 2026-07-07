@@ -91,7 +91,7 @@ are plain `HelixNoiseOptions` bundles, distilled from the JS examples of the sam
 ## Develop
 
 ```bash
-npm install       # links the local core via file:../js
+npm install       # installs the published core (helix-noise ^1.0.2)
 npm run check     # typecheck + parity-smoke tests
 npm run build     # dist/ (ESM + CJS + d.ts)
 ```
@@ -103,8 +103,9 @@ reproduces `field.sample()`/`vorticity()` to ≤1e-9 (precision 17), the same ba
 
 Run the live CPU/GPU demo with `npm --prefix ../../examples/r3f install && npm --prefix ../../examples/r3f run dev`.
 
-> **Note for publishing:** the `helix-noise` dependency is `file:../js` for local monorepo
-> development. Bump it to the published range (`^1.x`) before `npm publish`.
+> **Developing against unreleased core changes?** Temporarily point the dependency at the local
+> package (`npm install ../js`, or set `"helix-noise": "file:../js"`), then restore the version
+> range (`^1.0.2`) before publishing.
 
 ## License
 

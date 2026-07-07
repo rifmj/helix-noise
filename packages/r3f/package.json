@@ -43,7 +43,7 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "helix-noise": "file:../js"
+    "helix-noise": "^1.0.2"
   },
   "peerDependencies": {
     "@react-three/fiber": ">=8",

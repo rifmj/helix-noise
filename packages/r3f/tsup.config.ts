@@ -5,7 +5,8 @@ import { defineConfig } from "tsup";
 //   index.cjs   CommonJS (require)
 //   index.d.ts  TypeScript declarations
 // No IIFE bundle: this is a React library, consumed by bundlers, not a <script> tag.
-// three / @react-three/fiber / react stay external (peer deps).
+// Peers (react / three / @react-three/fiber) and the core dependency (helix-noise) stay
+// external — the consumer's installed copies are used rather than bundling them in.
 export default defineConfig({
   entry: { index: "src/index.ts" },
   format: ["esm", "cjs"],
@@ -14,7 +15,7 @@ export default defineConfig({
   clean: true,
   sourcemap: true,
   minify: false,
-  external: ["react", "react/jsx-runtime", "three", "@react-three/fiber"],
+  external: ["react", "react/jsx-runtime", "three", "@react-three/fiber", "helix-noise"],
   outExtension({ format }) {
     return { js: format === "esm" ? ".js" : ".cjs" };
   },

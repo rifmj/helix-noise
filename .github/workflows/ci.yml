@@ -104,8 +104,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
-      # No lockfile yet (0.1.0) → npm install, not npm ci. Depends on packages/js via
-      # file:../js; packages/js/dist is committed, so no core build step is needed.
+      # No lockfile committed (0.1.0) → npm install, not npm ci. Depends on the published
+      # helix-noise (^1.0.2), fetched from the registry — no core build step needed.
       - run: npm install
       - run: npm run typecheck
       - run: npm test
