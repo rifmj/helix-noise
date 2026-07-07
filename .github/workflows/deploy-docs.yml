@@ -1,13 +1,15 @@
-name: Deploy Docs
+name: Deploy Site
 
-# Build the VitePress site in packages/js and publish it to GitHub Pages.
+# Publishes a single GitHub Pages site:
+#   /            -> the marketing landing + demos (packages/js/index.html, gallery, sandbox, examples)
+#   /docs/       -> the VitePress documentation
 # One-time setup: repo Settings → Pages → Build and deployment → Source: "GitHub Actions".
 
 on:
   push:
     branches: [main]
     paths:
-      - "packages/js/docs/**"
+      - "packages/js/**"
       - ".github/workflows/deploy-docs.yml"
   workflow_dispatch:
 
@@ -25,9 +27,6 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: packages/js
     steps:
       - uses: actions/checkout@v4
         with:
@@ -38,12 +37,32 @@ jobs:
           cache: npm
           cache-dependency-path: packages/js/package-lock.json
       - uses: actions/configure-pages@v5
-      - run: npm ci
-      - name: Build with VitePress
+
+      - name: Install deps
+        working-directory: packages/js
+        run: npm ci
+
+      - name: Build the VitePress docs
+        working-directory: packages/js
         run: npm run docs:build
+
+      - name: Assemble the Pages site (landing at /, docs at /docs)
+        run: |
+          set -e
+          SITE="$RUNNER_TEMP/_site"
+          SRC=packages/js
+          rm -rf "$SITE" && mkdir -p "$SITE"
+          # Landing + demos + the assets/dist they reference -> site root
+          cp "$SRC/index.html" "$SRC/gallery.html" "$SRC/sandbox.html" "$SITE/"
+          cp -R "$SRC/examples" "$SRC/assets" "$SRC/dist" "$SITE/"
+          # VitePress output (built with base /helix-noise/docs/) -> /docs
+          mkdir -p "$SITE/docs"
+          cp -R "$SRC/docs/.vitepress/dist/." "$SITE/docs/"
+          echo "Assembled site:"; find "$SITE" -maxdepth 1 | sort
+
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: packages/js/docs/.vitepress/dist
+          path: ${{ runner.temp }}/_site
 
   deploy:
     needs: build

@@ -6,8 +6,9 @@ export default defineConfig({
   description:
     "Divergence-free helical flow fields, grid-free. Sample a 3-D incompressible velocity field at any point.",
 
-  // Project site lives at https://<user>.github.io/helix-noise/
-  base: "/helix-noise/",
+  // The marketing landing (packages/js/index.html) is served at the Pages root
+  // https://<user>.github.io/helix-noise/ ; these docs live under /docs.
+  base: "/helix-noise/docs/",
 
   cleanUrls: true,
   lastUpdated: true,
