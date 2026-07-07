@@ -1,6 +1,13 @@
 # helix-noise
 
+[![crates.io](https://img.shields.io/crates/v/helix-noise.svg)](https://crates.io/crates/helix-noise)
+[![docs.rs](https://img.shields.io/docsrs/helix-noise)](https://docs.rs/helix-noise)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 A **divergence-free helical (Beltrami) spectral flow-field** noise for Rust.
+
+> 📖 **API docs:** [docs.rs/helix-noise](https://docs.rs/helix-noise) — every type, option, and
+> method, generated from the source. Rendered guide: [rifmj.github.io/helix-noise/docs/rust](https://rifmj.github.io/helix-noise/docs/rust).
 
 The field is an analytic sum of divergence-free helical modes, so you can evaluate it
 grid-free at any point in space and time, and its **vorticity** (curl) and **vector
@@ -176,6 +183,10 @@ cargo test
 
 v0.1 covers the spectral engine, the free-slip SDF boundary, and the GLSL emitter. The
 particle "atom" engine of the JS reference is a documented follow-up and is not yet ported.
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 

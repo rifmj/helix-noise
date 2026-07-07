@@ -1,7 +1,7 @@
 name: Deploy Site
 
 # Publishes a single GitHub Pages site:
-#   /            -> the marketing landing + demos (packages/js/index.html, gallery, sandbox, examples)
+#   /            -> the marketing landing + demos (site/index.html, gallery, sandbox, examples)
 #   /docs/       -> the VitePress documentation
 # One-time setup: repo Settings → Pages → Build and deployment → Source: "GitHub Actions".
 

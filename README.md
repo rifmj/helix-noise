@@ -20,15 +20,20 @@ algorithm once and re-verify every language in one CI run.
 
 ## Packages
 
-| Package | Language | Registry | Status |
-|---|---|---|---|
-| [`packages/js`](packages/js) | TypeScript / JS | npm `helix-noise` | reference implementation (spectral + atom engines, boundaries, GLSL, WASM batch kernel) |
-| [`packages/python`](packages/python) | Python 3 + numpy | PyPI `helix-noise` | spectral engine + boundary + GLSL; vectorized `sample_many` |
-| [`packages/rust`](packages/rust) | Rust | crates.io `helix-noise` | spectral engine + boundary + GLSL; zero runtime deps, WASM-friendly |
-| [`packages/shaders`](packages/shaders) | GLSL · HLSL · WGSL · Godot | — | code generator + ready-to-paste shaders for Shadertoy / Unity / Unreal / Godot / WebGPU |
+| Package | Language | Registry | Version | Status |
+|---|---|---|---|---|
+| [`packages/js`](packages/js) | TypeScript / JS | npm `helix-noise` | `1.0.2` | reference implementation (spectral + atom engines, boundaries, GLSL, WASM batch kernel) |
+| [`packages/python`](packages/python) | Python 3 + numpy | PyPI `helix-noise` | `0.1.0` | spectral engine + boundary + GLSL; vectorized `sample_many` |
+| [`packages/rust`](packages/rust) | Rust | crates.io `helix-noise` | `0.1.0` | spectral engine + boundary + GLSL; zero runtime deps, WASM-friendly |
+| [`packages/shaders`](packages/shaders) | GLSL · HLSL · WGSL · Godot | — | `0.1.0` | code generator + ready-to-paste shaders for Shadertoy / Unity / Unreal / Godot / WebGPU |
 
 The project's front-door site lives in [`site/`](site) (the landing) plus `packages/js/docs` (the VitePress
 reference); the `Deploy Site` workflow assembles them into one GitHub Pages site — landing at `/`, docs at `/docs`.
+Rendered reference docs cover **every** platform:
+[JavaScript](https://rifmj.github.io/helix-noise/docs/API) ·
+[Python](https://rifmj.github.io/helix-noise/docs/python) ·
+[Rust](https://rifmj.github.io/helix-noise/docs/rust) ·
+[Shaders](https://rifmj.github.io/helix-noise/docs/shaders). Each package also keeps its own `CHANGELOG.md`.
 
 The **atom engine** currently lives only in `packages/js`; the native ports scope v0.1 to the spectral
 engine and document it as a follow-up.

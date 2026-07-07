@@ -53,4 +53,19 @@ const [u, v, w] = field.sample(x, y, z);       // divergence-free velocity, anyw
 const [u2, v2, w2] = field.sample(x, y, z, t); // …the same field, churning in time
 ```
 
-Head to the **[API Reference](/API)** for every function, option, and method in plain language.
+Head to the **[JavaScript API Reference](/API)** for every function, option, and method in plain language.
+
+## The same field in four ecosystems
+
+All ports produce the **same field** for the same seed and options — verified against a shared fixture to
+~1e-15 (machine precision). Pick your stack:
+
+| Platform | Install | Reference |
+|---|---|---|
+| **JavaScript / TypeScript** — reference implementation (spectral + atom engines, boundaries, GLSL, WASM batch) | `npm install helix-noise` | [JavaScript API →](/API) |
+| **Python** (numpy) — spectral engine, vectorized `sample_many` | `pip install helix-noise` | [Python reference →](/python) |
+| **Rust** — zero-dependency, WASM-friendly crate | `cargo add helix-noise` | [Rust reference →](/rust) |
+| **Shaders** — GLSL · HLSL · WGSL · Godot generator | `generate.py --target glsl` | [Shaders reference →](/shaders) |
+
+The native ports scope v0.1 to the spectral engine, the free-slip SDF boundary, and the GLSL emitter; the
+atom engine (`createAtoms`) currently lives only in JavaScript and is a documented follow-up for the ports.

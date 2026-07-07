@@ -136,6 +136,10 @@ v0.1 ships the spectral engine, the free-slip SDF boundary, and the GLSL emitter
 **atom engine** from the JS library is out of scope for this release and is a documented
 follow-up.
 
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md).
+
 ## License
 
 MIT © Rifat Jumagulov

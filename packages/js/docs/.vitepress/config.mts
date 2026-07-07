@@ -6,7 +6,7 @@ export default defineConfig({
   description:
     "Divergence-free helical flow fields, grid-free. Sample a 3-D incompressible velocity field at any point.",
 
-  // The marketing landing (packages/js/index.html) is served at the Pages root
+  // The marketing landing (site/index.html) is served at the Pages root
   // https://<user>.github.io/helix-noise/ ; these docs live under /docs.
   base: "/helix-noise/docs/",
 
@@ -22,8 +22,11 @@ export default defineConfig({
     // https://vitepress.dev/reference/default-theme-config
     nav: [
       { text: "Home", link: "/" },
-      { text: "API Reference", link: "/API" },
-      { text: "npm", link: "https://www.npmjs.com/package/helix-noise" },
+      { text: "JavaScript", link: "/API" },
+      { text: "Python", link: "/python" },
+      { text: "Rust", link: "/rust" },
+      { text: "Shaders", link: "/shaders" },
+      { text: "GitHub", link: "https://github.com/rifmj/helix-noise" },
     ],
 
     sidebar: [
@@ -32,13 +35,22 @@ export default defineConfig({
         items: [{ text: "Overview", link: "/" }],
       },
       {
-        text: "Reference",
+        text: "JavaScript",
         items: [
+          { text: "API reference", link: "/API" },
           { text: "Getting started", link: "/API#getting-started" },
           { text: "create() — spectral field", link: "/API#createoptions-the-spectral-field" },
           { text: "createAtoms() — atom field", link: "/API#createatomsoptions-the-atom-field" },
           { text: "Helpers", link: "/API#helpers" },
           { text: "Types", link: "/API#types" },
+        ],
+      },
+      {
+        text: "Other languages",
+        items: [
+          { text: "Python", link: "/python" },
+          { text: "Rust", link: "/rust" },
+          { text: "Shaders — GLSL · HLSL · WGSL · Godot", link: "/shaders" },
         ],
       },
     ],

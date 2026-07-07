@@ -161,6 +161,10 @@ v0.1 covers the **spectral engine** shader emitters (GLSL / HLSL / WGSL / Godot)
 The particle/atom advection engine from the JS library is a documented follow-up
 and is **not** included here.
 
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md).
+
 ## License
 
 MIT © Rifat Jumagulov. See [LICENSE](LICENSE).
