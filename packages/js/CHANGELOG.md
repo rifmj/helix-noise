@@ -3,6 +3,13 @@
 All notable changes to this project are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [1.0.2]
+
+- Docs-only release: restructured README for faster onboarding — code in the first screen,
+  live demo links (GitHub Pages), an engine-comparison table, a Recipes & tips section, links
+  to the Python/Rust/shader ports, and a new hero animation (the landing's particle flow).
+- No code changes.
+
 ## [1.0.1]
 
 - Fix broken README images on npm: the package lives in `packages/js` of the monorepo, so
