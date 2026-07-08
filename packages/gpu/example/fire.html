@@ -1,0 +1,549 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>helix-noise-gpu — fire (buoyant particles in a helical turbulence field)</title>
+<style>
+  html,body{margin:0;background:#0a0604;color:#cdd6dd;font-family:system-ui,sans-serif}
+  .wrap{max-width:1040px;margin:0 auto;padding:22px 16px}
+  h1{font-size:19px;font-weight:600;margin:0 0 6px}
+  h1 code{color:#f4a13c}
+  p{color:#8a97a2;font-size:13.5px;line-height:1.6;margin:0 0 14px}
+  p b{color:#cdd6dd;font-weight:500}
+  code{font-family:ui-monospace,Menlo,monospace;color:#f4a13c;font-size:12.5px}
+  #stage{position:relative;width:100%;aspect-ratio:16/9;border:1px solid rgba(200,160,120,.15);
+    border-radius:10px;overflow:hidden;background:#0a0604;cursor:grab;touch-action:none}
+  #stage.drag{cursor:grabbing}
+  canvas{display:block;width:100%;height:100%}
+  .badge{position:absolute;top:10px;left:12px;font-family:ui-monospace,monospace;font-size:10.5px;
+    letter-spacing:.12em;text-transform:uppercase;color:#b09a88;background:rgba(10,6,4,.55);
+    border:1px solid rgba(200,160,120,.14);border-radius:6px;padding:4px 8px;pointer-events:none}
+  .fps{position:absolute;top:10px;right:12px;font-family:ui-monospace,monospace;font-size:11px;color:#b09a88;
+    background:rgba(10,6,4,.55);border:1px solid rgba(200,160,120,.14);border-radius:6px;padding:5px 9px;
+    text-align:right;line-height:1.5;pointer-events:none}
+  .fps b{font-weight:400;color:#f4a13c}
+  .row{display:flex;flex-wrap:wrap;gap:14px;align-items:center;margin-top:12px;
+    font-family:ui-monospace,monospace;font-size:12px;color:#93a3b0}
+  .row label{display:flex;align-items:center;gap:8px}
+  input[type=range]{width:104px}
+  select{font-family:ui-monospace,monospace;font-size:12px;color:#cdd6dd;background:#14100c;
+    border:1px solid rgba(200,160,120,.22);border-radius:7px;padding:5px 8px}
+  button{font-family:ui-monospace,monospace;font-size:11.5px;color:#cdd6dd;background:#14100c;
+    border:1px solid rgba(200,160,120,.22);border-radius:7px;padding:6px 11px;cursor:pointer}
+  button:hover{border-color:#f4a13c}
+  .note{margin-top:12px;font-size:12px;color:#6b5d50;font-family:ui-monospace,monospace}
+  .hideui .badge,.hideui .fps{display:none}
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "helix-noise": "../node_modules/helix-noise/dist/helix-noise.js",
+    "helix-noise-gpu": "../dist/index.js"
+  }
+}
+</script>
+</head>
+<body>
+<div class="wrap">
+  <h1>Fire — buoyant particle lifecycle in a helical turbulence field</h1>
+  <p>Every particle is born on a base disc, rises on <b>temperature-driven buoyancy</b>, gets stirred
+    by the emitted <code>field.glsl()</code> as its <b>living turbulence</b> (the field's own
+    <code>churn</code> time-evolution — no extra noise source), is pinched toward the axis into a
+    flame silhouette, cools, dies, respawns — all on the GPU. Rendered as short velocity streaklets
+    through a black-body-ish ramp (<b>white-hot core → orange → deep red → soot</b>), with a sparse
+    population of long-lived <b>sparks</b>. Drag to orbit, scroll to zoom.</p>
+  <div id="stage">
+    <canvas id="cv"></canvas>
+    <div class="badge">helix-noise-gpu · fire · gpu lifecycle · 0 cpu/frame</div>
+    <div class="fps" id="fps">—</div>
+  </div>
+  <div class="row">
+    <label>particles <select id="count">
+      <option value="120000">120 k</option>
+      <option value="250000" selected>250 k</option>
+      <option value="500000">500 k</option>
+      <option value="1000000">1 M</option>
+    </select></label>
+    <label>turbulence <input id="turb" type="range" min="0" max="1.6" step="0.05" value="0.95"><span id="v-turb">0.95</span></label>
+    <label>buoyancy <input id="buoy" type="range" min="0.4" max="2.5" step="0.05" value="1.35"><span id="v-buoy">1.35</span></label>
+    <label>wind <input id="wind" type="range" min="-0.8" max="0.8" step="0.05" value="0"><span id="v-wind">0.00</span></label>
+    <button id="pause">⏸ pause</button>
+    <button id="reseed">↻ reseed</button>
+    <button id="ui">hide ui</button>
+  </div>
+  <div class="note" id="note">building shaders…</div>
+</div>
+
+<script type="module">
+import { create } from "helix-noise";
+import { perspective, lookAt, multiply, linkProgram, glslFloat, version } from "helix-noise-gpu";
+
+const $ = (id) => document.getElementById(id);
+const cv = $("cv"), stage = $("stage");
+const gl = cv.getContext("webgl2", { antialias: false, alpha: false });
+
+const health = { version, webgl2: !!gl, count: 0, fps: 0, frames: 0, glError: 0, error: null };
+window.__helix = health;
+
+if (!gl) {
+  $("note").textContent = "WebGL2 is not available in this browser.";
+  health.error = "no-webgl2";
+} else {
+
+// ------------------------------------------------------------------ field ---
+// churn > 0 bakes per-mode phase rates, so hx(p, t) is *living* turbulence —
+// the flame flickers from the field's own time evolution, no extra noise.
+const field = create({ modes: 36, slope: 1.9, helicity: 0.35, coherence: 0.5, seed: 11, tileable: true, churn: 2.2 });
+const chunk = field.glsl({ name: "hx", curl: false, precision: 6 });
+
+// Flame geometry (world units): base disc, flame column height ~3.
+const BASE_R = 0.55;
+const STRIDE = 8 * 4; // pos(3) vel(3) aux(2: age, rnd)
+
+const UPDATE_VS = `#version 300 es
+precision highp float;
+${chunk}
+layout(location = 0) in vec3 a_pos;
+layout(location = 1) in vec3 a_vel;
+layout(location = 2) in vec2 a_aux;
+out vec3 v_pos;
+out vec3 v_vel;
+out vec2 v_aux;
+uniform float uDt;
+uniform float uT;
+uniform float uTurb;
+uniform float uBuoy;
+uniform float uWind;
+uniform int uKind;   // 0 = fire, 1 = smoke
+
+float hash11(float n) { return fract(sin(n) * 43758.5453123); }
+
+void main() {
+  float id = float(gl_VertexID);
+  vec3 p = a_pos;
+  float age = a_aux.x + uDt;
+  float rnd = a_aux.y;
+
+  if (uKind == 1) {                                         // smoke: born where flames die
+    float life = mix(2.6, 4.4, hash11(rnd * 7.71));
+    if (age >= life) {
+      age = 0.0;
+      rnd = hash11(rnd * 57.7 + id * 0.001 + 1.31);
+      float ang = 6.2831853 * hash11(rnd * 3.37);
+      float rad = 0.3 * sqrt(hash11(rnd * 9.13));
+      // Spawn where the (wind-bent) flame tip actually is, not on the axis.
+      p = vec3(cos(ang) * rad + uWind * 1.2, 1.25 + 0.55 * hash11(rnd * 5.5), sin(ang) * rad);
+    }
+    float af = age / life;
+    // One large-eddy octave: coherent billows that roll the plume over itself.
+    vec3 turb = hx(p * 0.55, uT) * (uTurb * (0.6 + 0.7 * af));
+    vec3 buoy = vec3(0.0, uBuoy * (0.55 - 0.22 * af), 0.0);   // cooling smoke slows down
+    vec3 spread = vec3(p.x - uWind * 1.2, 0.0, p.z) * (0.04 + 0.10 * af);
+    vec3 windv = vec3(uWind * min(p.y * 0.9, 2.2) * 1.6, 0.0, 0.0);
+    vec3 vel = turb + buoy + spread + windv;
+    p += vel * uDt;
+    v_pos = p;
+    v_vel = vel;
+    v_aux = vec2(age, rnd);
+    gl_Position = vec4(0.0);
+    return;
+  }
+
+  float spark = step(0.975, hash11(id * 0.61803));          // ~2.5% are sparks
+  float life = mix(mix(0.8, 1.9, hash11(rnd * 7.71)),       // flame tongues
+                   mix(2.2, 3.4, hash11(rnd * 7.71)),       // sparks live longer
+                   spark);
+
+  if (age >= life) {                                        // die → respawn on the base disc
+    age = 0.0;
+    rnd = hash11(rnd * 57.7 + id * 0.001 + 1.31);
+    float ang = 6.2831853 * hash11(rnd * 3.37);
+    float rad = ${glslFloat(BASE_R)} * sqrt(hash11(rnd * 9.13));
+    p = vec3(cos(ang) * rad, 0.02 * hash11(rnd * 5.5), sin(ang) * rad);
+  }
+
+  float tmp = 1.0 - age / life;                             // temperature ∈ (0,1]
+  vec2 rp = p.xz;
+  float r = length(rp);
+
+  // Two octaves of living turbulence, decorrelated per particle so the tongues
+  // separate instead of combing into one bundle of fibres; cool gas is stirred harder.
+  vec3 off = vec3(rnd, hash11(rnd * 3.19), hash11(rnd * 5.23)) * 0.7;
+  vec3 turb = hx(p * 0.9 + off, uT) * (uTurb * 0.55)
+            + hx(p * 2.6, uT * 1.7) * (uTurb * (0.35 + 0.9 * (1.0 - tmp)));
+  // Hot gas rises; the whole flame breathes with a classic two-sine flicker.
+  float flick = 1.0 + 0.16 * sin(uT * 9.7) + 0.11 * sin(uT * 15.3 + 1.7);
+  vec3 buoy = vec3(0.0, uBuoy * flick * (0.4 + 0.85 * tmp) * (1.0 + 0.8 * spark), 0.0);
+  // Entrainment pinches the column toward the axis with height → flame silhouette.
+  vec3 pinch = vec3(-rp.x, 0.0, -rp.y) * (1.25 * min(p.y, 2.2)) * (1.0 - spark);
+  // Gentle rotation of the whole column (helical updraft).
+  vec3 swirlv = vec3(-rp.y, 0.0, rp.x) * 0.55 * tmp;
+  vec3 windv = vec3(uWind * min(p.y * 0.8, 1.6), 0.0, 0.0);
+
+  vec3 vel = turb + buoy + pinch + swirlv + windv;
+  p += vel * uDt;
+  if (p.y < 0.0) p.y = 0.0;
+
+  v_pos = p;
+  v_vel = vel;
+  v_aux = vec2(age, rnd);
+  gl_Position = vec4(0.0);
+}`;
+const UPDATE_FS = `#version 300 es
+precision mediump float;
+void main() {}`;
+
+// ------------------------------------------------------------ render pass ---
+const RENDER_VS = `#version 300 es
+precision highp float;
+layout(location = 0) in float a_t;
+layout(location = 1) in vec3 i_pos;
+layout(location = 2) in vec3 i_vel;
+layout(location = 3) in vec2 i_aux;
+out float f_t;
+out float f_tmp;
+out float f_spark;
+out float f_r;
+out float f_depth;
+uniform mat4 uViewProj;
+uniform vec3 uCenter;
+uniform float uTrail;
+
+float hash11(float n) { return fract(sin(n) * 43758.5453123); }
+
+void main() {
+  float id = float(gl_VertexID / 2);
+  float spark = step(0.975, hash11(id * 0.61803));
+  float life = mix(mix(0.8, 1.9, hash11(i_aux.y * 7.71)),
+                   mix(2.2, 3.4, hash11(i_aux.y * 7.71)), spark);
+  float tmp = clamp(1.0 - i_aux.x / life, 0.0, 1.0);
+
+  vec3 p = i_pos - i_vel * (uTrail * a_t * (1.0 + 1.5 * spark));
+  vec4 clip = uViewProj * vec4(p - uCenter, 1.0);
+  if (clip.w <= 0.02) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); f_t = 1.0; f_tmp = 0.0; f_spark = 0.0; f_r = 0.0; f_depth = 1.0; return; }
+  gl_Position = clip;
+  f_t = a_t;
+  f_tmp = tmp;
+  f_spark = spark;
+  f_r = length(i_pos.xz);
+  f_depth = clip.w;
+}`;
+const RENDER_FS = `#version 300 es
+precision mediump float;
+in float f_t;
+in float f_tmp;
+in float f_spark;
+in float f_r;
+in float f_depth;
+out vec4 outColor;
+uniform float uAlpha;
+
+// Black-body-ish ramp: soot → deep red → orange → white-hot.
+vec3 fireColor(float t) {
+  vec3 c = mix(vec3(0.02, 0.005, 0.0), vec3(0.55, 0.08, 0.01), smoothstep(0.0, 0.3, t));
+  c = mix(c, vec3(1.0, 0.42, 0.05), smoothstep(0.3, 0.7, t));
+  c = mix(c, vec3(1.0, 0.85, 0.45), smoothstep(0.7, 0.93, t));
+  c = mix(c, vec3(1.05, 1.0, 0.9), smoothstep(0.93, 1.0, t));
+  return c;
+}
+
+void main() {
+  // Hot core: temperature boosted near the axis, cooled hard at the rim so
+  // white stays confined to the innermost tongue instead of flooding the body.
+  float t = f_tmp * (1.0 - 0.45 * smoothstep(0.05, 0.6, f_r));
+  vec3 c = fireColor(t);
+  float taper = (1.0 - f_t) * (1.0 - f_t);
+  float a = pow(f_tmp, 1.8) * (1.0 + 2.5 * f_spark);
+  float fade = clamp(4.5 / f_depth, 0.5, 1.6);
+  outColor = vec4(c * (uAlpha * a * taper * fade), 1.0);
+}`;
+
+// ------------------------------------------------------- render: smoke ---
+// Soft sprites that inflate and dim as they age, alpha-composited OVER the
+// additive flame so the plume genuinely occludes the glow behind it.
+const SMOKE_VS = `#version 300 es
+precision highp float;
+layout(location = 0) in vec3 a_pos;
+layout(location = 1) in vec3 a_vel;
+layout(location = 2) in vec2 a_aux;
+out float f_af;
+out float f_rnd;
+uniform mat4 uViewProj;
+uniform vec3 uCenter;
+uniform float uDpr;
+
+float hash11(float n) { return fract(sin(n) * 43758.5453123); }
+
+void main() {
+  float life = mix(2.6, 4.4, hash11(a_aux.y * 7.71));
+  float af = clamp(a_aux.x / life, 0.0, 1.0);
+  vec4 clip = uViewProj * vec4(a_pos - uCenter, 1.0);
+  if (clip.w <= 0.02) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); gl_PointSize = 0.0; f_af = 1.0; f_rnd = 0.0; return; }
+  gl_Position = clip;
+  gl_PointSize = clamp((4.0 + 68.0 * af) * uDpr * 3.2 / clip.w, 2.0, 100.0);
+  f_af = af;
+  f_rnd = a_aux.y;
+}`;
+const SMOKE_FS = `#version 300 es
+precision mediump float;
+in float f_af;
+in float f_rnd;
+out vec4 outColor;
+void main() {
+  vec2 d = gl_PointCoord * 2.0 - 1.0;
+  float r2 = dot(d, d);
+  if (r2 > 1.0) discard;
+  // Ragged angular lobes (hashed per puff) break the perfect-disc look; the
+  // overlap of many irregular puffs is what reads as billowing structure.
+  float ang = atan(d.y, d.x);
+  float lobes = 0.72 + 0.28 * sin(ang * 5.0 + f_rnd * 6.2831853) * sin(ang * 3.0 - f_rnd * 9.4);
+  float fall = pow(1.0 - r2, 1.7) * lobes;
+  // Fade in fast, dissipate slowly; young smoke keeps a faint ember tint.
+  float a = 0.10 * smoothstep(0.02, 0.16, f_af) * (1.0 - smoothstep(0.45, 1.0, f_af));
+  vec3 col = mix(vec3(0.17, 0.11, 0.06), vec3(0.075, 0.072, 0.07), smoothstep(0.0, 0.4, f_af));
+  col *= 0.8 + 0.4 * f_rnd;   // per-puff shade variation
+  outColor = vec4(col, a * fall);
+}`;
+
+const updateProg = linkProgram(gl, UPDATE_VS, UPDATE_FS, ["v_pos", "v_vel", "v_aux"]);
+const renderProg = linkProgram(gl, RENDER_VS, RENDER_FS);
+const smokeProg = linkProgram(gl, SMOKE_VS, SMOKE_FS);
+const uu = (n) => gl.getUniformLocation(updateProg, n);
+const ur = (n) => gl.getUniformLocation(renderProg, n);
+const us = (n) => gl.getUniformLocation(smokeProg, n);
+const U = { dt: uu("uDt"), t: uu("uT"), turb: uu("uTurb"), buoy: uu("uBuoy"), wind: uu("uWind"), kind: uu("uKind") };
+const R = { vp: ur("uViewProj"), center: ur("uCenter"), trail: ur("uTrail"), alpha: ur("uAlpha") };
+const S = { vp: us("uViewProj"), center: us("uCenter"), dpr: us("uDpr") };
+
+const segBuf = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, segBuf);
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 1]), gl.STATIC_DRAW);
+gl.bindBuffer(gl.ARRAY_BUFFER, null);
+
+// ---------------------------------------------------------------- buffers ---
+const params = { count: 250_000, turb: 0.95, buoy: 1.35, wind: 0, trail: 0.028, seed: 3 };
+const SMOKE_COUNT = 30_000;
+let bufs = null, smokeBufs = null;
+
+function mulberry32(a) {
+  return () => {
+    a |= 0; a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function initData(count, seed) {
+  const rnd = mulberry32(seed);
+  const data = new Float32Array(count * 8);
+  for (let i = 0; i < count; i++) {
+    // Pre-scatter through the flame volume with staggered ages: no cold start.
+    const ang = rnd() * Math.PI * 2, rad = BASE_R * Math.sqrt(rnd());
+    const h = rnd() * 2.2;
+    data[i * 8] = Math.cos(ang) * rad * (1 - h * 0.25);
+    data[i * 8 + 1] = h;
+    data[i * 8 + 2] = Math.sin(ang) * rad * (1 - h * 0.25);
+    data[i * 8 + 6] = rnd() * 1.4;  // age
+    data[i * 8 + 7] = rnd();        // rnd
+  }
+  return data;
+}
+
+function initSmokeData(count, seed) {
+  const rnd = mulberry32(seed ^ 0x9e3779b9);
+  const data = new Float32Array(count * 8);
+  for (let i = 0; i < count; i++) {
+    // Pre-scatter through the plume with staggered ages.
+    const ang = rnd() * Math.PI * 2, rad = (0.3 + rnd() * 0.5);
+    data[i * 8] = Math.cos(ang) * rad;
+    data[i * 8 + 1] = 1.4 + rnd() * 2.6;
+    data[i * 8 + 2] = Math.sin(ang) * rad;
+    data[i * 8 + 6] = rnd() * 3.5;  // age
+    data[i * 8 + 7] = rnd();        // rnd
+  }
+  return data;
+}
+
+function makeUpdateVao(buf) {
+  const vao = gl.createVertexArray();
+  gl.bindVertexArray(vao);
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, STRIDE, 0);
+  gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 3, gl.FLOAT, false, STRIDE, 12);
+  gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 2, gl.FLOAT, false, STRIDE, 24);
+  gl.bindVertexArray(null);
+  gl.bindBuffer(gl.ARRAY_BUFFER, null);
+  return vao;
+}
+function makeRenderVao(buf) {
+  const vao = gl.createVertexArray();
+  gl.bindVertexArray(vao);
+  gl.bindBuffer(gl.ARRAY_BUFFER, segBuf);
+  gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 1, gl.FLOAT, false, 4, 0);
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 3, gl.FLOAT, false, STRIDE, 0);  gl.vertexAttribDivisor(1, 1);
+  gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 3, gl.FLOAT, false, STRIDE, 12); gl.vertexAttribDivisor(2, 1);
+  gl.enableVertexAttribArray(3); gl.vertexAttribPointer(3, 2, gl.FLOAT, false, STRIDE, 24); gl.vertexAttribDivisor(3, 1);
+  gl.bindVertexArray(null);
+  gl.bindBuffer(gl.ARRAY_BUFFER, null);
+  return vao;
+}
+
+function disposeSystem(B) {
+  if (!B) return;
+  gl.deleteBuffer(B.a); gl.deleteBuffer(B.b);
+  gl.deleteVertexArray(B.updVaoA); gl.deleteVertexArray(B.updVaoB);
+  if (B.renVaoA) { gl.deleteVertexArray(B.renVaoA); gl.deleteVertexArray(B.renVaoB); }
+}
+
+function makeSystem(data, withRenderVaos) {
+  const mk = () => {
+    const b = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, b);
+    gl.bufferData(gl.ARRAY_BUFFER, data, gl.DYNAMIC_COPY);
+    gl.bindBuffer(gl.ARRAY_BUFFER, null);
+    return b;
+  };
+  const a = mk(), b = mk();
+  const sys = { a, b, updVaoA: makeUpdateVao(a), updVaoB: makeUpdateVao(b), cur: 0 };
+  if (withRenderVaos) { sys.renVaoA = makeRenderVao(a); sys.renVaoB = makeRenderVao(b); }
+  return sys;
+}
+
+let simT = 0;
+function rebuild() {
+  disposeSystem(bufs); disposeSystem(smokeBufs);
+  bufs = makeSystem(initData(params.count, params.seed), true);
+  smokeBufs = makeSystem(initSmokeData(SMOKE_COUNT, params.seed), false);
+  health.count = params.count;
+  for (let i = 0; i < 150; i++) step(1 / 60);   // warm both lifecycles up
+  $("note").textContent =
+    `helix-noise-gpu v${version} · ${(params.count / 1e3).toFixed(0)} k fire + ${(SMOKE_COUNT / 1e3).toFixed(0)} k smoke · living turbulence = field churn · seed ${params.seed}`;
+}
+
+function runTF(B, count, kind) {
+  const srcVao = B.cur === 0 ? B.updVaoA : B.updVaoB;
+  const dstBuf = B.cur === 0 ? B.b : B.a;
+  gl.uniform1i(U.kind, kind);
+  gl.bindVertexArray(srcVao);
+  gl.bindBufferBase(gl.TRANSFORM_FEEDBACK_BUFFER, 0, dstBuf);
+  gl.beginTransformFeedback(gl.POINTS);
+  gl.drawArrays(gl.POINTS, 0, count);
+  gl.endTransformFeedback();
+  gl.bindBufferBase(gl.TRANSFORM_FEEDBACK_BUFFER, 0, null);
+  gl.bindVertexArray(null);
+  B.cur = B.cur === 0 ? 1 : 0;
+}
+
+function step(dt) {
+  simT += dt;
+  gl.useProgram(updateProg);
+  gl.uniform1f(U.dt, dt);
+  gl.uniform1f(U.t, simT);
+  gl.uniform1f(U.turb, params.turb);
+  gl.uniform1f(U.buoy, params.buoy);
+  gl.uniform1f(U.wind, params.wind);
+  gl.enable(gl.RASTERIZER_DISCARD);
+  runTF(bufs, params.count, 0);
+  runTF(smokeBufs, SMOKE_COUNT, 1);
+  gl.disable(gl.RASTERIZER_DISCARD);
+}
+
+// ----------------------------------------------------------------- camera ---
+const cam = { az: 0.6, el: 0.10, dist: 6.3 };
+let dragging = false, px = 0, py = 0;
+stage.addEventListener("pointerdown", (e) => { dragging = true; px = e.clientX; py = e.clientY; stage.classList.add("drag"); stage.setPointerCapture(e.pointerId); });
+stage.addEventListener("pointermove", (e) => {
+  if (!dragging) return;
+  cam.az += (e.clientX - px) * 0.005;
+  cam.el = Math.min(1.2, Math.max(-0.4, cam.el + (e.clientY - py) * 0.005));
+  px = e.clientX; py = e.clientY;
+});
+stage.addEventListener("pointerup", () => { dragging = false; stage.classList.remove("drag"); });
+stage.addEventListener("wheel", (e) => { e.preventDefault(); cam.dist = Math.min(14, Math.max(2.5, cam.dist * (1 + e.deltaY * 0.001))); }, { passive: false });
+
+const LOOK_Y = 1.55;
+function viewProj() {
+  const ex = Math.cos(cam.az) * Math.cos(cam.el) * cam.dist;
+  const ey = LOOK_Y + Math.sin(cam.el) * cam.dist;
+  const ez = Math.sin(cam.az) * Math.cos(cam.el) * cam.dist;
+  const proj = perspective((46 * Math.PI) / 180, cv.width / Math.max(1, cv.height), 0.1, 100);
+  const view = lookAt([ex, ey, ez], [0, LOOK_Y, 0]);
+  return multiply(proj, view);
+}
+
+// ------------------------------------------------------------------- loop ---
+function resize() {
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  cv.width = Math.max(1, Math.round(cv.clientWidth * dpr));
+  cv.height = Math.max(1, Math.round(cv.clientHeight * dpr));
+}
+resize();
+window.addEventListener("resize", resize);
+
+rebuild();
+
+let running = true, last = 0, ema = 0;
+function frame(now) {
+  requestAnimationFrame(frame);
+  if (!running) { last = now; return; }
+  const dt = Math.min(1 / 30, last ? (now - last) * 0.001 : 1 / 60);
+  last = now;
+  cam.az += dt * 0.12;                      // slow idle orbit
+  step(dt);
+
+  gl.viewport(0, 0, cv.width, cv.height);
+  gl.clearColor(0.028, 0.014, 0.008, 1);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.ONE, gl.ONE);
+  gl.disable(gl.DEPTH_TEST);
+  const vpMat = viewProj();
+  gl.useProgram(renderProg);
+  gl.uniformMatrix4fv(R.vp, false, vpMat);
+  gl.uniform3f(R.center, 0, 0, 0);
+  gl.uniform1f(R.trail, params.trail);
+  gl.uniform1f(R.alpha, Math.min(1.6, Math.max(0.3, 25e4 / params.count)) * 0.45);
+  const renVao = bufs.cur === 0 ? bufs.renVaoA : bufs.renVaoB;
+  gl.bindVertexArray(renVao);
+  gl.drawArraysInstanced(gl.LINES, 0, 2, params.count);
+  gl.bindVertexArray(null);
+
+  // Smoke composites OVER the flame: normal alpha blending so the plume occludes the glow.
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+  gl.useProgram(smokeProg);
+  gl.uniformMatrix4fv(S.vp, false, vpMat);
+  gl.uniform3f(S.center, 0, 0, 0);
+  gl.uniform1f(S.dpr, Math.min(2, window.devicePixelRatio || 1));
+  gl.bindVertexArray(smokeBufs.cur === 0 ? smokeBufs.updVaoA : smokeBufs.updVaoB);
+  gl.drawArrays(gl.POINTS, 0, SMOKE_COUNT);
+  gl.bindVertexArray(null);
+
+  ema = ema ? ema * 0.95 + dt * 0.05 : dt;
+  health.fps = 1 / ema;
+  health.frames++;
+  if (health.frames % 30 === 0) {
+    $("fps").innerHTML = `<b>${(1 / ema).toFixed(0)}</b> fps<br>${(params.count / 1e3).toFixed(0)} k × 2 verts`;
+    const err = gl.getError();
+    if (err) { health.glError = err; console.error("GL error", err); }
+  }
+}
+requestAnimationFrame(frame);
+
+// --------------------------------------------------------------- controls ---
+$("count").addEventListener("change", (e) => { params.count = +e.target.value; rebuild(); });
+$("turb").addEventListener("input", (e) => { params.turb = +e.target.value; $("v-turb").textContent = params.turb.toFixed(2); });
+$("buoy").addEventListener("input", (e) => { params.buoy = +e.target.value; $("v-buoy").textContent = params.buoy.toFixed(2); });
+$("wind").addEventListener("input", (e) => { params.wind = +e.target.value; $("v-wind").textContent = params.wind.toFixed(2); });
+$("pause").addEventListener("click", () => { running = !running; $("pause").textContent = running ? "⏸ pause" : "▶ play"; });
+$("reseed").addEventListener("click", () => { params.seed = (params.seed * 16807) % 2147483647 || 1; rebuild(); });
+$("ui").addEventListener("click", () => {
+  const hidden = stage.classList.toggle("hideui");
+  $("ui").textContent = hidden ? "show ui" : "hide ui";
+});
+}
+</script>
+</body>
+</html>

@@ -6,11 +6,13 @@ fluids, curl-noise motion, vector-field art. The field is an analytic sum of Bel
 it to a texture, constrain it around an obstacle, or emit an equivalent GLSL shader.
 
 This is a Python + numpy port of the JavaScript
-[`helix-noise`](../helix-noise) library. It is at **numerical parity** with the JS
+[`helix-noise`](https://www.npmjs.com/package/helix-noise) library. It is at **numerical parity** with the JS
 reference: the `mulberry32` RNG stream is bit-identical across languages, and field values
 match to ~1e-12 (transcendental ULP differences only). A parity test suite reproduces the
 reference fixture (mode arrays, samples, relative helicity, bake sums, boundary samples,
 and the GLSL emitter).
+
+> 📖 **Rendered docs:** [rifmj.github.io/helix-noise/docs/python](https://rifmj.github.io/helix-noise/docs/python).
 
 ## Install
 

@@ -1,0 +1,642 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>helix-noise-gpu — nature pack (snow · rain · fireflies · aurora)</title>
+<style>
+  html,body{margin:0;background:#070a0e;color:#cdd6dd;font-family:system-ui,sans-serif}
+  .wrap{max-width:1040px;margin:0 auto;padding:22px 16px}
+  h1{font-size:19px;font-weight:600;margin:0 0 6px}
+  h1 code{color:#f4a13c}
+  p{color:#8a97a2;font-size:13.5px;line-height:1.6;margin:0 0 14px}
+  p b{color:#cdd6dd;font-weight:500}
+  code{font-family:ui-monospace,Menlo,monospace;color:#f4a13c;font-size:12.5px}
+  #stage{position:relative;width:100%;aspect-ratio:16/9;border:1px solid rgba(150,180,200,.15);
+    border-radius:10px;overflow:hidden;background:#070a0e;cursor:grab;touch-action:none}
+  #stage.drag{cursor:grabbing}
+  canvas{display:block;width:100%;height:100%}
+  .badge{position:absolute;top:10px;left:12px;font-family:ui-monospace,monospace;font-size:10.5px;
+    letter-spacing:.12em;text-transform:uppercase;color:#93a3b0;background:rgba(7,10,14,.55);
+    border:1px solid rgba(150,180,200,.14);border-radius:6px;padding:4px 8px;pointer-events:none}
+  .fps{position:absolute;top:10px;right:12px;font-family:ui-monospace,monospace;font-size:11px;color:#93a3b0;
+    background:rgba(7,10,14,.55);border:1px solid rgba(150,180,200,.14);border-radius:6px;padding:5px 9px;
+    text-align:right;line-height:1.5;pointer-events:none}
+  .fps b{font-weight:400;color:#2fd6bf}
+  .row{display:flex;flex-wrap:wrap;gap:14px;align-items:center;margin-top:12px;
+    font-family:ui-monospace,monospace;font-size:12px;color:#93a3b0}
+  .row label{display:flex;align-items:center;gap:8px}
+  input[type=range]{width:104px}
+  select{font-family:ui-monospace,monospace;font-size:12px;color:#cdd6dd;background:#0c1016;
+    border:1px solid rgba(150,180,200,.22);border-radius:7px;padding:5px 8px}
+  button{font-family:ui-monospace,monospace;font-size:11.5px;color:#cdd6dd;background:#0c1016;
+    border:1px solid rgba(150,180,200,.22);border-radius:7px;padding:6px 11px;cursor:pointer}
+  button:hover{border-color:#38d9d1}
+  button.on{border-color:#2fd6bf;color:#2fd6bf}
+  .note{margin-top:12px;font-size:12px;color:#5d6b77;font-family:ui-monospace,monospace}
+  .hideui .badge,.hideui .fps{display:none}
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "helix-noise": "../node_modules/helix-noise/dist/helix-noise.js",
+    "helix-noise-gpu": "../dist/index.js"
+  }
+}
+</script>
+</head>
+<body>
+<div class="wrap">
+  <h1>Nature pack — one field, four weathers</h1>
+  <p>The same emitted <code>field.glsl()</code> drives four scenes, switched live: <b>snow</b>
+    (flakes fluttering in the field's gusts), <b>rain</b> (wind-sheared streaks), <b>fireflies</b>
+    (slow wander on the field's streamlines, phase-hashed blinking) and an <b>aurora</b> (curtains
+    whose sway <i>is</i> the field, sampled along the arc). All advection and rendering on the GPU;
+    the only per-frame CPU work is a handful of uniforms. Drag to orbit, scroll to zoom.</p>
+  <div id="stage">
+    <canvas id="cv"></canvas>
+    <div class="badge" id="badge">helix-noise-gpu · nature pack · 0 cpu/frame</div>
+    <div class="fps" id="fps">—</div>
+  </div>
+  <div class="row" id="presets">
+    <button data-p="snow" class="on">❄ snow</button>
+    <button data-p="rain">🌧 rain</button>
+    <button data-p="fireflies">✨ fireflies</button>
+    <button data-p="aurora">🌌 aurora</button>
+  </div>
+  <div class="row">
+    <label>density <select id="density">
+      <option value="0.5">0.5×</option>
+      <option value="1" selected>1×</option>
+      <option value="2">2×</option>
+    </select></label>
+    <label>wind <input id="wind" type="range" min="-1.5" max="1.5" step="0.05" value="0.25"><span id="v-wind">0.25</span></label>
+    <button id="obst" title="glass dome — snow &amp; rain only">⬤ obstacle</button>
+    <button id="pause">⏸ pause</button>
+    <button id="ui">hide ui</button>
+  </div>
+  <div class="note" id="note">building shaders…</div>
+</div>
+
+<script type="module">
+import { create } from "helix-noise";
+import { perspective, lookAt, multiply, linkProgram, version } from "helix-noise-gpu";
+
+const $ = (id) => document.getElementById(id);
+const cv = $("cv"), stage = $("stage");
+const gl = cv.getContext("webgl2", { antialias: false, alpha: false });
+
+const health = { version, webgl2: !!gl, count: 0, fps: 0, frames: 0, glError: 0, error: null, preset: "snow" };
+window.__helix = health;
+
+if (!gl) {
+  $("note").textContent = "WebGL2 is not available in this browser.";
+  health.error = "no-webgl2";
+} else {
+
+// ------------------------------------------------------------------ field ---
+const field = create({ modes: 40, slope: 1.8, helicity: 0.4, coherence: 0.55, seed: 5, tileable: true, churn: 0.9 });
+const chunk = field.glsl({ name: "hx", curl: false, precision: 6 });
+
+const STRIDE = 8 * 4; // pos(3) vel(3) aux(2)
+
+// Modes: 0 snow · 1 rain · 2 fireflies · 3 aurora.
+const UPDATE_VS = `#version 300 es
+precision highp float;
+${chunk}
+layout(location = 0) in vec3 a_pos;
+layout(location = 1) in vec3 a_vel;
+layout(location = 2) in vec2 a_aux;
+out vec3 v_pos;
+out vec3 v_vel;
+out vec2 v_aux;
+uniform float uDt;
+uniform float uT;
+uniform float uWind;
+uniform float uObst;   // obstacle (dome) radius; 0 = off — snow & rain only
+uniform int uMode;
+
+const vec3 OBST_C = vec3(0.0, 2.2, 0.0);
+
+float hash11(float n) { return fract(sin(n) * 43758.5453123); }
+
+// Bottom wrap for falling particles. Re-randomize x,z on every wrap: a drop the
+// dome deflected must NOT respawn in its old column, or the dome's shadow wraps
+// around vertically and the sky splits into an empty core + a dense sheath.
+vec3 skyWrap(vec3 p, float id) {
+  if (p.y < 0.0) {
+    p.y += 8.0;
+    float h = hash11(id * 0.7211 + p.x * 1.93 + p.z * 3.71 + uT);
+    p.x = h * 8.0 - 4.0;
+    p.z = hash11(h * 289.17 + id) * 8.0 - 4.0;
+  }
+  p.x = mod(p.x + 4.0, 8.0) - 4.0;
+  p.z = mod(p.z + 4.0, 8.0) - 4.0;
+  return p;
+}
+
+// Invisible dome: inside a shell around the sphere, remove only the *inward*
+// normal component of the velocity, so particles slide around tangentially and
+// leave freely (snow settles and creeps off; rain streams around, leaving a
+// dry shadow underneath). Interior is clamped back to the surface.
+void obstacle(inout vec3 p, inout vec3 vel) {
+  vec3 rp = p - OBST_C;
+  float dist = length(rp);
+  vec3 n = rp / max(dist, 1e-4);
+  float d = dist - uObst;
+  if (d < 0.5) {
+    float w = 1.0 - clamp(d * 2.0, 0.0, 1.0);
+    vel -= n * (min(dot(n, vel), 0.0) * w);
+  }
+  if (dist < uObst) p = OBST_C + n * uObst;
+}
+
+void main() {
+  vec3 p = a_pos;
+  vec3 vel = a_vel;
+
+  // Sampling scale π/4 lines the field's 2π period up EXACTLY with the 8-unit wrap
+  // box (8·π/4 = 2π), so the wrap seam carries no velocity jump — without this a
+  // standing density sheet forms at the seam. Same reason the y-wrap is 8, not 6.
+  if (uMode == 0) {                    // ❄ snow — gentle fall + the field's gusts
+    vec3 gust = hx(p * 0.7853982, uT) * 0.5;
+    vel = vec3(uWind, -0.55, 0.0) + gust;
+    if (uObst > 0.0) obstacle(p, vel);
+    p += vel * uDt;
+    p = skyWrap(p, float(gl_VertexID));
+
+  } else if (uMode == 1) {             // 🌧 rain — fast fall, wind shear, faint field wobble
+    vec3 wobble = hx(p * 0.7853982, uT) * 0.25;
+    vel = vec3(uWind * 2.6, -7.5, 0.0) + wobble;
+    if (uObst > 0.0) obstacle(p, vel);
+    p += vel * uDt;
+    p = skyWrap(p, float(gl_VertexID));
+
+  } else if (uMode == 2) {             // ✨ fireflies — slow wander on the streamlines
+    // Per-firefly phase offset: each one rides its *own* copy of the field, so the
+    // swarm stays diffuse instead of collapsing onto one equilibrium streamline.
+    vec3 off = vec3(a_aux.x, a_aux.y, a_aux.x + a_aux.y) * 2.7;
+    vec3 wander = hx(p * 0.7 + off, uT * 0.5) * 0.4;
+    // Soft cage: no pull inside the meadow, gentle return only past its rim.
+    vec3 home = vec3(0.0, 1.1, 0.0);
+    float r = length(p - home);
+    vec3 back = (home - p) * (0.6 * smoothstep(2.4, 3.8, r));
+    back.y += (home.y - p.y) * 0.12;   // mild altitude preference
+    vel = wander + back + vec3(uWind * 0.1, 0.0, 0.0);
+    p += vel * uDt;
+    if (p.y < 0.05) p.y = 0.05;
+
+  } else {                             // 🌌 aurora — curtains; the sway IS the field
+    float cid = floor(a_aux.x * 3.0);                       // which of 3 curtains
+    float xw = p.x + uDt * (0.12 + 0.05 * cid);             // slow lateral drift
+    if (xw > 4.0) xw -= 8.0;
+    // Two harmonics of sway: a broad drift plus fine folds, both read off the field.
+    // x-frequencies are multiples of π/4 so the ±4 wrap jumps by whole field periods.
+    float sway = hx(vec3(xw * 0.7853982, cid * 2.3, 0.5), uT * 0.35).x;
+    float folds = hx(vec3(xw * 1.5707963, cid * 2.3 + 4.7, 1.6), uT * 0.5).y;
+    float targetZ = 0.8 * sin(xw * 0.7853982 + cid * 2.9) + sway * 1.9 + folds * 0.6 + (cid - 1.0) * 2.3;
+    vec3 target = vec3(xw, 2.05 + a_aux.y * 0.6, targetZ);
+    vel = (target - p) * 3.0;                               // spring onto the curtain
+    p += vel * uDt;
+  }
+
+  v_pos = p;
+  v_vel = vel;
+  v_aux = a_aux;
+  gl_Position = vec4(0.0);
+}`;
+const UPDATE_FS = `#version 300 es
+precision mediump float;
+void main() {}`;
+
+// -------------------------------------------------- render: points (0, 2) ---
+const POINTS_VS = `#version 300 es
+precision highp float;
+layout(location = 0) in vec3 a_pos;
+layout(location = 1) in vec3 a_vel;
+layout(location = 2) in vec2 a_aux;
+out vec3 f_col;
+out float f_alpha;
+uniform mat4 uViewProj;
+uniform vec3 uCenter;
+uniform float uT;
+uniform float uDpr;
+uniform float uObst;
+uniform int uMode;
+void main() {
+  vec4 clip = uViewProj * vec4(a_pos - uCenter, 1.0);
+  if (clip.w <= 0.02) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); gl_PointSize = 0.0; f_col = vec3(0.0); f_alpha = 0.0; return; }
+  gl_Position = clip;
+  if (uMode == 0) {                    // snow: cold white, size-hashed flakes
+    f_col = vec3(0.82, 0.9, 1.0);
+    f_alpha = 0.22 + 0.34 * a_aux.y;
+    // Soft dome: fade the box walls and ceiling away.
+    f_alpha *= (1.0 - smoothstep(2.6, 3.9, length(a_pos.xz))) * (1.0 - smoothstep(4.6, 5.8, a_pos.y));
+    // Flakes grazing the invisible dome glow: the shape emerges from the flow.
+    if (uObst > 0.0) {
+      float dd = abs(length(a_pos - vec3(0.0, 2.2, 0.0)) - uObst);
+      f_alpha *= 1.0 + 1.8 * (1.0 - smoothstep(0.0, 0.35, dd));
+    }
+    gl_PointSize = clamp((1.2 + 2.2 * a_aux.x) * uDpr * 7.0 / clip.w, 1.0, 7.0);
+  } else {                             // fireflies: sparse, phase- and rate-hashed blink
+    float blink = pow(max(sin(uT * (1.0 + 0.9 * a_aux.y) + a_aux.x * 6.2831853), 0.0), 16.0);
+    f_col = mix(vec3(0.08, 0.16, 0.04), vec3(1.0, 0.88, 0.32), blink);
+    f_alpha = 0.02 + 1.6 * blink;
+    gl_PointSize = clamp((1.6 + 4.5 * blink) * uDpr * 8.0 / clip.w, 1.2, 13.0);
+  }
+}`;
+const POINTS_FS = `#version 300 es
+precision mediump float;
+in vec3 f_col;
+in float f_alpha;
+out vec4 outColor;
+void main() {
+  vec2 d = gl_PointCoord * 2.0 - 1.0;
+  float r2 = dot(d, d);
+  if (r2 > 1.0) discard;
+  float fall = (1.0 - r2) * (1.0 - r2);
+  outColor = vec4(f_col * (f_alpha * fall), 1.0);
+}`;
+
+// --------------------------------------------------- render: lines (1, 3) ---
+const LINES_VS = `#version 300 es
+precision highp float;
+layout(location = 0) in float a_t;
+layout(location = 1) in vec3 i_pos;
+layout(location = 2) in vec3 i_vel;
+layout(location = 3) in vec2 i_aux;
+out vec3 f_col;
+out float f_alpha;
+uniform mat4 uViewProj;
+uniform vec3 uCenter;
+uniform float uTrail;
+uniform float uObst;
+uniform int uMode;
+void main() {
+  vec3 p;
+  if (uMode == 1) {                    // rain: streak back along the velocity
+    p = i_pos - i_vel * (uTrail * a_t);
+    f_col = vec3(0.45, 0.56, 0.72);
+    f_alpha = (1.0 - a_t) * 0.16;
+    f_alpha *= 1.0 - smoothstep(2.6, 3.9, length(i_pos.xz));   // fade the box walls away
+    // Drops sheeting over the invisible dome light up its surface.
+    if (uObst > 0.0) {
+      float dd = abs(length(i_pos - vec3(0.0, 2.2, 0.0)) - uObst);
+      f_alpha *= 1.0 + 3.0 * (1.0 - smoothstep(0.0, 0.3, dd));
+    }
+  } else {                             // aurora: a vertical ray, bright at the base
+    float len = 1.7 + i_aux.y * 1.8;
+    p = i_pos + vec3(0.0, len * a_t, 0.0);
+    f_col = mix(vec3(0.12, 1.0, 0.42), vec3(0.5, 0.18, 0.95), smoothstep(0.12, 0.95, a_t));
+    f_alpha = (1.0 - a_t) * (0.25 + 0.75 * smoothstep(0.0, 0.06, a_t));
+    f_alpha *= 1.0 - smoothstep(3.2, 4.0, abs(i_pos.x));       // soft curtain ends
+  }
+  vec4 clip = uViewProj * vec4(p - uCenter, 1.0);
+  if (clip.w <= 0.02) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); f_col = vec3(0.0); f_alpha = 0.0; return; }
+  gl_Position = clip;
+}`;
+const LINES_FS = `#version 300 es
+precision mediump float;
+in vec3 f_col;
+in float f_alpha;
+out vec4 outColor;
+uniform float uAlpha;
+void main() {
+  outColor = vec4(f_col * (f_alpha * uAlpha), 1.0);
+}`;
+
+// ------------------------------------------------- render: the dome itself ---
+// A solid glassy dome, drawn opaque with depth *before* the particles, so
+// precipitation behind it is properly occluded. Cool fresnel rim + a faint
+// "moon" specular keep it readable on both the snow and the rain background.
+const SPHERE_VS = `#version 300 es
+precision highp float;
+layout(location = 0) in vec3 a_pos;      // unit sphere; normal == position
+out vec3 f_n;
+out vec3 f_wp;
+uniform mat4 uViewProj;
+uniform vec3 uC;
+uniform float uR;
+void main() {
+  vec3 wp = uC + a_pos * uR;
+  f_n = a_pos;
+  f_wp = wp;
+  gl_Position = uViewProj * vec4(wp, 1.0);
+}`;
+const SPHERE_FS = `#version 300 es
+precision mediump float;
+in vec3 f_n;
+in vec3 f_wp;
+out vec4 outColor;
+uniform vec3 uEye;
+void main() {
+  vec3 n = normalize(f_n);
+  vec3 v = normalize(uEye - f_wp);
+  vec3 l = normalize(vec3(-0.35, 0.8, 0.45));                  // fixed "moon"
+  float top = 0.5 + 0.5 * n.y;
+  float fres = pow(1.0 - max(dot(n, v), 0.0), 2.5);
+  float spec = pow(max(dot(reflect(-l, n), v), 0.0), 28.0);
+  vec3 col = vec3(0.075, 0.10, 0.145) * (0.35 + 0.65 * top)    // dark slate body
+           + vec3(0.35, 0.45, 0.60) * fres * 0.85              // cool rim
+           + vec3(0.7, 0.8, 0.95) * spec * 0.18;               // moon glint
+  outColor = vec4(col, 1.0);
+}`;
+
+const updateProg = linkProgram(gl, UPDATE_VS, UPDATE_FS, ["v_pos", "v_vel", "v_aux"]);
+const pointsProg = linkProgram(gl, POINTS_VS, POINTS_FS);
+const linesProg = linkProgram(gl, LINES_VS, LINES_FS);
+const sphereProg = linkProgram(gl, SPHERE_VS, SPHERE_FS);
+const loc = (p, n) => gl.getUniformLocation(p, n);
+const U = { dt: loc(updateProg, "uDt"), t: loc(updateProg, "uT"), wind: loc(updateProg, "uWind"), obst: loc(updateProg, "uObst"), mode: loc(updateProg, "uMode") };
+const P = { vp: loc(pointsProg, "uViewProj"), center: loc(pointsProg, "uCenter"), t: loc(pointsProg, "uT"), dpr: loc(pointsProg, "uDpr"), obst: loc(pointsProg, "uObst"), mode: loc(pointsProg, "uMode") };
+const L = { vp: loc(linesProg, "uViewProj"), center: loc(linesProg, "uCenter"), trail: loc(linesProg, "uTrail"), alpha: loc(linesProg, "uAlpha"), obst: loc(linesProg, "uObst"), mode: loc(linesProg, "uMode") };
+const S = { vp: loc(sphereProg, "uViewProj"), c: loc(sphereProg, "uC"), r: loc(sphereProg, "uR"), eye: loc(sphereProg, "uEye") };
+
+// Unit UV sphere for the dome (normal == position).
+const sphGeom = (() => {
+  const LAT = 28, LON = 40;
+  const pos = [], idx = [];
+  for (let i = 0; i <= LAT; i++) {
+    const th = (i / LAT) * Math.PI, st = Math.sin(th), ct = Math.cos(th);
+    for (let j = 0; j <= LON; j++) {
+      const ph = (j / LON) * 2 * Math.PI;
+      pos.push(st * Math.cos(ph), ct, st * Math.sin(ph));
+    }
+  }
+  for (let i = 0; i < LAT; i++) for (let j = 0; j < LON; j++) {
+    const a = i * (LON + 1) + j, b = a + LON + 1;
+    idx.push(a, b, a + 1, b, b + 1, a + 1);
+  }
+  const vbo = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(pos), gl.STATIC_DRAW);
+  const ibo = gl.createBuffer();
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo);
+  gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(idx), gl.STATIC_DRAW);
+  const vao = gl.createVertexArray();
+  gl.bindVertexArray(vao);
+  gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+  gl.enableVertexAttribArray(0);
+  gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 12, 0);
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo);
+  gl.bindVertexArray(null);
+  gl.bindBuffer(gl.ARRAY_BUFFER, null);
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null);
+  return { vao, n: idx.length };
+})();
+
+const segBuf = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, segBuf);
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 1]), gl.STATIC_DRAW);
+gl.bindBuffer(gl.ARRAY_BUFFER, null);
+
+// ---------------------------------------------------------------- presets ---
+const PRESETS = {
+  snow:      { mode: 0, count: 50_000,  draw: "points", bg: [0.043, 0.06, 0.094],  trail: 0,     alpha: 1,
+               cam: { az: 0.5, el: 0.06, dist: 8.5, rate: 0.04, lookY: 2.4 } },
+  rain:      { mode: 1, count: 90_000,  draw: "lines",  bg: [0.03, 0.038, 0.05],   trail: 0.028, alpha: 0.8,
+               cam: { az: 0.5, el: 0.03, dist: 8.0, rate: 0.015, lookY: 2.4 } },
+  fireflies: { mode: 2, count: 4_000,   draw: "points", bg: [0.012, 0.02, 0.016],  trail: 0,     alpha: 1,
+               cam: { az: 0.4, el: 0.10, dist: 7.0, rate: 0.05, lookY: 1.1 } },
+  aurora:    { mode: 3, count: 90_000,  draw: "lines",  bg: [0.008, 0.012, 0.028], trail: 0,     alpha: 0.028,
+               cam: { az: -1.5708, el: 0.10, dist: 10.5, rate: 0.008, lookY: 3.0 } },
+};
+let preset = PRESETS.snow, presetName = "snow";
+const params = { density: 1, wind: 0.25, obst: false };
+let bufs = null, count = 0;
+
+function mulberry32(a) {
+  return () => {
+    a |= 0; a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function initData(n, mode) {
+  const rnd = mulberry32(42 + mode);
+  const data = new Float32Array(n * 8);
+  for (let i = 0; i < n; i++) {
+    let x, y, z;
+    if (mode === 2) {          // fireflies: over the meadow
+      const ang = rnd() * Math.PI * 2, rad = 3.2 * Math.sqrt(rnd());
+      x = Math.cos(ang) * rad; y = 0.1 + rnd() * 2.0; z = Math.sin(ang) * rad;
+    } else if (mode === 3) {   // aurora: spread along x, springs pull onto the curtains
+      x = rnd() * 8 - 4; y = 2.05 + rnd() * 0.6; z = rnd() * 2 - 1;
+    } else {                   // snow / rain: fill the box (y wraps at 8 — see update shader)
+      x = rnd() * 8 - 4; y = rnd() * 8; z = rnd() * 8 - 4;
+    }
+    data[i * 8] = x; data[i * 8 + 1] = y; data[i * 8 + 2] = z;
+    data[i * 8 + 6] = rnd();   // aux.x
+    data[i * 8 + 7] = rnd();   // aux.y
+  }
+  return data;
+}
+
+function makeUpdateVao(buf) {
+  const vao = gl.createVertexArray();
+  gl.bindVertexArray(vao);
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, STRIDE, 0);
+  gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 3, gl.FLOAT, false, STRIDE, 12);
+  gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 2, gl.FLOAT, false, STRIDE, 24);
+  gl.bindVertexArray(null);
+  gl.bindBuffer(gl.ARRAY_BUFFER, null);
+  return vao;
+}
+function makeLinesVao(buf) {
+  const vao = gl.createVertexArray();
+  gl.bindVertexArray(vao);
+  gl.bindBuffer(gl.ARRAY_BUFFER, segBuf);
+  gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 1, gl.FLOAT, false, 4, 0);
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 3, gl.FLOAT, false, STRIDE, 0);  gl.vertexAttribDivisor(1, 1);
+  gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 3, gl.FLOAT, false, STRIDE, 12); gl.vertexAttribDivisor(2, 1);
+  gl.enableVertexAttribArray(3); gl.vertexAttribPointer(3, 2, gl.FLOAT, false, STRIDE, 24); gl.vertexAttribDivisor(3, 1);
+  gl.bindVertexArray(null);
+  gl.bindBuffer(gl.ARRAY_BUFFER, null);
+  return vao;
+}
+
+function disposeBufs() {
+  if (!bufs) return;
+  gl.deleteBuffer(bufs.a); gl.deleteBuffer(bufs.b);
+  gl.deleteVertexArray(bufs.updVaoA); gl.deleteVertexArray(bufs.updVaoB);
+  gl.deleteVertexArray(bufs.linVaoA); gl.deleteVertexArray(bufs.linVaoB);
+}
+
+let simT = 0;
+const cam = { az: 0, el: 0, dist: 8, lookY: 2 };
+const obstR = () => (params.obst && preset.mode <= 1 ? 1.8 : 0.0);
+
+function applyPreset(name) {
+  presetName = name;
+  preset = PRESETS[name];
+  health.preset = name;
+  count = Math.round(preset.count * params.density);
+  disposeBufs();
+  const data = initData(count, preset.mode);
+  const mk = () => {
+    const b = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, b);
+    gl.bufferData(gl.ARRAY_BUFFER, data, gl.DYNAMIC_COPY);
+    gl.bindBuffer(gl.ARRAY_BUFFER, null);
+    return b;
+  };
+  const a = mk(), b = mk();
+  bufs = { a, b, updVaoA: makeUpdateVao(a), updVaoB: makeUpdateVao(b), linVaoA: makeLinesVao(a), linVaoB: makeLinesVao(b), cur: 0 };
+  cam.az = preset.cam.az; cam.el = preset.cam.el; cam.dist = preset.cam.dist; cam.lookY = preset.cam.lookY;
+  health.count = count;
+  for (let i = 0; i < 120; i++) step(1 / 60);
+  $("note").textContent =
+    `helix-noise-gpu v${version} · ${name} · ${(count / 1e3).toFixed(0)} k particles · one shared field (seed 5, churn 0.9)`;
+  for (const btn of document.querySelectorAll("#presets button"))
+    btn.classList.toggle("on", btn.dataset.p === name);
+}
+
+function step(dt) {
+  simT += dt;
+  const srcVao = bufs.cur === 0 ? bufs.updVaoA : bufs.updVaoB;
+  const dstBuf = bufs.cur === 0 ? bufs.b : bufs.a;
+  gl.useProgram(updateProg);
+  gl.uniform1f(U.dt, dt);
+  gl.uniform1f(U.t, simT);
+  gl.uniform1f(U.wind, params.wind);
+  gl.uniform1f(U.obst, obstR());
+  gl.uniform1i(U.mode, preset.mode);
+  gl.enable(gl.RASTERIZER_DISCARD);
+  gl.bindVertexArray(srcVao);
+  gl.bindBufferBase(gl.TRANSFORM_FEEDBACK_BUFFER, 0, dstBuf);
+  gl.beginTransformFeedback(gl.POINTS);
+  gl.drawArrays(gl.POINTS, 0, count);
+  gl.endTransformFeedback();
+  gl.bindBufferBase(gl.TRANSFORM_FEEDBACK_BUFFER, 0, null);
+  gl.bindVertexArray(null);
+  gl.disable(gl.RASTERIZER_DISCARD);
+  bufs.cur = bufs.cur === 0 ? 1 : 0;
+}
+
+// ----------------------------------------------------------------- camera ---
+let dragging = false, px = 0, py = 0;
+stage.addEventListener("pointerdown", (e) => { dragging = true; px = e.clientX; py = e.clientY; stage.classList.add("drag"); stage.setPointerCapture(e.pointerId); });
+stage.addEventListener("pointermove", (e) => {
+  if (!dragging) return;
+  cam.az += (e.clientX - px) * 0.005;
+  cam.el = Math.min(1.3, Math.max(-0.3, cam.el + (e.clientY - py) * 0.005));
+  px = e.clientX; py = e.clientY;
+});
+stage.addEventListener("pointerup", () => { dragging = false; stage.classList.remove("drag"); });
+stage.addEventListener("wheel", (e) => { e.preventDefault(); cam.dist = Math.min(20, Math.max(3, cam.dist * (1 + e.deltaY * 0.001))); }, { passive: false });
+
+function viewProj() {
+  const ex = Math.cos(cam.az) * Math.cos(cam.el) * cam.dist;
+  const ey = cam.lookY + Math.sin(cam.el) * cam.dist;
+  const ez = Math.sin(cam.az) * Math.cos(cam.el) * cam.dist;
+  const proj = perspective((48 * Math.PI) / 180, cv.width / Math.max(1, cv.height), 0.1, 100);
+  const view = lookAt([ex, ey, ez], [0, cam.lookY, 0]);
+  return { vp: multiply(proj, view), eye: [ex, ey, ez] };
+}
+
+// ------------------------------------------------------------------- loop ---
+function resize() {
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  cv.width = Math.max(1, Math.round(cv.clientWidth * dpr));
+  cv.height = Math.max(1, Math.round(cv.clientHeight * dpr));
+}
+resize();
+window.addEventListener("resize", resize);
+
+applyPreset("snow");
+
+let running = true, last = 0, ema = 0;
+function frame(now) {
+  requestAnimationFrame(frame);
+  if (!running) { last = now; return; }
+  const dt = Math.min(1 / 30, last ? (now - last) * 0.001 : 1 / 60);
+  last = now;
+  cam.az += dt * preset.cam.rate;
+  step(dt);
+
+  const bg = preset.bg;
+  gl.viewport(0, 0, cv.width, cv.height);
+  gl.clearColor(bg[0], bg[1], bg[2], 1);
+  gl.depthMask(true);
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+  const { vp, eye } = viewProj();
+
+  // The dome: opaque, depth-writing, drawn first so precipitation behind it
+  // is occluded. Particles then depth-test against it without writing depth.
+  const r = obstR();
+  if (r > 0) {
+    gl.disable(gl.BLEND);
+    gl.enable(gl.DEPTH_TEST);
+    gl.useProgram(sphereProg);
+    gl.uniformMatrix4fv(S.vp, false, vp);
+    gl.uniform3f(S.c, 0, 2.2, 0);
+    gl.uniform1f(S.r, r);
+    gl.uniform3f(S.eye, eye[0], eye[1], eye[2]);
+    gl.bindVertexArray(sphGeom.vao);
+    gl.drawElements(gl.TRIANGLES, sphGeom.n, gl.UNSIGNED_SHORT, 0);
+    gl.bindVertexArray(null);
+  }
+
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.ONE, gl.ONE);
+  gl.enable(gl.DEPTH_TEST);
+  gl.depthMask(false);
+  if (preset.draw === "points") {
+    gl.useProgram(pointsProg);
+    gl.uniformMatrix4fv(P.vp, false, vp);
+    gl.uniform3f(P.center, 0, 0, 0);
+    gl.uniform1f(P.t, simT);
+    gl.uniform1f(P.dpr, Math.min(2, window.devicePixelRatio || 1));
+    gl.uniform1f(P.obst, obstR());
+    gl.uniform1i(P.mode, preset.mode);
+    gl.bindVertexArray(bufs.cur === 0 ? bufs.updVaoA : bufs.updVaoB);
+    gl.drawArrays(gl.POINTS, 0, count);
+  } else {
+    gl.useProgram(linesProg);
+    gl.uniformMatrix4fv(L.vp, false, vp);
+    gl.uniform3f(L.center, 0, 0, 0);
+    gl.uniform1f(L.trail, preset.trail);
+    gl.uniform1f(L.alpha, preset.alpha * Math.min(1.5, Math.max(0.4, preset.count / Math.max(1, count))));
+    gl.uniform1f(L.obst, obstR());
+    gl.uniform1i(L.mode, preset.mode);
+    gl.bindVertexArray(bufs.cur === 0 ? bufs.linVaoA : bufs.linVaoB);
+    gl.drawArraysInstanced(gl.LINES, 0, 2, count);
+  }
+  gl.bindVertexArray(null);
+
+  ema = ema ? ema * 0.95 + dt * 0.05 : dt;
+  health.fps = 1 / ema;
+  health.frames++;
+  if (health.frames % 30 === 0) {
+    $("fps").innerHTML = `<b>${(1 / ema).toFixed(0)}</b> fps<br>${presetName} · ${(count / 1e3).toFixed(0)} k`;
+    const err = gl.getError();
+    if (err) { health.glError = err; console.error("GL error", err); }
+  }
+}
+requestAnimationFrame(frame);
+
+// --------------------------------------------------------------- controls ---
+$("presets").addEventListener("click", (e) => {
+  const p = e.target.closest("button")?.dataset.p;
+  if (p) applyPreset(p);
+});
+$("density").addEventListener("change", (e) => { params.density = +e.target.value; applyPreset(presetName); });
+$("wind").addEventListener("input", (e) => { params.wind = +e.target.value; $("v-wind").textContent = params.wind.toFixed(2); });
+$("obst").addEventListener("click", () => {
+  params.obst = !params.obst;
+  $("obst").classList.toggle("on", params.obst);
+});
+$("pause").addEventListener("click", () => { running = !running; $("pause").textContent = running ? "⏸ pause" : "▶ play"; });
+$("ui").addEventListener("click", () => {
+  const hidden = stage.classList.toggle("hideui");
+  $("ui").textContent = hidden ? "show ui" : "hide ui";
+});
+}
+</script>
+</body>
+</html>

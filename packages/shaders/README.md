@@ -15,10 +15,12 @@ generator computes the mode arrays on the CPU once and emits them as a
 `const` block plus a hand-written function body. Regenerating with different
 options re-tunes the field.
 
-> This is a **port of the JavaScript [`helix-noise`](../helix-noise) library**,
+> This is a **port of the JavaScript [`helix-noise`](https://www.npmjs.com/package/helix-noise) library**,
 > reproducing its shader-emitter output with numerical parity (the GLSL target
 > is byte-for-byte identical to the JS `field.glsl()` output up to the trailing
 > newline; every target is validated against a shared parity fixture).
+
+> 📖 **Rendered docs:** [rifmj.github.io/helix-noise/docs/shaders](https://rifmj.github.io/helix-noise/docs/shaders).
 
 ## Install
 

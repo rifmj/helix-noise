@@ -265,8 +265,9 @@ selfTest();     // → { transversality, fdDivergenceRms, rhoVsP }
 
 - **`version`** — the library version string.
 - **`selfTest()`** — runs the built-in validation and returns a [`SelfTestReport`](#selftestreport):
-  `transversality` and `fdDivergenceRms` should both be tiny (≈ `1e-12` or smaller). Useful as a
-  smoke test in CI.
+  `transversality` is analytic and machine-zero (≈ `1e-16`); `fdDivergenceRms` is a finite-difference
+  residual — a small O(h²) truncation of the exactly divergence-free field (order `1e-6`, **not**
+  machine-zero). Both staying small is a good CI smoke test.
 
 You can also import the classes directly (`HelixField`, `HelixAtoms`) if you prefer `new` over the
 factory functions — they're equivalent.
@@ -322,5 +323,6 @@ Options for `createAtoms()` — see the [atom field](#createatomsoptions--the-at
 
 ### `SelfTestReport`
 `{ transversality: number; fdDivergenceRms: number; rhoVsP: Record<string, number> }` — the result
-of `selfTest()`. The first two should be near zero; `rhoVsP` maps a helicity value to the measured
-handedness.
+of `selfTest()`. `transversality` is machine-zero (≈ `1e-16`, exact by construction); `fdDivergenceRms`
+is a small O(h²) finite-difference residual (order `1e-6`), not machine-zero; `rhoVsP` maps a helicity
+value to the measured handedness.

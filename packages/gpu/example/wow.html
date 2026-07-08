@@ -1,0 +1,652 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>helix-noise-gpu — the wow loop (streaklets · growing void · helicity flip)</title>
+<style>
+  html,body{margin:0;background:#05070a;color:#cdd6dd;font-family:system-ui,sans-serif}
+  .wrap{max-width:1040px;margin:0 auto;padding:22px 16px}
+  h1{font-size:19px;font-weight:600;margin:0 0 6px}
+  h1 code{color:#f4a13c}
+  p{color:#8a97a2;font-size:13.5px;line-height:1.6;margin:0 0 14px}
+  p b{color:#cdd6dd;font-weight:500}
+  code{font-family:ui-monospace,Menlo,monospace;color:#f4a13c;font-size:12.5px}
+  #stage{position:relative;width:100%;aspect-ratio:16/9;border:1px solid rgba(150,180,200,.15);
+    border-radius:10px;overflow:hidden;background:#05070a;cursor:grab;touch-action:none}
+  #stage.drag{cursor:grabbing}
+  canvas{display:block;width:100%;height:100%}
+  .badge{position:absolute;top:10px;left:12px;font-family:ui-monospace,monospace;font-size:10.5px;
+    letter-spacing:.12em;text-transform:uppercase;color:#93a3b0;background:rgba(5,7,10,.55);
+    border:1px solid rgba(150,180,200,.14);border-radius:6px;padding:4px 8px;pointer-events:none}
+  .fps{position:absolute;top:10px;right:12px;font-family:ui-monospace,monospace;font-size:11px;color:#93a3b0;
+    background:rgba(5,7,10,.55);border:1px solid rgba(150,180,200,.14);border-radius:6px;padding:5px 9px;
+    text-align:right;line-height:1.5;pointer-events:none}
+  .fps b{font-weight:400;color:#2fd6bf}
+  .phase{position:absolute;bottom:10px;left:12px;font-family:ui-monospace,monospace;font-size:10.5px;
+    color:#93a3b0;background:rgba(5,7,10,.55);border:1px solid rgba(150,180,200,.14);
+    border-radius:6px;padding:4px 8px;pointer-events:none}
+  .phase b{font-weight:400;color:#f4a13c}
+  #loopbar{position:absolute;bottom:0;left:0;height:2px;background:#2fd6bf;width:0%;pointer-events:none}
+  .row{display:flex;flex-wrap:wrap;gap:14px;align-items:center;margin-top:12px;
+    font-family:ui-monospace,monospace;font-size:12px;color:#93a3b0}
+  .row label{display:flex;align-items:center;gap:8px}
+  input[type=range]{width:104px}
+  select{font-family:ui-monospace,monospace;font-size:12px;color:#cdd6dd;background:#0c1016;
+    border:1px solid rgba(150,180,200,.22);border-radius:7px;padding:5px 8px}
+  button{font-family:ui-monospace,monospace;font-size:11.5px;color:#cdd6dd;background:#0c1016;
+    border:1px solid rgba(150,180,200,.22);border-radius:7px;padding:6px 11px;cursor:pointer}
+  button:hover{border-color:#38d9d1}
+  .note{margin-top:12px;font-size:12px;color:#5d6b77;font-family:ui-monospace,monospace}
+  .hideui .badge,.hideui .fps,.hideui .phase,.hideui #loopbar{display:none}
+</style>
+<!-- No bundler: map the bare specifiers to the built ESM (core from node_modules, this package from dist). -->
+<script type="importmap">
+{
+  "imports": {
+    "helix-noise": "../node_modules/helix-noise/dist/helix-noise.js",
+    "helix-noise-gpu": "../dist/index.js"
+  }
+}
+</script>
+</head>
+<body>
+<div class="wrap">
+  <h1>The wow loop — streaklets · a bubble grows in the stream · the handedness flips</h1>
+  <p>One seamless <b>12-second loop</b>, three beats: particles rendered as <b>velocity streaklets</b>
+    (line segments along the local flow, not dots); a <b>glassy bubble grows</b> mid-stream and the
+    flow parts around it — a fresnel rim over an <i>exactly divergence-free</i> boundary built from the
+    emitted vector potential (<code>u = ramp·u + ramp′·n×A</code>, radius is just a uniform); then the field's
+    <b>helicity morphs −0.9 → +0.9</b> by mixing two emitted fields in-shader (a mix of
+    divergence-free fields is divergence-free), so the whole stream reverses its swirl —
+    <span style="color:#f4a13c">amber left-handed</span> ↔
+    <span style="color:#2fd6bf">teal right-handed</span>. Camera makes one full orbit per loop, so the
+    loop closes. Drag to orbit, scroll to zoom.</p>
+  <div id="stage">
+    <canvas id="cv"></canvas>
+    <div class="badge" id="badge">helix-noise-gpu · streaklets · div-free boundary · 0 cpu/frame</div>
+    <div class="fps" id="fps">—</div>
+    <div class="phase" id="phase">—</div>
+    <div id="loopbar"></div>
+  </div>
+  <div class="row">
+    <label>particles <select id="count">
+      <option value="30000">30 k</option>
+      <option value="60000" selected>60 k</option>
+      <option value="150000">150 k</option>
+      <option value="300000">300 k</option>
+    </select></label>
+    <label>trail <input id="trail" type="range" min="0.1" max="1.5" step="0.05" value="0.9"><span id="v-trail">0.90</span></label>
+    <label>speed <input id="speed" type="range" min="0.1" max="1.2" step="0.05" value="0.35"><span id="v-speed">0.35</span></label>
+    <button id="rec">⏺ record loop</button>
+    <button id="pause">⏸ pause</button>
+    <button id="reseed">↻ reseed</button>
+    <button id="ui">hide ui</button>
+  </div>
+  <div class="note" id="note">building shaders…</div>
+  <div class="note">⏺ record loop waits for the seam, captures exactly one 12 s loop off the canvas
+    (UI overlays are DOM, never captured) and downloads a .webm — then
+    <code>ffmpeg -i loop.webm … out.gif</code> or ship the webm/mp4 directly.</div>
+</div>
+
+<script type="module">
+import { create } from "helix-noise";
+import {
+  perspective, lookAt, multiply, linkProgram, calibrateSpeed, glslFloat, TAU, version,
+} from "helix-noise-gpu";
+
+const $ = (id) => document.getElementById(id);
+const cv = $("cv"), stage = $("stage");
+const gl = cv.getContext("webgl2", { antialias: false, alpha: false });
+
+// Health state for automated checks (and the curious console).
+const health = { version, webgl2: !!gl, count: 0, fps: 0, frames: 0, glError: 0, error: null, loop: 0 };
+window.__helix = health;
+
+if (!gl) {
+  $("note").textContent = "WebGL2 is not available in this browser.";
+  health.error = "no-webgl2";
+} else {
+
+// ---------------------------------------------------------------- fields ---
+// Two fields, identical everything except handedness. Mixing them in-shader is
+// still divergence-free (the constraint is linear), so uMix morphs the swirl live.
+const SEED = 9;
+// Steeper slope concentrates energy at large scales: a few big, elegant swirls
+// instead of small-grain "fur".
+const baseOpts = { modes: 36, slope: 2.0, coherence: 0.65, seed: SEED, tileable: true, churn: 0 };
+const fieldA = create({ ...baseOpts, helicity: -0.9 });
+const fieldB = create({ ...baseOpts, helicity: +0.9 });
+// potential:true additionally emits hx?Pot with curl(Pot) == field exactly — the
+// ingredient for an exactly divergence-free, *animatable* obstacle boundary.
+const chunkA = fieldA.glsl({ name: "hxA", curl: true, potential: true, precision: 6 });
+const chunkB = fieldB.glsl({ name: "hxB", curl: true, potential: true, precision: 6 });
+
+const BOX = TAU;
+const CENTER = BOX / 2;                       // sphere centre = box centre
+const SHELL = 0.9;                            // boundary shell thickness
+const pcts = calibrateSpeed(fieldA, BOX, 1200); // [p62, p97, p99.5] glow thresholds
+
+// ------------------------------------------------------------- update TF ---
+// Stride: pos(3) + vel(3) + aux(2: eased helicity hue, raw field speed) = 8 floats.
+const STRIDE = 8 * 4;
+const UPDATE_VS = `#version 300 es
+precision highp float;
+${chunkA}
+${chunkB}
+layout(location = 0) in vec3 a_pos;
+layout(location = 1) in vec3 a_vel;
+layout(location = 2) in vec2 a_aux;
+out vec3 v_pos;
+out vec3 v_vel;
+out vec2 v_aux;
+uniform float uDt;
+uniform float uSpeed;
+uniform float uMix;    // 0 = field A (left-handed), 1 = field B (right-handed)
+uniform float uR;      // obstacle radius (0 = off)
+void main() {
+  vec3 p = a_pos;
+  vec3 u = mix(hxA(p), hxB(p), uMix);
+  vec3 w = mix(hxACurl(p), hxBCurl(p), uMix);
+  float rawSp = length(u);
+  float h = dot(u, w) / (rawSp * length(w) + 1e-6);   // local relative helicity ∈ [-1,1]
+
+  if (uR > 0.001) {
+    vec3 rp = p - vec3(${glslFloat(CENTER)});
+    float dist = length(rp);
+    vec3 n = rp / max(dist, 1e-5);
+    float d = dist - uR;                               // signed distance to the sphere
+    if (d < ${glslFloat(SHELL)}) {
+      // Exactly divergence-free boundary: u_b = curl(ramp(d)·A) = ramp·u + ramp'·(n × A).
+      float x = clamp(d / ${glslFloat(SHELL)}, 0.0, 1.0);
+      float ramp = x * x * (3.0 - 2.0 * x);
+      float dramp = (d > 0.0) ? 6.0 * x * (1.0 - x) / ${glslFloat(SHELL)} : 0.0;
+      vec3 A = mix(hxAPot(p), hxBPot(p), uMix);
+      u = ramp * u + dramp * cross(n, A);
+      // Interior is a dead zone (ramp = 0): expel stragglers so the void empties.
+      if (d < 0.0) u += n * (0.6 * -d + 0.3);
+    }
+  }
+
+  vec3 vel = u * uSpeed;                               // actual motion, streaklet direction
+  p += vel * uDt;                                      // one explicit Euler step
+  v_pos = mod(p, ${glslFloat(BOX)});
+  v_vel = vel;
+  v_aux = vec2(mix(a_aux.x, h, 0.08), rawSp);          // ease the hue, carry raw speed
+  gl_Position = vec4(0.0);
+}`;
+const UPDATE_FS = `#version 300 es
+precision mediump float;
+void main() {}`;
+
+// ------------------------------------------------------------ render pass ---
+// Instanced streaklets: base geometry is one segment (a_t = 0 head, 1 tail),
+// per-instance state comes straight from the sim buffer. The tail is derived
+// from the *velocity* (tail = pos − vel·trail), not a stored old position, so
+// box-wrap can never draw a spurious screen-crossing line.
+const RENDER_VS = `#version 300 es
+precision highp float;
+${chunkA}
+${chunkB}
+layout(location = 0) in float a_t;
+layout(location = 1) in vec3 i_pos;
+layout(location = 2) in vec3 i_vel;
+layout(location = 3) in vec2 i_aux;
+out float f_t;
+out vec2 f_aux;
+out float f_depth;
+out float f_env;
+uniform mat4 uViewProj;
+uniform vec3 uCenter;
+uniform float uTrail;
+uniform float uMix;
+uniform float uSpeed;
+void main() {
+  // Curved streaklet: sample the field again at the trail's midpoint and blend
+  // the backtrack direction from head-velocity to midpoint-velocity along the
+  // strip — the tail bends with the streamline instead of poking straight out.
+  vec3 vm = mix(hxA(i_pos - i_vel * (uTrail * 0.5)), hxB(i_pos - i_vel * (uTrail * 0.5)), uMix) * uSpeed;
+  vec3 p = i_pos - mix(i_vel, vm, min(1.0, a_t * 1.4)) * (uTrail * a_t);
+  vec3 q = p - uCenter;
+  vec4 clip = uViewProj * vec4(q, 1.0);
+  if (clip.w <= 0.02) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); f_t = 1.0; f_aux = vec2(0.0); f_depth = 1.0; f_env = 0.0; return; }
+  gl_Position = clip;
+  f_t = a_t;
+  f_aux = i_aux;
+  f_depth = clip.w;
+  // Spherical envelope: fade the box's corners away so the cloud reads as an
+  // organic swirl, not a cube. (The wrap keeps density uniform underneath.)
+  f_env = 1.0 - smoothstep(${glslFloat(CENTER * 0.74)}, ${glslFloat(CENTER * 1.04)}, length(q));
+}`;
+const RENDER_FS = `#version 300 es
+precision mediump float;
+in float f_t;
+in vec2 f_aux;
+in float f_depth;
+in float f_env;
+out vec4 outColor;
+uniform float uAlpha;
+uniform vec3 uSpeedP;       // measured speed percentiles: p62, p97, p99.5
+const vec3 AMBER = vec3(0.957, 0.631, 0.235);
+const vec3 TEAL  = vec3(0.184, 0.839, 0.749);
+void main() {
+  float t = clamp(f_aux.x * 0.8 + 0.5, 0.0, 1.0);
+  vec3 c = mix(AMBER, TEAL, t);
+  c += vec3(0.85, 0.88, 0.9) * smoothstep(uSpeedP.y, uSpeedP.z, f_aux.y) * 0.35; // hot cores whiten
+  // Hard speed gate: slow regions go nearly black, only the coherent fast
+  // ribbons glow — structure through visibility (density is uniform by design).
+  float bright = 0.10 + 1.7 * smoothstep(uSpeedP.x, uSpeedP.y, f_aux.y);
+  float taper = (1.0 - f_t) * (1.0 - f_t);                                       // head bright, tail fades
+  float fade = clamp(6.0 / f_depth, 0.5, 1.5);
+  outColor = vec4(c * uAlpha * bright * taper * fade * f_env, 1.0);
+}`;
+
+// The obstacle itself, made visible: a glassy fresnel bubble (bright at the
+// silhouette, transparent face-on) that scales with the animated radius.
+const BUBBLE_VS = `#version 300 es
+precision highp float;
+layout(location = 0) in vec3 a_pos;      // unit sphere; the position IS the normal
+out vec3 f_n;
+out vec3 f_w;
+uniform mat4 uViewProj;
+uniform float uR;
+void main() {
+  vec3 w = a_pos * uR;                   // particles are drawn centre-relative, so no offset
+  f_n = a_pos;
+  f_w = w;
+  gl_Position = uViewProj * vec4(w, 1.0);
+}`;
+const BUBBLE_FS = `#version 300 es
+precision mediump float;
+in vec3 f_n;
+in vec3 f_w;
+out vec4 outColor;
+uniform vec3 uEye;
+uniform float uA;
+uniform vec3 uTint;
+void main() {
+  vec3 V = normalize(uEye - f_w);
+  float fr = pow(1.0 - abs(dot(normalize(f_n), V)), 2.8);   // fresnel rim
+  outColor = vec4(uTint * (uA * (fr + 0.02)), 1.0);         // rim + a whisper of fill
+}`;
+
+const updateProg = linkProgram(gl, UPDATE_VS, UPDATE_FS, ["v_pos", "v_vel", "v_aux"]);
+const renderProg = linkProgram(gl, RENDER_VS, RENDER_FS);
+const bubbleProg = linkProgram(gl, BUBBLE_VS, BUBBLE_FS);
+const uu = (n) => gl.getUniformLocation(updateProg, n);
+const ur = (n) => gl.getUniformLocation(renderProg, n);
+const ub = (n) => gl.getUniformLocation(bubbleProg, n);
+const U = { dt: uu("uDt"), speed: uu("uSpeed"), mix: uu("uMix"), r: uu("uR") };
+const R = { vp: ur("uViewProj"), center: ur("uCenter"), trail: ur("uTrail"), alpha: ur("uAlpha"), speedP: ur("uSpeedP"),
+            mix: ur("uMix"), speed: ur("uSpeed") };
+const B = { vp: ub("uViewProj"), r: ub("uR"), eye: ub("uEye"), a: ub("uA"), tint: ub("uTint") };
+
+// Post pass: the additive HDR image goes through an ACES-ish filmic tonemap
+// (highlights roll to white instead of clipping to dirty yellow) + a vignette.
+const POST_VS = `#version 300 es
+precision highp float;
+out vec2 f_uv;
+void main() {
+  vec2 p = vec2[3](vec2(-1.0, -1.0), vec2(3.0, -1.0), vec2(-1.0, 3.0))[gl_VertexID];
+  f_uv = p * 0.5 + 0.5;
+  gl_Position = vec4(p, 0.0, 1.0);
+}`;
+const POST_FS = `#version 300 es
+precision mediump float;
+in vec2 f_uv;
+out vec4 outColor;
+uniform sampler2D uTex;
+uniform float uExposure;
+vec3 aces(vec3 x) {
+  return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
+}
+void main() {
+  vec3 c = texture(uTex, f_uv).rgb * uExposure;
+  c = aces(c);
+  vec2 q = f_uv - 0.5;
+  c *= 1.0 - 0.42 * smoothstep(0.32, 0.75, length(q));   // vignette
+  outColor = vec4(c, 1.0);
+}`;
+const postProg = linkProgram(gl, POST_VS, POST_FS);
+const P = { tex: gl.getUniformLocation(postProg, "uTex"), exp: gl.getUniformLocation(postProg, "uExposure") };
+const postVao = gl.createVertexArray();   // attribute-less fullscreen triangle
+
+// HDR framebuffer (RGBA16F when blendable-float is available, RGBA8 fallback).
+const canFloat = !!gl.getExtension("EXT_color_buffer_float");
+let fbo = null, fboTex = null, fboW = 0, fboH = 0;
+function ensureFbo() {
+  if (fboW === cv.width && fboH === cv.height) return;
+  if (fbo) { gl.deleteFramebuffer(fbo); gl.deleteTexture(fboTex); }
+  fboW = cv.width; fboH = cv.height;
+  fboTex = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, fboTex);
+  gl.texStorage2D(gl.TEXTURE_2D, 1, canFloat ? gl.RGBA16F : gl.RGBA8, fboW, fboH);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.bindTexture(gl.TEXTURE_2D, null);
+  fbo = gl.createFramebuffer();
+  gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, fboTex, 0);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+}
+
+// Unit UV-sphere triangles for the bubble.
+function sphereGeo(lat, lon) {
+  const P = (i, j) => {
+    const th = (i / lat) * Math.PI, ph = (j / lon) * 2 * Math.PI;
+    return [Math.sin(th) * Math.cos(ph), Math.cos(th), Math.sin(th) * Math.sin(ph)];
+  };
+  const v = [];
+  for (let i = 0; i < lat; i++) for (let j = 0; j < lon; j++) {
+    const a = P(i, j), b = P(i + 1, j), c = P(i + 1, j + 1), d = P(i, j + 1);
+    v.push(...a, ...b, ...c, ...a, ...c, ...d);
+  }
+  return new Float32Array(v);
+}
+const bubbleGeo = sphereGeo(24, 36);
+const bubbleBuf = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, bubbleBuf);
+gl.bufferData(gl.ARRAY_BUFFER, bubbleGeo, gl.STATIC_DRAW);
+const bubbleVao = gl.createVertexArray();
+gl.bindVertexArray(bubbleVao);
+gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 12, 0);
+gl.bindVertexArray(null);
+gl.bindBuffer(gl.ARRAY_BUFFER, null);
+
+// Strip parameterisation shared by every instance (5-vertex curved streaklet).
+const SEG_VERTS = 9;
+const segBuf = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, segBuf);
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(Array.from({ length: SEG_VERTS }, (_, i) => i / (SEG_VERTS - 1))), gl.STATIC_DRAW);
+gl.bindBuffer(gl.ARRAY_BUFFER, null);
+
+// --------------------------------------------------------------- buffers ---
+const params = { count: 60_000, trail: 0.9, speed: 0.35, seed: SEED };
+let bufs = null; // { a, b, updVaoA, updVaoB, renVaoA, renVaoB, cur }
+
+function mulberry32(a) {
+  return () => {
+    a |= 0; a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function initData(count, seed) {
+  const rnd = mulberry32(seed);
+  const data = new Float32Array(count * 8);
+  for (let i = 0; i < count; i++) {
+    data[i * 8] = rnd() * BOX;
+    data[i * 8 + 1] = rnd() * BOX;
+    data[i * 8 + 2] = rnd() * BOX;
+    // vel = 0, aux = 0 — one warmup pass fills them in.
+  }
+  return data;
+}
+
+function makeUpdateVao(buf) {
+  const vao = gl.createVertexArray();
+  gl.bindVertexArray(vao);
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, STRIDE, 0);
+  gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 3, gl.FLOAT, false, STRIDE, 12);
+  gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 2, gl.FLOAT, false, STRIDE, 24);
+  gl.bindVertexArray(null);
+  gl.bindBuffer(gl.ARRAY_BUFFER, null);
+  return vao;
+}
+
+function makeRenderVao(buf) {
+  const vao = gl.createVertexArray();
+  gl.bindVertexArray(vao);
+  gl.bindBuffer(gl.ARRAY_BUFFER, segBuf);
+  gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 1, gl.FLOAT, false, 4, 0);
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 3, gl.FLOAT, false, STRIDE, 0);  gl.vertexAttribDivisor(1, 1);
+  gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 3, gl.FLOAT, false, STRIDE, 12); gl.vertexAttribDivisor(2, 1);
+  gl.enableVertexAttribArray(3); gl.vertexAttribPointer(3, 2, gl.FLOAT, false, STRIDE, 24); gl.vertexAttribDivisor(3, 1);
+  gl.bindVertexArray(null);
+  gl.bindBuffer(gl.ARRAY_BUFFER, null);
+  return vao;
+}
+
+function disposeBufs() {
+  if (!bufs) return;
+  gl.deleteBuffer(bufs.a); gl.deleteBuffer(bufs.b);
+  gl.deleteVertexArray(bufs.updVaoA); gl.deleteVertexArray(bufs.updVaoB);
+  gl.deleteVertexArray(bufs.renVaoA); gl.deleteVertexArray(bufs.renVaoB);
+}
+
+function rebuild() {
+  disposeBufs();
+  const data = initData(params.count, params.seed);
+  const mk = () => {
+    const b = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, b);
+    gl.bufferData(gl.ARRAY_BUFFER, data, gl.DYNAMIC_COPY);
+    gl.bindBuffer(gl.ARRAY_BUFFER, null);
+    return b;
+  };
+  const a = mk(), b = mk();
+  bufs = { a, b, updVaoA: makeUpdateVao(a), updVaoB: makeUpdateVao(b), renVaoA: makeRenderVao(a), renVaoB: makeRenderVao(b), cur: 0 };
+  health.count = params.count;
+  // Warm up: let filaments form before the first visible frame (all GPU, pipelined).
+  for (let i = 0; i < 200; i++) step(1 / 60, 0, 0);
+  $("note").textContent =
+    `helix-noise-gpu v${version} · ${(params.count / 1e6).toFixed(2).replace(/\.?0+$/, "")} M streaklets · ` +
+    `two fields (helicity ∓0.9) mixed in-shader · potential-exact boundary · seed ${params.seed}`;
+}
+
+// ------------------------------------------------------------------- sim ---
+function step(dt, mixT, radius) {
+  const srcVao = bufs.cur === 0 ? bufs.updVaoA : bufs.updVaoB;
+  const dstBuf = bufs.cur === 0 ? bufs.b : bufs.a;
+  gl.useProgram(updateProg);
+  gl.uniform1f(U.dt, dt);
+  gl.uniform1f(U.speed, params.speed);
+  gl.uniform1f(U.mix, mixT);
+  gl.uniform1f(U.r, radius);
+  gl.enable(gl.RASTERIZER_DISCARD);
+  gl.bindVertexArray(srcVao);
+  gl.bindBufferBase(gl.TRANSFORM_FEEDBACK_BUFFER, 0, dstBuf);
+  gl.beginTransformFeedback(gl.POINTS);
+  gl.drawArrays(gl.POINTS, 0, params.count);
+  gl.endTransformFeedback();
+  gl.bindBufferBase(gl.TRANSFORM_FEEDBACK_BUFFER, 0, null);
+  gl.bindVertexArray(null);
+  gl.disable(gl.RASTERIZER_DISCARD);
+  bufs.cur = bufs.cur === 0 ? 1 : 0;
+}
+
+// -------------------------------------------------------------- timeline ---
+// One 12 s loop; every driven quantity returns to its start value, and the
+// camera completes one full orbit, so the loop closes seamlessly.
+const LOOP_S = 12;
+const ss = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+const RADIUS_MAX = 1.35;
+const timeline = (loop) => ({
+  radius: RADIUS_MAX * (ss(0.08, 0.26, loop) - ss(0.55, 0.80, loop)),   // void grows … dissolves
+  mixT: ss(0.30, 0.50, loop) - ss(0.78, 0.96, loop),                    // handedness flips … returns
+});
+const phaseName = (loop) =>
+  loop < 0.08 ? "laminar drift" :
+  loop < 0.30 ? "a bubble grows in the stream" :
+  loop < 0.55 ? "helicity flips: swirl reverses" :
+  loop < 0.80 ? "the bubble dissolves" :
+  loop < 0.96 ? "handedness returns" : "seam";
+
+// ---------------------------------------------------------------- camera ---
+const cam = { azOff: 0, el: 0.32, dist: 7.6 };
+let dragging = false, px = 0, py = 0;
+stage.addEventListener("pointerdown", (e) => { dragging = true; px = e.clientX; py = e.clientY; stage.classList.add("drag"); stage.setPointerCapture(e.pointerId); });
+stage.addEventListener("pointermove", (e) => {
+  if (!dragging) return;
+  cam.azOff += (e.clientX - px) * 0.005;
+  cam.el = Math.min(1.35, Math.max(-1.35, cam.el + (e.clientY - py) * 0.005));
+  px = e.clientX; py = e.clientY;
+});
+stage.addEventListener("pointerup", () => { dragging = false; stage.classList.remove("drag"); });
+stage.addEventListener("wheel", (e) => { e.preventDefault(); cam.dist = Math.min(16, Math.max(3.5, cam.dist * (1 + e.deltaY * 0.001))); }, { passive: false });
+
+function viewProj(loop) {
+  const az = loop * 2 * Math.PI + cam.azOff;          // one orbit per loop → seamless
+  const cx = CENTER;
+  const ex = Math.cos(az) * Math.cos(cam.el) * cam.dist;
+  const ey = Math.sin(cam.el) * cam.dist;
+  const ez = Math.sin(az) * Math.cos(cam.el) * cam.dist;
+  const proj = perspective((50 * Math.PI) / 180, cv.width / Math.max(1, cv.height), 0.1, 100);
+  const view = lookAt([ex, ey, ez], [0, 0, 0]);
+  return { vp: multiply(proj, view), center: [cx, cx, cx], eye: [ex, ey, ez] };
+}
+
+// ------------------------------------------------------------------ loop ---
+function resize() {
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  cv.width = Math.max(1, Math.round(cv.clientWidth * dpr));
+  cv.height = Math.max(1, Math.round(cv.clientHeight * dpr));
+}
+resize();
+window.addEventListener("resize", resize);
+
+rebuild();
+
+// ------------------------------------------------------------- recording ---
+// captureStream grabs the canvas only — DOM overlays (badges, loopbar) are
+// never in the file. Armed → starts at the next seam → stops one loop later.
+let recArmed = false, recorder = null, recChunks = [], prevPhase = 0;
+function startRecorder() {
+  const stream = cv.captureStream(60);
+  const mime = MediaRecorder.isTypeSupported("video/webm;codecs=vp9") ? "video/webm;codecs=vp9" : "video/webm";
+  recorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 25_000_000 });
+  recChunks = [];
+  recorder.ondataavailable = (e) => { if (e.data.size) recChunks.push(e.data); };
+  recorder.onstop = () => {
+    const blob = new Blob(recChunks, { type: "video/webm" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "helix-wow-loop.webm";
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10_000);
+    recorder = null;
+    health.recorded = blob.size;
+    $("rec").textContent = "⏺ record loop";
+  };
+  recorder.start();
+  $("rec").textContent = "⏺ recording… (12 s)";
+}
+function stopRecorder() {
+  if (recorder && recorder.state !== "inactive") recorder.stop();
+}
+$("rec").addEventListener("click", () => {
+  if (recorder || recArmed) return;
+  recArmed = true;
+  $("rec").textContent = "⏳ waiting for seam…";
+});
+
+let running = true, phase = 0, last = 0, ema = 0;
+function frame(now) {
+  requestAnimationFrame(frame);
+  if (!running) { last = now; return; }
+  const dt = Math.min(1 / 30, last ? (now - last) * 0.001 : 1 / 60);
+  last = now;
+  phase = (phase + dt / LOOP_S) % 1;
+  health.loop = phase;
+
+  const { radius, mixT } = timeline(phase);
+  step(dt, mixT, radius);
+
+  const { vp, center, eye } = viewProj(phase);
+  ensureFbo();
+  gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);        // HDR pass: everything additive
+  gl.viewport(0, 0, fboW, fboH);
+  gl.clearColor(0.012, 0.017, 0.026, 1);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.ONE, gl.ONE);
+  gl.disable(gl.DEPTH_TEST);
+  gl.useProgram(renderProg);
+  gl.uniformMatrix4fv(R.vp, false, vp);
+  gl.uniform3fv(R.center, center);
+  gl.uniform1f(R.trail, params.trail);
+  gl.uniform1f(R.alpha, Math.min(2.2, Math.max(0.25, 6e4 / params.count)) * 0.55);
+  gl.uniform3f(R.speedP, pcts[0], pcts[1], pcts[2]);
+  gl.uniform1f(R.mix, mixT);
+  gl.uniform1f(R.speed, params.speed);
+  const renVao = bufs.cur === 0 ? bufs.renVaoA : bufs.renVaoB;
+  gl.bindVertexArray(renVao);
+  gl.drawArraysInstanced(gl.LINE_STRIP, 0, SEG_VERTS, params.count);
+  gl.bindVertexArray(null);
+
+  // The obstacle, made visible: a fresnel bubble tinted opposite to the stream
+  // (amber stream → teal bubble and back), fading in/out with its radius.
+  if (radius > 0.02) {
+    gl.useProgram(bubbleProg);
+    gl.uniformMatrix4fv(B.vp, false, vp);
+    gl.uniform1f(B.r, radius);
+    gl.uniform3fv(B.eye, eye);
+    gl.uniform1f(B.a, 0.5 * Math.min(1, (radius / RADIUS_MAX) * 2.5));
+    gl.uniform3f(B.tint,
+      0.184 + (0.957 - 0.184) * mixT,   // TEAL → AMBER as the stream goes AMBER → TEAL
+      0.839 + (0.631 - 0.839) * mixT,
+      0.749 + (0.235 - 0.749) * mixT);
+    gl.enable(gl.CULL_FACE);
+    gl.cullFace(gl.BACK);
+    gl.bindVertexArray(bubbleVao);
+    gl.drawArrays(gl.TRIANGLES, 0, bubbleGeo.length / 3);
+    gl.bindVertexArray(null);
+    gl.disable(gl.CULL_FACE);
+  }
+
+  // Post pass: tonemap the HDR buffer to the screen.
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  gl.viewport(0, 0, cv.width, cv.height);
+  gl.disable(gl.BLEND);
+  gl.useProgram(postProg);
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, fboTex);
+  gl.uniform1i(P.tex, 0);
+  gl.uniform1f(P.exp, 1.5);
+  gl.bindVertexArray(postVao);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+  gl.bindVertexArray(null);
+  gl.bindTexture(gl.TEXTURE_2D, null);
+
+  // Recording: arm on the button, start at the seam, stop exactly one loop later.
+  if (recArmed && phase < prevPhase) {
+    recArmed = false;
+    startRecorder();
+  } else if (recorder && phase < prevPhase) {
+    stopRecorder();
+  }
+  prevPhase = phase;
+
+  // FPS + phase + GL-error watch.
+  ema = ema ? ema * 0.95 + dt * 0.05 : dt;
+  health.fps = 1 / ema;
+  health.frames++;
+  if (health.frames % 30 === 0) {
+    $("fps").innerHTML = `<b>${(1 / ema).toFixed(0)}</b> fps<br>${(params.count / 1e6).toFixed(2)} M × 2 verts`;
+    $("phase").innerHTML = `loop ${(phase * LOOP_S).toFixed(1)}s / ${LOOP_S}s · <b>${phaseName(phase)}</b>` +
+      ` · R ${radius.toFixed(2)} · mix ${mixT.toFixed(2)}`;
+    const err = gl.getError();
+    if (err) { health.glError = err; console.error("GL error", err); }
+  }
+  document.getElementById("loopbar").style.width = `${(phase * 100).toFixed(1)}%`;
+}
+requestAnimationFrame(frame);
+
+// -------------------------------------------------------------- controls ---
+$("count").addEventListener("change", (e) => { params.count = +e.target.value; rebuild(); });
+$("trail").addEventListener("input", (e) => { params.trail = +e.target.value; $("v-trail").textContent = params.trail.toFixed(2); });
+$("speed").addEventListener("input", (e) => { params.speed = +e.target.value; $("v-speed").textContent = params.speed.toFixed(2); });
+$("pause").addEventListener("click", () => { running = !running; $("pause").textContent = running ? "⏸ pause" : "▶ play"; });
+$("reseed").addEventListener("click", () => { params.seed = (params.seed * 16807) % 2147483647 || 1; rebuild(); });
+$("ui").addEventListener("click", () => {
+  const hidden = stage.classList.toggle("hideui");
+  $("ui").textContent = hidden ? "show ui" : "hide ui";
+});
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,696 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>helix-noise-gpu — a candle on a table (blow it out, relight it)</title>
+<style>
+  html,body{margin:0;background:#050304;color:#cdd6dd;font-family:system-ui,sans-serif}
+  .wrap{max-width:1040px;margin:0 auto;padding:22px 16px}
+  h1{font-size:19px;font-weight:600;margin:0 0 6px}
+  h1 code{color:#f4a13c}
+  p{color:#8a97a2;font-size:13.5px;line-height:1.6;margin:0 0 14px}
+  p b{color:#cdd6dd;font-weight:500}
+  code{font-family:ui-monospace,Menlo,monospace;color:#f4a13c;font-size:12.5px}
+  #stage{position:relative;width:100%;aspect-ratio:16/9;border:1px solid rgba(200,160,120,.15);
+    border-radius:10px;overflow:hidden;background:#050304;cursor:grab;touch-action:none}
+  #stage.drag{cursor:grabbing}
+  canvas{display:block;width:100%;height:100%}
+  .badge{position:absolute;top:10px;left:12px;font-family:ui-monospace,monospace;font-size:10.5px;
+    letter-spacing:.12em;text-transform:uppercase;color:#b09a88;background:rgba(5,3,4,.55);
+    border:1px solid rgba(200,160,120,.14);border-radius:6px;padding:4px 8px;pointer-events:none}
+  .fps{position:absolute;top:10px;right:12px;font-family:ui-monospace,monospace;font-size:11px;color:#b09a88;
+    background:rgba(5,3,4,.55);border:1px solid rgba(200,160,120,.14);border-radius:6px;padding:5px 9px;
+    text-align:right;line-height:1.5;pointer-events:none}
+  .fps b{font-weight:400;color:#f4a13c}
+  .state{position:absolute;bottom:10px;left:12px;font-family:ui-monospace,monospace;font-size:10.5px;
+    color:#b09a88;background:rgba(5,3,4,.55);border:1px solid rgba(200,160,120,.14);
+    border-radius:6px;padding:4px 8px;pointer-events:none}
+  .state b{font-weight:400;color:#f4a13c}
+  .row{display:flex;flex-wrap:wrap;gap:14px;align-items:center;margin-top:12px;
+    font-family:ui-monospace,monospace;font-size:12px;color:#93a3b0}
+  .row label{display:flex;align-items:center;gap:8px}
+  input[type=range]{width:104px}
+  select{font-family:ui-monospace,monospace;font-size:12px;color:#cdd6dd;background:#141008;
+    border:1px solid rgba(200,160,120,.22);border-radius:7px;padding:5px 8px}
+  button{font-family:ui-monospace,monospace;font-size:11.5px;color:#cdd6dd;background:#141008;
+    border:1px solid rgba(200,160,120,.22);border-radius:7px;padding:6px 11px;cursor:pointer}
+  button:hover{border-color:#f4a13c}
+  .note{margin-top:12px;font-size:12px;color:#6b5d50;font-family:ui-monospace,monospace}
+  .hideui .badge,.hideui .fps,.hideui .state{display:none}
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "helix-noise": "../node_modules/helix-noise/dist/helix-noise.js",
+    "helix-noise-gpu": "../dist/index.js"
+  }
+}
+</script>
+</head>
+<body>
+<div class="wrap">
+  <h1>A candle on a table — blow it out, watch the smoke, relight it</h1>
+  <p><b>Interactive:</b> <b>double-click</b> (or hold <b>🌬 blow</b>) to blow the candle out — the flame
+    tears sideways, dies, the wick ember fades and a <b>wisp of smoke</b> curls up; <b>click</b> the dark
+    scene to relight. Waving the mouse quickly over the stage stirs a <b>draft</b>: the flame leans away
+    and the light gutters. Everything that moves — flame turbulence (GPU), the drafts, the smoke's
+    curl and the <b>light flicker</b> on wax and wood — is <b>one helix field</b> (the flicker is a single
+    CPU <code>field.sample()</code> per frame of the same field the flame rides). Drag to orbit,
+    scroll to zoom.</p>
+  <div id="stage">
+    <canvas id="cv"></canvas>
+    <div class="badge">helix-noise-gpu · candle · interactive · flame + light = one field</div>
+    <div class="fps" id="fps">—</div>
+    <div class="state" id="state">—</div>
+  </div>
+  <div class="row">
+    <label>flame <select id="count">
+      <option value="30000">30 k</option>
+      <option value="60000" selected>60 k</option>
+      <option value="120000">120 k</option>
+    </select></label>
+    <label>draft <input id="draft" type="range" min="0" max="1" step="0.05" value="0.25"><span id="v-draft">0.25</span></label>
+    <label>flicker <input id="flick" type="range" min="0" max="1" step="0.05" value="0.55"><span id="v-flick">0.55</span></label>
+    <button id="blow">🌬 blow (hold)</button>
+    <button id="pause">⏸ pause</button>
+    <button id="ui">hide ui</button>
+  </div>
+  <div class="note" id="note">building shaders…</div>
+</div>
+
+<script>
+// Surface module errors on the page (module exceptions don't always reach devtools logs).
+window.addEventListener("error", (e) => {
+  const n = document.getElementById("note");
+  if (n) n.textContent = "ERROR: " + e.message;
+  if (window.__helix) window.__helix.error = String(e.message);
+});
+</script>
+<script type="module">
+import { create } from "helix-noise";
+import { perspective, lookAt, multiply, linkProgram, version } from "helix-noise-gpu";
+
+const $ = (id) => document.getElementById(id);
+const cv = $("cv"), stage = $("stage");
+const gl = cv.getContext("webgl2", { antialias: true, alpha: false, depth: true });
+
+const health = { version, webgl2: !!gl, count: 0, fps: 0, frames: 0, glError: 0, error: null, lit: 1 };
+window.__helix = health;
+
+if (!gl) {
+  $("note").textContent = "WebGL2 is not available in this browser.";
+  health.error = "no-webgl2";
+} else {
+
+// ------------------------------------------------------------------ field ---
+// One field, two consumers: the GPU flame/smoke (emitted GLSL) and the CPU
+// light flicker (field.sample) — the same signal, so they stay in sync.
+const field = create({ modes: 32, slope: 1.9, helicity: 0.3, coherence: 0.5, seed: 7, tileable: true, churn: 2.4 });
+const chunk = field.glsl({ name: "hx", curl: false, precision: 6 });
+
+// Scene layout (table top = y 0).
+const WAX_R = 0.32, WAX_H = 1.35;
+const WICK_TOP = 1.47;
+const FLAME_H = 0.6;
+const LIGHT_POS = [0, 1.78, 0];
+
+const STRIDE = 8 * 4; // pos(3) vel(3) aux(2: age, rnd)
+
+function glsl(x) { const s = String(x); return /[.eE]/.test(s) ? s : s + ".0"; }
+
+// ---------------------------------------------------- flame + smoke (TF) ----
+// uKind 0 = flame, 1 = smoke. uGate is the respawn probability: 0 parks dead
+// particles (invisible, retried every frame), 1 is a fully fed system — this is
+// what makes the candle *extinguishable* and *relightable* without rebuilding.
+const UPDATE_VS = `#version 300 es
+precision highp float;
+${chunk}
+layout(location = 0) in vec3 a_pos;
+layout(location = 1) in vec3 a_vel;
+layout(location = 2) in vec2 a_aux;
+out vec3 v_pos;
+out vec3 v_vel;
+out vec2 v_aux;
+uniform float uDt;
+uniform float uT;
+uniform float uFlick;   // buoyancy flicker (shared with the light)
+uniform vec2 uGust;     // lateral draft: slider + mouse + blow, same axes as the light
+uniform int uKind;
+uniform float uGate;
+
+float hash11(float n) { return fract(sin(n) * 43758.5453123); }
+
+void main() {
+  float id = float(gl_VertexID);
+  vec3 p = a_pos;
+  float age = a_aux.x + uDt;
+  float rnd = a_aux.y;
+  float gustMag = length(uGust);
+
+  if (uKind == 1) {                        // --- smoke wisp (after blow-out) ---
+    float life = mix(1.6, 2.9, hash11(rnd * 7.71));
+    if (age >= life) {
+      if (hash11(rnd * 31.17 + uT * 7.0) < uGate) {
+        age = 0.0;
+        rnd = hash11(rnd * 57.7 + id * 0.001 + 1.31);
+        float ang = 6.2831853 * hash11(rnd * 3.37);
+        float rad = 0.014 * sqrt(hash11(rnd * 9.13));
+        p = vec3(cos(ang) * rad, ${glsl(WICK_TOP)} + 0.01, sin(ang) * rad);
+      } else {                            // parked: frozen in place, invisible (age sentinel)
+        v_pos = p; v_vel = vec3(0.0); v_aux = vec2(99.0, rnd);
+        gl_Position = vec4(0.0);
+        return;
+      }
+    }
+    float af = clamp(age / life, 0.0, 1.0);
+    vec3 waver = hx(p * 3.2, uT * 0.8) * (0.20 + 0.28 * af);
+    vec3 rise = vec3(0.0, 0.34 - 0.10 * af, 0.0);
+    vec3 gust = vec3(uGust.x, 0.0, uGust.y) * 0.55;
+    vec3 vel = waver + rise + gust;
+    p += vel * uDt;
+    v_pos = p; v_vel = vel; v_aux = vec2(age, rnd);
+    gl_Position = vec4(0.0);
+    return;
+  }
+
+  // ------------------------------------------------------------- flame ------
+  float life0 = mix(0.3, 0.55, hash11(rnd * 7.71));
+  float life = life0 / (1.0 + 0.30 * gustMag);   // strong drafts shred the flame
+
+  if (age >= life) {
+    if (hash11(rnd * 31.17 + uT * 7.0) < uGate) {
+      age = 0.0;
+      rnd = hash11(rnd * 57.7 + id * 0.001 + 1.31);
+      float ang = 6.2831853 * hash11(rnd * 3.37);
+      float rad = 0.035 * sqrt(hash11(rnd * 9.13));
+      p = vec3(cos(ang) * rad, ${glsl(WICK_TOP)} + 0.01 * hash11(rnd * 5.5), sin(ang) * rad);
+    } else {                              // parked: frozen in place, invisible (age sentinel)
+      v_pos = p; v_vel = vec3(0.0); v_aux = vec2(99.0, rnd);
+      gl_Position = vec4(0.0);
+      return;
+    }
+  }
+
+  float tmp = clamp(1.0 - age / life, 0.0, 1.0);
+  vec2 rp = p.xz;
+  float h = max(p.y - ${glsl(WICK_TOP)}, 0.0);
+
+  vec3 turb = hx(p * 6.0, uT) * (0.11 * (1.0 - 0.6 * tmp));
+  vec3 buoy = vec3(0.0, (1.45 * (0.45 + 0.9 * tmp)) * uFlick, 0.0);
+  vec3 pinch = vec3(-rp.x, 0.0, -rp.y) * (11.0 * h);
+  vec3 gust = vec3(uGust.x, 0.0, uGust.y) * smoothstep(0.0, 0.4, h);
+
+  vec3 vel = turb + buoy + pinch + gust;
+  p += vel * uDt;
+
+  v_pos = p;
+  v_vel = vel;
+  v_aux = vec2(age, rnd);
+  gl_Position = vec4(0.0);
+}`;
+const UPDATE_FS = `#version 300 es
+precision mediump float;
+void main() {}`;
+
+const FLAME_VS = `#version 300 es
+precision highp float;
+layout(location = 0) in float a_t;
+layout(location = 1) in vec3 i_pos;
+layout(location = 2) in vec3 i_vel;
+layout(location = 3) in vec2 i_aux;
+out float f_t;
+out float f_tmp;
+out float f_h;
+uniform mat4 uViewProj;
+uniform float uTrail;
+uniform float uSmoke;    // 0 = flame ramp, 1 = smoke bell
+
+float hash11(float n) { return fract(sin(n) * 43758.5453123); }
+
+void main() {
+  float life = (uSmoke > 0.5) ? mix(1.6, 2.9, hash11(i_aux.y * 7.71))
+                              : mix(0.3, 0.55, hash11(i_aux.y * 7.71));
+  f_tmp = clamp(1.0 - i_aux.x / life, 0.0, 1.0);
+  f_h = clamp((i_pos.y - ${glsl(WICK_TOP)}) / ${glsl(FLAME_H)}, 0.0, 1.0);
+  vec3 p = i_pos - i_vel * (uTrail * a_t);
+  vec4 clip = uViewProj * vec4(p, 1.0);
+  if (clip.w <= 0.02) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); f_t = 1.0; return; }
+  gl_Position = clip;
+  f_t = a_t;
+}`;
+const FLAME_FS = `#version 300 es
+precision mediump float;
+in float f_t;
+in float f_tmp;
+in float f_h;
+out vec4 outColor;
+uniform float uAlpha;
+uniform highp float uSmoke;   // highp: must match the vertex-shader declaration to link
+void main() {
+  float taper = (1.0 - f_t) * (1.0 - f_t);
+  if (uSmoke > 0.5) {
+    // Smoke: a faint gray-blue bell over the particle's life (fade in, fade out).
+    float bell = f_tmp * (1.0 - f_tmp) * 4.0;
+    outColor = vec4(vec3(0.40, 0.42, 0.48) * (uAlpha * bell * taper * 0.10), 1.0);
+    return;
+  }
+  // Candle ramp by height: white-hot core → amber → orange tip, blue skirt at the base.
+  vec3 c = mix(vec3(1.0, 0.93, 0.62), vec3(1.0, 0.55, 0.10), smoothstep(0.15, 0.75, f_h));
+  c = mix(c, vec3(0.95, 0.30, 0.04), smoothstep(0.75, 1.0, f_h));
+  c = mix(c, vec3(0.25, 0.42, 1.0), smoothstep(0.14, 0.0, f_h) * 0.85);
+  float a = pow(f_tmp, 1.7);
+  outColor = vec4(c * (uAlpha * a * taper), 1.0);
+}`;
+
+// ---------------------------------------------------------- meshes (lit) ----
+const MESH_VS = `#version 300 es
+precision highp float;
+layout(location = 0) in vec3 a_pos;
+layout(location = 1) in vec3 a_nrm;
+out vec3 vW;
+out vec3 vN;
+uniform mat4 uViewProj;
+void main() {
+  vW = a_pos;
+  vN = a_nrm;
+  gl_Position = uViewProj * vec4(a_pos, 1.0);
+}`;
+const MESH_FS = `#version 300 es
+precision mediump float;
+in vec3 vW;
+in vec3 vN;
+out vec4 outColor;
+uniform vec3 uLightPos;
+uniform float uLightI;
+uniform vec3 uColor;
+uniform vec3 uGlowCol;
+uniform float uGlowH;
+uniform float uGlowK;
+uniform float uWood;
+const vec3 LIGHT_C = vec3(1.0, 0.62, 0.28);
+const vec3 AMBIENT = vec3(0.020, 0.022, 0.032);
+void main() {
+  vec3 L = uLightPos - vW;
+  float d = length(L);
+  L /= max(d, 1e-4);
+  float diff = max(dot(normalize(vN), L), 0.0);
+  float att = uLightI / (1.0 + 2.2 * d * d);
+  vec3 base = uColor;
+  if (uWood > 0.5) {
+    float grain = 0.82 + 0.18 * sin(vW.x * 9.0 + sin(vW.z * 3.1) * 2.0);
+    base *= grain;
+  }
+  vec3 col = base * (diff * att * LIGHT_C + AMBIENT);
+  col += uGlowCol * exp(-max(uGlowH - vW.y, 0.0) * uGlowK) * step(0.001, uGlowK);
+  outColor = vec4(col, 1.0);
+}`;
+
+// -------------------------------------------------------------- halo quad ---
+const HALO_VS = `#version 300 es
+precision highp float;
+layout(location = 0) in vec2 a_xy;
+out vec2 f_xy;
+uniform mat4 uViewProj;
+uniform vec3 uPos;
+uniform vec3 uRight;
+uniform vec3 uUp;
+uniform float uSize;
+void main() {
+  f_xy = a_xy;
+  vec3 w = uPos + (uRight * a_xy.x + uUp * a_xy.y) * uSize;
+  gl_Position = uViewProj * vec4(w, 1.0);
+}`;
+const HALO_FS = `#version 300 es
+precision mediump float;
+in vec2 f_xy;
+out vec4 outColor;
+uniform float uA;
+void main() {
+  float r2 = dot(f_xy, f_xy);
+  float a = exp(-r2 * 4.0) * uA;
+  outColor = vec4(vec3(1.0, 0.55, 0.18) * a, 1.0);
+}`;
+
+const updateProg = linkProgram(gl, UPDATE_VS, UPDATE_FS, ["v_pos", "v_vel", "v_aux"]);
+const flameProg = linkProgram(gl, FLAME_VS, FLAME_FS);
+const meshProg = linkProgram(gl, MESH_VS, MESH_FS);
+const haloProg = linkProgram(gl, HALO_VS, HALO_FS);
+const loc = (p, n) => gl.getUniformLocation(p, n);
+const U = { dt: loc(updateProg, "uDt"), t: loc(updateProg, "uT"), flick: loc(updateProg, "uFlick"),
+            gust: loc(updateProg, "uGust"), kind: loc(updateProg, "uKind"), gate: loc(updateProg, "uGate") };
+const F = { vp: loc(flameProg, "uViewProj"), trail: loc(flameProg, "uTrail"), alpha: loc(flameProg, "uAlpha"),
+            smoke: loc(flameProg, "uSmoke") };
+const M = { vp: loc(meshProg, "uViewProj"), lp: loc(meshProg, "uLightPos"), li: loc(meshProg, "uLightI"),
+            col: loc(meshProg, "uColor"), gcol: loc(meshProg, "uGlowCol"), gh: loc(meshProg, "uGlowH"),
+            gk: loc(meshProg, "uGlowK"), wood: loc(meshProg, "uWood") };
+const H = { vp: loc(haloProg, "uViewProj"), pos: loc(haloProg, "uPos"), right: loc(haloProg, "uRight"),
+            up: loc(haloProg, "uUp"), size: loc(haloProg, "uSize"), a: loc(haloProg, "uA") };
+
+// ------------------------------------------------------------ geometry ------
+function cylinder(r, yBase, h, segs, cap) {
+  const v = [];
+  for (let i = 0; i < segs; i++) {
+    const a0 = (i / segs) * Math.PI * 2, a1 = ((i + 1) / segs) * Math.PI * 2;
+    const c0 = Math.cos(a0), s0 = Math.sin(a0), c1 = Math.cos(a1), s1 = Math.sin(a1);
+    v.push(r * c0, yBase, r * s0, c0, 0, s0,  r * c1, yBase, r * s1, c1, 0, s1,  r * c1, yBase + h, r * s1, c1, 0, s1);
+    v.push(r * c0, yBase, r * s0, c0, 0, s0,  r * c1, yBase + h, r * s1, c1, 0, s1,  r * c0, yBase + h, r * s0, c0, 0, s0);
+    if (cap)
+      v.push(0, yBase + h, 0, 0, 1, 0,  r * c1, yBase + h, r * s1, 0, 1, 0,  r * c0, yBase + h, r * s0, 0, 1, 0);
+  }
+  return new Float32Array(v);
+}
+const tableGeo = new Float32Array([
+  -6, 0, -6, 0, 1, 0,   6, 0, -6, 0, 1, 0,   6, 0, 6, 0, 1, 0,
+  -6, 0, -6, 0, 1, 0,   6, 0, 6, 0, 1, 0,  -6, 0, 6, 0, 1, 0,
+]);
+const candleGeo = cylinder(WAX_R, 0, WAX_H, 48, true);
+const wickGeo = cylinder(0.022, WAX_H, WICK_TOP - WAX_H + 0.02, 12, true);
+
+function meshVao(data) {
+  const buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+  const vao = gl.createVertexArray();
+  gl.bindVertexArray(vao);
+  gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 24, 0);
+  gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 24, 12);
+  gl.bindVertexArray(null);
+  gl.bindBuffer(gl.ARRAY_BUFFER, null);
+  return { vao, n: data.length / 6 };
+}
+const table = meshVao(tableGeo), candle = meshVao(candleGeo), wick = meshVao(wickGeo);
+
+const haloBuf = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, haloBuf);
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, 1, 1, -1, -1, 1, 1, -1, 1]), gl.STATIC_DRAW);
+const haloVao = gl.createVertexArray();
+gl.bindVertexArray(haloVao);
+gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 8, 0);
+gl.bindVertexArray(null);
+gl.bindBuffer(gl.ARRAY_BUFFER, null);
+
+const segBuf = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, segBuf);
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 1]), gl.STATIC_DRAW);
+gl.bindBuffer(gl.ARRAY_BUFFER, null);
+
+// ------------------------------------------------------- particle systems ---
+const params = { count: 60_000, draft: 0.25, flick: 0.55, trail: 0.028, seed: 3 };
+const SMOKE_COUNT = 7_000;
+
+function mulberry32(a) {
+  return () => {
+    a |= 0; a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function initData(count, seed, dead) {
+  const rnd = mulberry32(seed);
+  const data = new Float32Array(count * 8);
+  for (let i = 0; i < count; i++) {
+    const ang = rnd() * Math.PI * 2, rad = 0.03 * Math.sqrt(rnd());
+    data[i * 8] = Math.cos(ang) * rad;
+    data[i * 8 + 1] = WICK_TOP + rnd() * FLAME_H * 0.8;
+    data[i * 8 + 2] = Math.sin(ang) * rad;
+    data[i * 8 + 6] = dead ? 99 : rnd() * 0.5;  // age (dead systems start parked)
+    data[i * 8 + 7] = rnd();                    // rnd
+  }
+  return data;
+}
+function makeUpdateVao(buf) {
+  const vao = gl.createVertexArray();
+  gl.bindVertexArray(vao);
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, STRIDE, 0);
+  gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 3, gl.FLOAT, false, STRIDE, 12);
+  gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 2, gl.FLOAT, false, STRIDE, 24);
+  gl.bindVertexArray(null);
+  gl.bindBuffer(gl.ARRAY_BUFFER, null);
+  return vao;
+}
+function makeRenderVao(buf) {
+  const vao = gl.createVertexArray();
+  gl.bindVertexArray(vao);
+  gl.bindBuffer(gl.ARRAY_BUFFER, segBuf);
+  gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 1, gl.FLOAT, false, 4, 0);
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 3, gl.FLOAT, false, STRIDE, 0);  gl.vertexAttribDivisor(1, 1);
+  gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 3, gl.FLOAT, false, STRIDE, 12); gl.vertexAttribDivisor(2, 1);
+  gl.enableVertexAttribArray(3); gl.vertexAttribPointer(3, 2, gl.FLOAT, false, STRIDE, 24); gl.vertexAttribDivisor(3, 1);
+  gl.bindVertexArray(null);
+  gl.bindBuffer(gl.ARRAY_BUFFER, null);
+  return vao;
+}
+function makeSystem(count, seed, dead) {
+  const data = initData(count, seed, dead);
+  const mk = () => {
+    const b = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, b);
+    gl.bufferData(gl.ARRAY_BUFFER, data, gl.DYNAMIC_COPY);
+    gl.bindBuffer(gl.ARRAY_BUFFER, null);
+    return b;
+  };
+  const a = mk(), b = mk();
+  return { count, a, b, updVaoA: makeUpdateVao(a), updVaoB: makeUpdateVao(b),
+           renVaoA: makeRenderVao(a), renVaoB: makeRenderVao(b), cur: 0 };
+}
+function disposeSystem(s) {
+  if (!s) return;
+  gl.deleteBuffer(s.a); gl.deleteBuffer(s.b);
+  gl.deleteVertexArray(s.updVaoA); gl.deleteVertexArray(s.updVaoB);
+  gl.deleteVertexArray(s.renVaoA); gl.deleteVertexArray(s.renVaoB);
+}
+
+let flameSys = null;
+const smokeSys = makeSystem(SMOKE_COUNT, 17, true);
+
+let simT = 0;
+function step(sys, dt, flick, gust, kind, gate) {
+  const srcVao = sys.cur === 0 ? sys.updVaoA : sys.updVaoB;
+  const dstBuf = sys.cur === 0 ? sys.b : sys.a;
+  gl.useProgram(updateProg);
+  gl.uniform1f(U.dt, dt);
+  gl.uniform1f(U.t, simT);
+  gl.uniform1f(U.flick, flick);
+  gl.uniform2f(U.gust, gust[0], gust[1]);
+  gl.uniform1i(U.kind, kind);
+  gl.uniform1f(U.gate, gate);
+  gl.enable(gl.RASTERIZER_DISCARD);
+  gl.bindVertexArray(srcVao);
+  gl.bindBufferBase(gl.TRANSFORM_FEEDBACK_BUFFER, 0, dstBuf);
+  gl.beginTransformFeedback(gl.POINTS);
+  gl.drawArrays(gl.POINTS, 0, sys.count);
+  gl.endTransformFeedback();
+  gl.bindBufferBase(gl.TRANSFORM_FEEDBACK_BUFFER, 0, null);
+  gl.bindVertexArray(null);
+  gl.disable(gl.RASTERIZER_DISCARD);
+  sys.cur = sys.cur === 0 ? 1 : 0;
+}
+
+function rebuildFlame() {
+  disposeSystem(flameSys);
+  flameSys = makeSystem(params.count, params.seed, false);
+  health.count = params.count;
+  for (let i = 0; i < 120; i++) { simT += 1 / 60; step(flameSys, 1 / 60, 1, [0, 0], 0, 1); }
+  $("note").textContent =
+    `helix-noise-gpu v${version} · ${(params.count / 1e3).toFixed(0)} k flame + ${(SMOKE_COUNT / 1e3).toFixed(0)} k smoke · light flicker = field.sample() of the same field`;
+}
+
+// ------------------------------------------------- interaction state --------
+// lit: smoothed flame amount; litT: target. gustMouse: draft stirred by fast
+// pointer moves; puff: the blow impulse. A sustained strong gust fills the
+// extinguish meter; past the threshold the candle goes out.
+let litT = 1, lit = 1;
+let ember = 0, smokeEmit = 0, meter = 0;
+let gustMouse = [0, 0];
+let puffT = 0;
+let blowHold = false;
+
+function forwardXZ() { return [-Math.cos(cam.az), -Math.sin(cam.az)]; }
+function puff() { puffT = 0.45; }
+function relight() {
+  if (litT === 0) { litT = 1; smokeEmit = 0.0; }
+}
+
+// ----------------------------------------------------------------- camera ---
+const cam = { az: 0.7, el: 0.14, dist: 4.4, lookY: 1.05 };
+let dragging = false, px = 0, py = 0, downX = 0, downY = 0, moved = 0, lastMoveT = 0;
+stage.addEventListener("pointerdown", (e) => {
+  dragging = true; px = downX = e.clientX; py = downY = e.clientY; moved = 0;
+  stage.classList.add("drag"); stage.setPointerCapture(e.pointerId);
+});
+stage.addEventListener("pointermove", (e) => {
+  const now = performance.now();
+  if (dragging) {
+    cam.az += (e.clientX - px) * 0.005;
+    cam.el = Math.min(1.2, Math.max(-0.05, cam.el + (e.clientY - py) * 0.005));
+    moved += Math.abs(e.clientX - px) + Math.abs(e.clientY - py);
+  } else {
+    // A fast wave of the pointer stirs a draft (screen-x maps to the camera's right axis).
+    const dtm = Math.min(0.1, Math.max(0.005, (now - lastMoveT) * 0.001));
+    const vx = (e.clientX - px) / dtm / Math.max(1, stage.clientWidth); // ~screen widths per second
+    const rx = [-Math.sin(cam.az), Math.cos(cam.az)];                   // camera right, in xz
+    const k = Math.max(-1, Math.min(1, vx * 0.55));
+    gustMouse[0] += rx[0] * k * 0.55;
+    gustMouse[1] += rx[1] * k * 0.55;
+  }
+  px = e.clientX; py = e.clientY; lastMoveT = now;
+});
+stage.addEventListener("pointerup", () => {
+  dragging = false; stage.classList.remove("drag");
+  if (moved < 6 && litT === 0) relight();       // a clean click on a dark scene relights
+});
+stage.addEventListener("dblclick", () => { if (litT > 0) puff(); });
+stage.addEventListener("wheel", (e) => { e.preventDefault(); cam.dist = Math.min(12, Math.max(1.8, cam.dist * (1 + e.deltaY * 0.001))); }, { passive: false });
+
+$("blow").addEventListener("pointerdown", () => { blowHold = true; });
+window.addEventListener("pointerup", () => { blowHold = false; });
+
+function camera() {
+  const ce = Math.cos(cam.el), se = Math.sin(cam.el);
+  const eye = [Math.cos(cam.az) * ce * cam.dist, cam.lookY + se * cam.dist, Math.sin(cam.az) * ce * cam.dist];
+  const look = [0, cam.lookY, 0];
+  const proj = perspective((42 * Math.PI) / 180, cv.width / Math.max(1, cv.height), 0.05, 100);
+  const view = lookAt(eye, look);
+  const dir = [look[0] - eye[0], look[1] - eye[1], look[2] - eye[2]];
+  const dl = Math.hypot(...dir); dir[0] /= dl; dir[1] /= dl; dir[2] /= dl;
+  const right = [dir[2], 0, -dir[0]];
+  const rl = Math.hypot(...right) || 1; right[0] /= rl; right[2] /= rl;
+  const up = [right[1] * dir[2] - right[2] * dir[1], right[2] * dir[0] - right[0] * dir[2], right[0] * dir[1] - right[1] * dir[0]];
+  return { vp: multiply(proj, view), right, up };
+}
+
+// ------------------------------------------------------------------- loop ---
+function resize() {
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  cv.width = Math.max(1, Math.round(cv.clientWidth * dpr));
+  cv.height = Math.max(1, Math.round(cv.clientHeight * dpr));
+}
+resize();
+window.addEventListener("resize", resize);
+
+rebuildFlame();
+
+let running = true, last = 0, ema = 0;
+function frame(now) {
+  requestAnimationFrame(frame);
+  if (!running) { last = now; return; }
+  const dt = Math.min(1 / 30, last ? (now - last) * 0.001 : 1 / 60);
+  last = now;
+  simT += dt;
+  cam.az += dt * 0.06;
+
+  // The one CPU field call: flame buoyancy, drafts and light share this sample.
+  const s = field.sample(0.3, 0.7, 0.2, simT * 1.6);
+
+  // --- gust budget: ambient draft + mouse wave + blow impulse ---
+  gustMouse[0] *= Math.exp(-5 * dt); gustMouse[1] *= Math.exp(-5 * dt);
+  let gx = params.draft * (0.22 * s[1] + 0.1) + gustMouse[0];
+  let gz = params.draft * 0.22 * s[2] + gustMouse[1];
+  if (puffT > 0) { puffT -= dt; const f = forwardXZ(); gx += f[0] * 4.2; gz += f[1] * 4.2; }
+  if (blowHold)  { const f = forwardXZ(); gx += f[0] * 2.6; gz += f[1] * 2.6; }
+  const gustMag = Math.hypot(gx, gz);
+
+  // --- extinguish / relight state ---
+  if (litT > 0 && gustMag > 1.6) meter += dt * gustMag; else meter = Math.max(0, meter - 2 * dt);
+  if (meter > 0.45 && litT > 0) { litT = 0; ember = 1; smokeEmit = 1; meter = 0; }
+  lit += (litT - lit) * Math.min(1, (litT > lit ? 2.8 : 9) * dt);
+  lit = Math.min(1, Math.max(0, lit));
+  health.litT = litT; health.meter = meter; health.puffT = puffT; health.gustMag = gustMag;
+  ember = Math.max(0, ember - dt * 0.33);
+  if (litT === 1) smokeEmit = Math.max(0, smokeEmit - dt * 2.5);
+  else smokeEmit = Math.max(0, smokeEmit - dt * 0.22);
+  health.lit = lit;
+
+  // Light gutters under a strong draft, dies with the flame, keeps a faint ember.
+  const flick = Math.min(1.35, Math.max(0.7, 1 + params.flick * 0.28 * s[0])) * (1 - 0.28 * Math.min(1, gustMag / 3));
+  const lightI = 3.4 * flick * flick * (0.015 + 0.985 * lit) + 0.25 * ember;
+
+  step(flameSys, dt, flick, [gx, gz], 0, lit);
+  step(smokeSys, dt, flick, [gx, gz], 1, smokeEmit * 0.5);
+
+  const { vp, right, up } = camera();
+  gl.viewport(0, 0, cv.width, cv.height);
+  gl.clearColor(0.006, 0.004, 0.006, 1);
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+  // --- opaque pass: table, candle, wick ---
+  gl.disable(gl.BLEND);
+  gl.enable(gl.DEPTH_TEST);
+  gl.depthMask(true);
+  gl.useProgram(meshProg);
+  gl.uniformMatrix4fv(M.vp, false, vp);
+  gl.uniform3f(M.lp, LIGHT_POS[0], LIGHT_POS[1], LIGHT_POS[2]);
+  gl.uniform1f(M.li, lightI);
+  gl.uniform3f(M.col, 0.44, 0.27, 0.13);
+  gl.uniform3f(M.gcol, 0, 0, 0); gl.uniform1f(M.gh, 0); gl.uniform1f(M.gk, 0); gl.uniform1f(M.wood, 1);
+  gl.bindVertexArray(table.vao); gl.drawArrays(gl.TRIANGLES, 0, table.n);
+  const waxG = 0.85 * flick * lit;
+  gl.uniform3f(M.col, 0.85, 0.78, 0.66);
+  gl.uniform3f(M.gcol, 0.95 * waxG, 0.42 * waxG, 0.11 * waxG);
+  gl.uniform1f(M.gh, WAX_H); gl.uniform1f(M.gk, 2.8); gl.uniform1f(M.wood, 0);
+  gl.bindVertexArray(candle.vao); gl.drawArrays(gl.TRIANGLES, 0, candle.n);
+  const embG = Math.max(flick * lit, 1.4 * ember * ember);
+  gl.uniform3f(M.col, 0.05, 0.04, 0.03);
+  gl.uniform3f(M.gcol, 1.0 * embG, 0.28 * embG, 0.04 * embG);
+  gl.uniform1f(M.gh, WICK_TOP + 0.02); gl.uniform1f(M.gk, 30.0); gl.uniform1f(M.wood, 0);
+  gl.bindVertexArray(wick.vao); gl.drawArrays(gl.TRIANGLES, 0, wick.n);
+
+  // --- additive pass: flame, smoke, halo (depth-tested, not written) ---
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.ONE, gl.ONE);
+  gl.depthMask(false);
+  gl.useProgram(flameProg);
+  gl.uniformMatrix4fv(F.vp, false, vp);
+  gl.uniform1f(F.trail, params.trail);
+  gl.uniform1f(F.alpha, Math.min(2.2, Math.max(0.4, 6e4 / params.count)) * 0.65);
+  gl.uniform1f(F.smoke, 0);
+  gl.bindVertexArray(flameSys.cur === 0 ? flameSys.renVaoA : flameSys.renVaoB);
+  gl.drawArraysInstanced(gl.LINES, 0, 2, flameSys.count);
+  gl.uniform1f(F.trail, 0.10);
+  gl.uniform1f(F.alpha, 1.0);
+  gl.uniform1f(F.smoke, 1);
+  gl.bindVertexArray(smokeSys.cur === 0 ? smokeSys.renVaoA : smokeSys.renVaoB);
+  gl.drawArraysInstanced(gl.LINES, 0, 2, smokeSys.count);
+  gl.useProgram(haloProg);
+  gl.uniformMatrix4fv(H.vp, false, vp);
+  gl.uniform3f(H.pos, 0, WICK_TOP + FLAME_H * 0.45, 0);
+  gl.uniform3fv(H.right, right);
+  gl.uniform3fv(H.up, up);
+  gl.uniform1f(H.size, 1.05);
+  gl.uniform1f(H.a, 0.22 * flick * lit);
+  gl.bindVertexArray(haloVao);
+  gl.drawArrays(gl.TRIANGLES, 0, 6);
+  gl.bindVertexArray(null);
+  gl.depthMask(true);
+
+  ema = ema ? ema * 0.95 + dt * 0.05 : dt;
+  health.fps = 1 / ema;
+  health.frames++;
+  if (health.frames % 15 === 0) {
+    $("fps").innerHTML = `<b>${(1 / ema).toFixed(0)}</b> fps<br>${(params.count / 1e3).toFixed(0)} k flame`;
+    $("state").innerHTML = litT > 0
+      ? `<b>lit</b> · draft ${gustMag.toFixed(2)}${gustMag > 1.2 ? " · guttering!" : ""}`
+      : (lit > 0.05 ? `<b>going out…</b>` : `<b>blown out</b> · click to relight`);
+    const err = gl.getError();
+    if (err) { health.glError = err; console.error("GL error", err); }
+  }
+}
+requestAnimationFrame(frame);
+
+// --------------------------------------------------------------- controls ---
+$("count").addEventListener("change", (e) => { params.count = +e.target.value; rebuildFlame(); });
+$("draft").addEventListener("input", (e) => { params.draft = +e.target.value; $("v-draft").textContent = params.draft.toFixed(2); });
+$("flick").addEventListener("input", (e) => { params.flick = +e.target.value; $("v-flick").textContent = params.flick.toFixed(2); });
+$("pause").addEventListener("click", () => { running = !running; $("pause").textContent = running ? "⏸ pause" : "▶ play"; });
+$("ui").addEventListener("click", () => {
+  const hidden = stage.classList.toggle("hideui");
+  $("ui").textContent = hidden ? "show ui" : "hide ui";
+});
+}
+</script>
+</body>
+</html>

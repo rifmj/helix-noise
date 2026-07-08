@@ -232,6 +232,11 @@ v0.1 covers the spectral engine, the free-slip SDF boundary, and the GLSL emitte
 "atom" engine of the JS reference (`createAtoms`) is a documented follow-up and is not yet
 ported — it is out of scope for this release.
 
+Relative to the JavaScript reference and the Python port, this crate also omits the batched
+samplers (`sampleMany` / `sampleManyUW`), in-place `set()` re-tuning, and `selfTest()`: sample in
+your own loop, rebuild with `HelixField::new`, and rely on `cargo test` for validation. The
+single-point sampling surface, boundaries, bakes, and GLSL emit are at full parity.
+
 ## License
 
 MIT © Rifat Jumagulov. Port of the JavaScript `helix-noise` library.
