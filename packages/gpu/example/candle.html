@@ -73,6 +73,7 @@
     <label>draft <input id="draft" type="range" min="0" max="1" step="0.05" value="0.25"><span id="v-draft">0.25</span></label>
     <label>flicker <input id="flick" type="range" min="0" max="1" step="0.05" value="0.55"><span id="v-flick">0.55</span></label>
     <button id="blow">🌬 blow (hold)</button>
+    <button id="rec">⏺ record 10 s</button>
     <button id="pause">⏸ pause</button>
     <button id="ui">hide ui</button>
   </div>
@@ -686,6 +687,32 @@ $("count").addEventListener("change", (e) => { params.count = +e.target.value; r
 $("draft").addEventListener("input", (e) => { params.draft = +e.target.value; $("v-draft").textContent = params.draft.toFixed(2); });
 $("flick").addEventListener("input", (e) => { params.flick = +e.target.value; $("v-flick").textContent = params.flick.toFixed(2); });
 $("pause").addEventListener("click", () => { running = !running; $("pause").textContent = running ? "⏸ pause" : "▶ play"; });
+const RECORD_NAME = () => "helix-candle.webm";
+// One-click capture: records 10 s straight off the canvas (DOM overlays are
+// never captured) and downloads a .webm — convert with ffmpeg or ship as-is.
+$("rec").addEventListener("click", () => {
+  if (window.__rec) return;
+  const stream = cv.captureStream(60);
+  const mime = MediaRecorder.isTypeSupported("video/webm;codecs=vp9") ? "video/webm;codecs=vp9" : "video/webm";
+  const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 25_000_000 });
+  window.__rec = rec;
+  const chunks = [];
+  rec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+  rec.onstop = () => {
+    const blob = new Blob(chunks, { type: "video/webm" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = RECORD_NAME();
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10_000);
+    window.__rec = null;
+    $("rec").textContent = "\u23fa record 10 s";
+  };
+  rec.start();
+  $("rec").textContent = "\u23fa recording\u2026";
+  setTimeout(() => { if (rec.state !== "inactive") rec.stop(); }, 10_000);
+});
+
 $("ui").addEventListener("click", () => {
   const hidden = stage.classList.toggle("hideui");
   $("ui").textContent = hidden ? "show ui" : "hide ui";

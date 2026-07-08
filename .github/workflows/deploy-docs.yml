@@ -11,6 +11,7 @@ on:
     paths:
       - "site/**"
       - "packages/js/**"
+      - "packages/gpu/**"
       - ".github/workflows/deploy-docs.yml"
   workflow_dispatch:
 
@@ -47,6 +48,12 @@ jobs:
         working-directory: packages/js
         run: npm run docs:build
 
+      # The WebGL2 particle demos (packages/gpu/example) import the gpu bundle; build it
+      # so the assemble step can ship a self-contained copy alongside the demos.
+      - name: Build the helix-noise-gpu bundle
+        working-directory: packages/gpu
+        run: npm ci && npm run build
+
       - name: Assemble the Pages site (landing at /, docs at /docs)
         run: |
           set -e
@@ -58,6 +65,13 @@ jobs:
           # Demos + the assets/dist they reference (they belong with the JS package) -> site root
           cp "$SRC/gallery.html" "$SRC/sandbox.html" "$SITE/"
           cp -R "$SRC/examples" "$SRC/assets" "$SRC/dist" "$SITE/"
+          # WebGL2 particle demos (packages/gpu/example) -> /examples/gpu/, with the gpu
+          # bundle and core laid out so each demo's importmap ("../dist/index.js",
+          # "../node_modules/helix-noise/dist/helix-noise.js") resolves unchanged.
+          mkdir -p "$SITE/examples/gpu" "$SITE/examples/dist" "$SITE/examples/node_modules/helix-noise/dist"
+          cp packages/gpu/example/*.html "$SITE/examples/gpu/"
+          cp packages/gpu/dist/index.js "$SITE/examples/dist/index.js"
+          cp "$SRC/dist/helix-noise.js" "$SITE/examples/node_modules/helix-noise/dist/helix-noise.js"
           # VitePress output (built with base /helix-noise/docs/) -> /docs
           mkdir -p "$SITE/docs"
           cp -R "$SRC/docs/.vitepress/dist/." "$SITE/docs/"

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>helix-noise-gpu — the wow loop (streaklets · growing void · helicity flip)</title>
+<title>helix-noise-gpu — flow loop (streaklets · glassy bubble · helicity flip)</title>
 <style>
   html,body{margin:0;background:#05070a;color:#cdd6dd;font-family:system-ui,sans-serif}
   .wrap{max-width:1040px;margin:0 auto;padding:22px 16px}
@@ -52,7 +52,7 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>The wow loop — streaklets · a bubble grows in the stream · the handedness flips</h1>
+  <h1>Flow loop — streaklets · a bubble grows in the stream · the handedness flips</h1>
   <p>One seamless <b>12-second loop</b>, three beats: particles rendered as <b>velocity streaklets</b>
     (line segments along the local flow, not dots); a <b>glassy bubble grows</b> mid-stream and the
     flow parts around it — a fresnel rim over an <i>exactly divergence-free</i> boundary built from the
@@ -525,7 +525,7 @@ function startRecorder() {
     const blob = new Blob(recChunks, { type: "video/webm" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = "helix-wow-loop.webm";
+    a.download = "helix-flow-loop.webm";
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 10_000);
     recorder = null;
