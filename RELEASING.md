@@ -43,16 +43,27 @@ Watch it under the repo's **Actions** tab; the published package shows a provena
 
 ## Covered packages
 
-| tag prefix | package | directory |
-|---|---|---|
-| `helix-noise@` | `helix-noise` | `packages/js` |
-| `helix-noise-r3f@` | `helix-noise-r3f` | `packages/r3f` |
-| `helix-noise-gpu@` | `helix-noise-gpu` | `packages/gpu` |
+| tag prefix | package | directory | registry | secret |
+|---|---|---|---|---|
+| `helix-noise@` | `helix-noise` | `packages/js` | npm | `NPM_TOKEN` |
+| `helix-noise-r3f@` | `helix-noise-r3f` | `packages/r3f` | npm | `NPM_TOKEN` |
+| `helix-noise-gpu@` | `helix-noise-gpu` | `packages/gpu` | npm | `NPM_TOKEN` |
+| `helix-noise-wasm@` | `helix-noise-wasm` | `packages/wasm` | npm (via wasm-pack) | `NPM_TOKEN` |
+| `helix-noise-crate@` | `helix-noise` (crate) | `packages/rust` | crates.io | `CARGO_REGISTRY_TOKEN` |
 
-## Not yet automated (easy follow-ons)
+> The crate uses the `helix-noise-crate@` prefix, **not** `helix-noise@`: the crates.io crate and the
+> npm js package share the name `helix-noise`, so the bare tag is reserved for the npm package. For
+> wasm and the crate the version lives in `Cargo.toml` (not `package.json`); the workflow checks it there.
 
-- **`helix-noise-wasm`** (`packages/wasm`) — build differs: `wasm-pack build --target web` then
-  `npm publish pkg/`, and the version lives in `Cargo.toml`. Add a `helix-noise-wasm@*` trigger and
-  a wasm-pack branch to `release.yml`.
-- **PyPI** (`packages/python`) and **crates.io** (`packages/rust`) — same tag model, with
-  `PYPI_TOKEN` / `CARGO_REGISTRY_TOKEN` secrets and `twine upload` / `cargo publish`.
+Example — release the crate bump that's already staged locally (`packages/rust` is `0.2.0`, crates.io
+has `0.1.0`):
+
+```sh
+git tag helix-noise-crate@0.2.0
+git push origin helix-noise-crate@0.2.0
+```
+
+## Not yet automated
+
+- **PyPI** (`packages/python`) — same tag model; add a `helix-noise-py@*` trigger, a `PYPI_TOKEN`
+  secret, and a `python -m build && twine upload` branch to `release.yml`.

@@ -1,19 +1,23 @@
 name: Release
 
-# Publish a package to npm when its version tag is pushed, e.g.:
-#   git tag helix-noise-gpu@0.1.0 && git push origin helix-noise-gpu@0.1.0
+# Publish a package when its version tag is pushed. The tag is <package-name>@<version>, e.g.:
+#   git tag helix-noise-gpu@0.1.0     && git push origin helix-noise-gpu@0.1.0    # -> npm
+#   git tag helix-noise-wasm@0.1.0    && git push origin helix-noise-wasm@0.1.0   # -> npm (wasm-pack)
+#   git tag helix-noise-crate@0.2.0   && git push origin helix-noise-crate@0.2.0  # -> crates.io
 #
-# The tag is <package-name>@<version>. This workflow checks out the tagged commit, verifies the
-# tag version matches the package's package.json, installs, builds, tests, and publishes with npm
-# provenance (a signed, verifiable link from the package back to this commit + workflow).
+# Each job verifies the tag version matches the package manifest, then builds, tests, and publishes.
+# The crate uses the `helix-noise-crate@` prefix (NOT `helix-noise@`) because the crates.io crate and
+# the npm package share the name `helix-noise`; the bare `helix-noise@` tag is the npm js package.
 #
-# One-time setup:
-#   - Repo secret NPM_TOKEN = an npm *Automation* access token (publishes without an OTP prompt).
+# One-time setup (repo secrets — Settings -> Secrets and variables -> Actions):
+#   - NPM_TOKEN            = npm *Automation* access token (publishes without an OTP prompt).
+#   - CARGO_REGISTRY_TOKEN = crates.io API token (only needed for helix-noise-crate@ releases).
 #   - The tagged commit must contain THIS file (tag-triggered workflows use the workflow as of the
-#     tag) — so the first release after adding it must be tagged on a commit that includes it.
+#     tag) — so the first release after adding a job must be tagged on a commit that includes it.
 #
-# Covers the npm packages: helix-noise (packages/js), helix-noise-r3f (packages/r3f),
-# helix-noise-gpu (packages/gpu). See RELEASING.md to extend to wasm / PyPI / crates.io.
+# Covered: helix-noise (packages/js), helix-noise-r3f (packages/r3f), helix-noise-gpu (packages/gpu),
+# helix-noise-wasm (packages/wasm, npm via wasm-pack), helix-noise crate (packages/rust, crates.io).
+# See RELEASING.md. PyPI (packages/python) is still manual.
 
 on:
   push:
@@ -21,6 +25,8 @@ on:
       - "helix-noise@*"
       - "helix-noise-r3f@*"
       - "helix-noise-gpu@*"
+      - "helix-noise-wasm@*"
+      - "helix-noise-crate@*"
 
 permissions:
   contents: write # create the GitHub Release
@@ -31,8 +37,13 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  publish:
-    name: Publish ${{ github.ref_name }}
+  # ---- npm packages (plain JS/TS builds): helix-noise, helix-noise-r3f, helix-noise-gpu ----
+  publish-npm:
+    name: Publish ${{ github.ref_name }} (npm)
+    if: >-
+      startsWith(github.ref_name, 'helix-noise@') ||
+      startsWith(github.ref_name, 'helix-noise-r3f@') ||
+      startsWith(github.ref_name, 'helix-noise-gpu@')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -86,5 +97,97 @@ jobs:
       - name: Create GitHub Release
         run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes
           || echo "GitHub Release step skipped (it may already exist) — the npm publish above is the release of record."
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+  # ---- npm package built from Rust via wasm-pack: helix-noise-wasm ----
+  publish-wasm:
+    name: Publish ${{ github.ref_name }} (npm/wasm-pack)
+    if: startsWith(github.ref_name, 'helix-noise-wasm@')
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/wasm
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: "https://registry.npmjs.org"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Verify version matches the tag
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME##*@}"
+          CARGO_VERSION="$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')"
+          if [ "$CARGO_VERSION" != "$VERSION" ]; then
+            echo "::error::tag version '$VERSION' != packages/wasm/Cargo.toml version '$CARGO_VERSION'"
+            exit 1
+          fi
+          echo "Publishing helix-noise-wasm@$VERSION"
+
+      - name: Build (wasm-pack, target web)
+        run: wasm-pack build --target web --out-dir pkg
+
+      - name: Test (headless wasm)
+        run: wasm-pack test --node || echo "no wasm tests / skipped"
+
+      - name: Publish pkg to npm (with provenance)
+        working-directory: packages/wasm/pkg
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Create GitHub Release
+        working-directory: .
+        run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes
+          || echo "GitHub Release step skipped (it may already exist) — the npm publish above is the release of record."
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+  # ---- crates.io: the Rust core crate (tag prefix helix-noise-crate@ to avoid the npm name clash) ----
+  publish-crate:
+    name: Publish ${{ github.ref_name }} (crates.io)
+    if: startsWith(github.ref_name, 'helix-noise-crate@')
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/rust
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Verify version matches the tag
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME##*@}"
+          CARGO_VERSION="$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')"
+          if [ "$CARGO_VERSION" != "$VERSION" ]; then
+            echo "::error::tag version '$VERSION' != packages/rust/Cargo.toml version '$CARGO_VERSION'"
+            exit 1
+          fi
+          echo "Publishing helix-noise crate $VERSION to crates.io"
+
+      - name: Test
+        run: cargo test
+
+      - name: Publish to crates.io
+        run: cargo publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      - name: Create GitHub Release
+        working-directory: .
+        run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes
+          || echo "GitHub Release step skipped (it may already exist) — the crates.io publish above is the release of record."
         env:
           GH_TOKEN: ${{ github.token }}
