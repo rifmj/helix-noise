@@ -51,8 +51,9 @@ jobs:
       # The WebGL2 particle demos (packages/gpu/example) import the gpu bundle; build it
       # so the assemble step can ship a self-contained copy alongside the demos.
       - name: Build the helix-noise-gpu bundle
+        # No committed lockfile for this package (see .gitignore), so npm install, not ci.
         working-directory: packages/gpu
-        run: npm ci && npm run build
+        run: npm install && npm run build
 
       - name: Assemble the Pages site (landing at /, docs at /docs)
         run: |
