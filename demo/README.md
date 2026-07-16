@@ -43,9 +43,10 @@ python3 -m http.server 8097                        # then open http://localhost:
    solid obstacle the flow parts around. The obstacle is the **analytic** div-free boundary
    `u = ramp(d)·u + ramp′(d)·(n × A)` (= `curl(ramp·A)`) evaluated in the update shader from the
    emitted vector potential `hxPot` — exact, no 3D-texture bake needed for an analytic SDF. ✅
-4. **Deterministic capture** — Playwright drives the page through a scripted beat sheet
-   (helicity −1→+1, coherence 0→1, obstacle drop) at fixed `dt`; frames → `ffmpeg` → MP4
-   with typographic lower-thirds. This becomes the paper's supplementary video.
+4. **Deterministic capture** (`capture/`) — headless Chrome drives `hero.html?capture=1` through
+   a scripted beat sheet (intro → helicity sweep → obstacle grows → scene grades → outro) at
+   fixed `dt`; frames → `ffmpeg` → H.264 MP4 with in-frame typographic lower-thirds and live
+   receipts. Reproducible. `node demo/capture/record.mjs`; see [capture/README.md](capture/README.md). ✅
 
 ## Notes
 
