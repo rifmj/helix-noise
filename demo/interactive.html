@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Helix Noise — interactive field</title>
+<style>
+  :root{
+    --bg:#05070b; --ink:#e8eef2; --dim:#8b97a4; --line:rgba(255,255,255,.09);
+    --teal:#35e0c7; --amber:#f6a542; --panel:rgba(12,16,22,.62);
+    --mono:"SF Mono",ui-monospace,"JetBrains Mono",Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);
+    font-family:var(--sans);overflow:hidden;-webkit-font-smoothing:antialiased}
+  #stage{position:fixed;inset:0}
+  canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+
+  /* ─ control panel ─ */
+  .panel{position:fixed;top:18px;left:18px;width:288px;padding:16px 16px 14px;
+    background:var(--panel);border:1px solid var(--line);border-radius:14px;
+    backdrop-filter:blur(14px) saturate(1.3);-webkit-backdrop-filter:blur(14px) saturate(1.3);
+    box-shadow:0 20px 60px rgba(0,0,0,.5);z-index:5}
+  .brand{color:var(--dim)}
+  .brand b{display:block;color:var(--ink);font-weight:600;letter-spacing:.01em;font-size:16px}
+  .brand span{display:block;margin-top:3px;font-size:10.5px;letter-spacing:.14em;text-transform:uppercase}
+  .ctl{margin-top:15px}
+  .ctl label{display:flex;justify-content:space-between;font-size:12.5px;color:var(--dim);margin-bottom:6px}
+  .ctl label .val{color:var(--ink);font-family:var(--mono);font-size:12px}
+  input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:3px;border-radius:3px;
+    background:linear-gradient(90deg,var(--teal),#4a5b6b);outline:none;cursor:pointer}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;height:15px;border-radius:50%;
+    background:#fff;box-shadow:0 0 0 4px rgba(53,224,199,.18);cursor:pointer}
+  input[type=range].chir{background:linear-gradient(90deg,var(--amber),#4a5b6b,var(--teal))}
+  .toggles{margin-top:16px;display:flex;gap:8px}
+  .toggles button{flex:1;padding:8px 6px;font-size:12px;font-family:var(--sans);color:var(--dim);
+    background:rgba(255,255,255,.03);border:1px solid var(--line);border-radius:9px;cursor:pointer;
+    transition:.15s}
+  .toggles button:hover{color:var(--ink);border-color:rgba(255,255,255,.2)}
+  .toggles button.on{color:#05070b;background:var(--teal);border-color:var(--teal);font-weight:600}
+  .hint{margin-top:13px;font-size:11px;line-height:1.5;color:var(--dim)}
+  .hint b{color:var(--ink);font-weight:600}
+
+  /* ─ instruments (receipts) ─ */
+  .inst{position:fixed;top:18px;right:18px;width:220px;padding:14px 15px;background:var(--panel);
+    border:1px solid var(--line);border-radius:14px;backdrop-filter:blur(14px);
+    -webkit-backdrop-filter:blur(14px);z-index:5}
+  .inst h4{margin:0 0 4px;font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);font-weight:600}
+  .spec{height:56px;display:flex;align-items:flex-end;gap:2px;margin:4px 0 2px}
+  .spec i{flex:1;background:linear-gradient(180deg,var(--teal),rgba(53,224,199,.15));border-radius:1px 1px 0 0;min-height:1px}
+  .froze{font-size:10px;color:var(--dim);margin-bottom:12px}
+  .froze b{color:var(--teal)}
+  .row{display:flex;justify-content:space-between;align-items:baseline;padding:6px 0;border-top:1px solid var(--line)}
+  .row .k{font-size:11.5px;color:var(--dim)}
+  .row .v{font-family:var(--mono);font-size:13px}
+  .row .v.good{color:var(--teal)}
+  .row small{display:block;font-size:9.5px;color:var(--dim);text-align:right;font-family:var(--sans)}
+
+  /* ─ lower-third caption ─ */
+  .cap{position:fixed;left:50%;bottom:34px;transform:translateX(-50%);max-width:min(760px,86vw);
+    text-align:center;z-index:5;pointer-events:none}
+  .cap .t{font-size:15px;line-height:1.55;color:var(--ink);text-shadow:0 2px 20px rgba(0,0,0,.9)}
+  .cap .t b{color:var(--teal)}
+  .cap .s{margin-top:6px;font-size:11.5px;letter-spacing:.06em;color:var(--dim);text-transform:uppercase}
+  .divlbl{position:fixed;top:50%;z-index:4;font-size:10px;letter-spacing:.16em;text-transform:uppercase;
+    color:var(--dim);transform:translateY(-50%);text-shadow:0 1px 8px #000;display:none}
+</style>
+</head>
+<body>
+<div id="stage"><canvas id="c"></canvas></div>
+
+<div class="panel">
+  <div class="brand"><b>Helix Noise</b><span>divergence-free · analytic · real-time</span></div>
+
+  <div class="ctl">
+    <label>Spectral slope <span class="val" id="vSlope">1.8</span></label>
+    <input type="range" id="slope" min="0.6" max="3.2" step="0.05" value="1.8">
+  </div>
+  <div class="ctl">
+    <label>Helicity&nbsp; <span style="color:var(--amber)">◀ left</span> · <span style="color:var(--teal)">right ▶</span> <span class="val" id="vHel">+0.80</span></label>
+    <input type="range" id="hel" class="chir" min="-1" max="1" step="0.02" value="0.8">
+  </div>
+  <div class="ctl">
+    <label>Phase coherence <span class="val" id="vCoh">0.60</span></label>
+    <input type="range" id="coh" min="0" max="1" step="0.01" value="0.6">
+  </div>
+
+  <div class="toggles">
+    <button id="tCompare">vs&nbsp;baseline</button>
+    <button id="tObstacle">obstacle</button>
+  </div>
+  <div class="hint" id="hint"><b>Tip:</b> raise <b>coherence</b> and watch the energy plot on the right stay frozen — only the phases move.</div>
+</div>
+
+<div class="inst">
+  <h4>Energy spectrum E(k)</h4>
+  <div class="spec" id="spec"></div>
+  <div class="froze">re-weighted by <b>slope</b> only · <b>frozen</b> under coherence</div>
+  <div class="row"><span class="k">relative helicity ρ</span><span class="v" id="rho">—</span></div>
+  <div class="row"><span class="k">divergence ∇·u</span><span class="v good" id="div">—<small>exact (FD trunc.)</small></span></div>
+  <div class="row"><span class="k">particles</span><span class="v" id="np">—</span></div>
+</div>
+
+<div class="divlbl" id="lblL" style="left:14px">baseline · random phase</div>
+<div class="divlbl" id="lblR" style="right:14px">Helix Noise</div>
+
+<div class="cap"><div class="t" id="capT">Every wave is a Beltrami mode — the field is divergence-free by construction, evaluated analytically at any point.</div><div class="s" id="capS">drag a slider to begin</div></div>
+
+<script type="module">
+import { create } from "../packages/js/dist/helix-noise.js";
+
+const TAU = Math.PI * 2;
+const cv = document.getElementById("c");
+const ctx = cv.getContext("2d", { alpha:false });
+let W=0,H=0,DPR=Math.min(2,devicePixelRatio||1);
+
+// ── field state ───────────────────────────────────────────────────────────
+const P = { modes:44, slope:1.8, helicity:0.8, coherence:0.6, seed:7, kmin:1, kmax:6.2, centers:4, churn:0.9 };
+let field   = create(P);                                   // "ours"
+let baseline= create({ ...P, coherence:0 });               // random-phase surrogate
+let bounded = null;                                        // BoundedField when obstacle on
+const Z0 = 1.7;                                            // slice height
+const WS = 0.010;                                          // world units per CSS pixel
+let compare=false, obstacle=false;
+
+// sphere obstacle in world space (centred on the viewport, mapped each resize)
+const OB = { x:0, y:0, z:Z0, r:0 };
+function makeSdf(){
+  const {x,y,z,r}=OB;
+  const sdf=(px,py,pz)=>Math.hypot(px-x,py-y,pz-z)-r;
+  const grad=(px,py,pz)=>{const dx=px-x,dy=py-y,dz=pz-z,l=Math.hypot(dx,dy,dz)||1;return [dx/l,dy/l,dz/l];};
+  return {sdf,grad};
+}
+function rewrap(){
+  if(!obstacle){ bounded=null; return; }
+  const {sdf,grad}=makeSdf();
+  bounded=field.withBoundary(sdf,{thickness:0.9,gradient:grad});
+}
+
+// ── particles ─────────────────────────────────────────────────────────────
+let N=0, px,py; const rnd=(s=>()=>((s=(s*1664525+1013904223)>>>0)/4294967296))(99);
+function alloc(){
+  N = Math.min(7000, Math.round(W*H/900));
+  px=new Float32Array(N); py=new Float32Array(N);
+  for(let i=0;i<N;i++){ px[i]=rnd()*W; py[i]=rnd()*H; }
+  document.getElementById("np").textContent = N.toLocaleString();
+}
+function resize(){
+  W=innerWidth||document.documentElement.clientWidth||1280;
+  H=innerHeight||document.documentElement.clientHeight||720;
+  cv.width=W*DPR; cv.height=H*DPR; ctx.setTransform(DPR,0,0,DPR,0,0);
+  ctx.fillStyle="#05070b"; ctx.fillRect(0,0,W,H);
+  OB.x=(W*0.5)*WS; OB.y=(H*0.52)*WS; OB.r=Math.min(W,H)*0.16*WS; rewrap();
+  alloc();
+}
+addEventListener("resize", resize);
+
+// ── the analytic field, sampled per particle ──────────────────────────────
+const o6=[0,0,0,0,0,0];
+function stepParticle(i, fld, useHel, x0, x1){
+  let x=px[i], y=py[i];
+  const wx=x*WS, wy=y*WS;
+  let cr,cg,cb;
+  if(useHel){
+    fld.sampleUW(wx,wy,Z0,o6);                 // u (0..2) + ω (3..5) analytic
+    const hd=o6[0]*o6[3]+o6[1]*o6[4]+o6[2]*o6[5];
+    if(hd>=0){cr=53;cg=224;cb=199;} else {cr=246;cg=165;cb=66;}
+  } else {
+    const v=fld.sample(wx,wy,Z0);               // bounded: u only
+    o6[0]=v[0]; o6[1]=v[1];
+    const sp=Math.hypot(v[0],v[1]); const t=Math.min(1,sp*1.7);
+    cr=40+t*206; cg=120+t*104; cb=150+t*49;     // slow steel → bright cyan
+  }
+  x+=o6[0]*1.5; y+=o6[1]*1.5;
+  // respawn if it leaves its viewport band or falls into the obstacle
+  const inOb = obstacle && Math.hypot(wx-OB.x,wy-OB.y)<OB.r;
+  if(inOb||x<x0||x>=x1||y<0||y>=H||rnd()<0.006){
+    x=x0+rnd()*(x1-x0); y=rnd()*H;
+    if(obstacle){let g=0;while(Math.hypot(x*WS-OB.x,y*WS-OB.y)<OB.r*1.05&&g++<8){x=x0+rnd()*(x1-x0);y=rnd()*H;}}
+  }
+  px[i]=x; py[i]=y;
+  ctx.fillStyle=`rgba(${cr|0},${cg|0},${cb|0},.62)`;
+  ctx.fillRect(x,y,1.7,1.7);
+}
+
+// ── render loop ────────────────────────────────────────────────────────────
+function frame(){
+  // fade to black → luminous trails
+  ctx.fillStyle="rgba(5,7,11,0.055)"; ctx.fillRect(0,0,W,H);
+  ctx.globalCompositeOperation="lighter";
+  if(compare){
+    const mid=W/2;
+    for(let i=0;i<N;i++){ if(i&1) stepParticle(i,baseline,true,0,mid); else stepParticle(i, obstacle?bounded:field, true, mid, W); }
+    ctx.globalCompositeOperation="source-over";
+    ctx.strokeStyle="rgba(255,255,255,.14)"; ctx.beginPath(); ctx.moveTo(mid,0); ctx.lineTo(mid,H); ctx.stroke();
+  } else {
+    const fld = obstacle ? bounded : field;
+    for(let i=0;i<N;i++) stepParticle(i, fld, !obstacle, 0, W);
+  }
+  if(obstacle){
+    ctx.globalCompositeOperation="source-over";
+    const cx=OB.x/WS, cy=OB.y/WS, rr=OB.r/WS;
+    ctx.fillStyle="rgba(8,11,16,.9)"; ctx.beginPath(); ctx.arc(cx,cy,rr,0,TAU); ctx.fill();
+    ctx.strokeStyle="rgba(53,224,199,.5)"; ctx.lineWidth=1.5; ctx.stroke();
+  }
+  ctx.globalCompositeOperation="source-over";
+  requestAnimationFrame(frame);
+}
+
+// ── instruments ────────────────────────────────────────────────────────────
+const specEl=document.getElementById("spec");
+const bars=[...Array(18)].map(()=>{const b=document.createElement("i");specEl.appendChild(b);return b;});
+function drawSpectrum(){
+  const NB=bars.length, e=new Float64Array(NB), kmax=P.kmax*1.02;
+  for(let j=0;j<field.N;j++){ const b=Math.min(NB-1,(field.km[j]/kmax*NB)|0); e[b]+=field.a[j]*field.a[j]; }
+  const m=Math.max(...e)||1;
+  bars.forEach((bar,i)=>bar.style.height=(4+e[i]/m*52)+"px");
+}
+function measureDivergence(){
+  const h=0.004, oa=[0,0,0,0,0,0], ob=[0,0,0,0,0,0]; let mx=0;
+  const fld = obstacle?bounded:field;
+  for(let gx=0;gx<5;gx++)for(let gy=0;gy<5;gy++){
+    const x=(gx+.5)/5*TAU, y=(gy+.5)/5*TAU;
+    let d=0;
+    fld.sampleUW(x+h,y,Z0,oa);fld.sampleUW(x-h,y,Z0,ob);d+=(oa[0]-ob[0])/(2*h);
+    fld.sampleUW(x,y+h,Z0,oa);fld.sampleUW(x,y-h,Z0,ob);d+=(oa[1]-ob[1])/(2*h);
+    fld.sampleUW(x,y,Z0+h,oa);fld.sampleUW(x,y,Z0-h,ob);d+=(oa[2]-ob[2])/(2*h);
+    mx=Math.max(mx,Math.abs(d));
+  }
+  document.getElementById("div").innerHTML = mx.toExponential(1)+'<small>exact (FD trunc.)</small>';
+}
+function updateReadouts(){
+  drawSpectrum();
+  document.getElementById("rho").textContent = (field.relativeHelicity(10)>=0?"+":"")+field.relativeHelicity(10).toFixed(3);
+  measureDivergence();
+}
+
+// ── controls ───────────────────────────────────────────────────────────────
+function rebuild(keepSpectrum){
+  field.set({ slope:P.slope, helicity:P.helicity, coherence:P.coherence });
+  baseline.set({ slope:P.slope, helicity:P.helicity, coherence:0 });
+  rewrap();
+  updateReadouts();
+}
+const cap=(t,s)=>{document.getElementById("capT").innerHTML=t;document.getElementById("capS").textContent=s;};
+function bind(id,valId,fmt,key,cb){
+  const el=document.getElementById(id), out=document.getElementById(valId);
+  el.addEventListener("input",()=>{ P[key]=+el.value; out.textContent=fmt(+el.value); rebuild(); cb&&cb(+el.value); });
+  out.textContent=fmt(+el.value);
+}
+bind("slope","vSlope",v=>v.toFixed(2),"slope",v=>cap(`Slope <b>s=${v.toFixed(2)}</b> re-weights the same modes — steep = smooth large scales, shallow = fine ragged detail.`,"spectral slope"));
+bind("hel","vHel",v=>(v>=0?"+":"")+v.toFixed(2),"helicity",v=>cap(`Helicity <b>p=${(v>=0?"+":"")+v.toFixed(2)}</b> — teal is right-handed, amber left-handed. At the extremes the flow is purely Beltrami (ω ∥ u).`,"chirality control"));
+bind("coh","vCoh",v=>v.toFixed(2),"coherence",v=>cap(`Coherence <b>λ=${v.toFixed(2)}</b> at fixed spectrum — the energy plot doesn't move. Only the phases lock formless haze into rolling vortices.`,"the axis curl-noise lacks"));
+
+document.getElementById("tCompare").addEventListener("click",e=>{
+  compare=!compare; e.target.classList.toggle("on",compare);
+  document.getElementById("lblL").style.display=document.getElementById("lblR").style.display=compare?"block":"none";
+  ctx.fillStyle="#05070b";ctx.fillRect(0,0,W,H);
+  cap(compare?`Same spectrum, both sides. <b>Left</b>: random phases (a curl-noise-like haze). <b>Right</b>: our coherence — organized vortices, identical energy.`:`Single field.`, compare?"A / B at fixed energy":"—");
+});
+document.getElementById("tObstacle").addEventListener("click",e=>{
+  obstacle=!obstacle; e.target.classList.toggle("on",obstacle); rewrap(); ctx.fillStyle="#05070b";ctx.fillRect(0,0,W,H);
+  measureDivergence();
+  cap(obstacle?`Solid obstacle: we ramp the vector <b>potential</b>, then curl — so flow slides around it (free-slip, no penetration) while <b>∇·u stays ≈0</b>. No solver.`:`Obstacle removed.`, obstacle?"potential-ramp boundary":"—");
+});
+
+resize(); updateReadouts(); frame();
+</script>
+</body>
+</html>
