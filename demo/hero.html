@@ -88,7 +88,7 @@
     <input type="range" id="spd" min="0.08" max="0.7" step="0.01" value="0.35">
   </div>
   <div class="seg" id="scenes">
-    <button data-s="0" class="on">Helix</button><button data-s="1">Frost</button><button data-s="2">Ember</button>
+    <button data-s="0" class="on">Current</button><button data-s="1">Snow</button><button data-s="2">Embers</button>
   </div>
   <div class="toggles">
     <button id="tSpin" class="on">auto-orbit</button>
@@ -106,7 +106,7 @@
   <div class="row"><span class="k">streaklets</span><span class="v" id="np">—</span></div>
 </div>
 
-<div class="cap"><div class="t" id="capT">Curved streaklets trace the streamlines of an analytic Beltrami field — a million line segments advected on the GPU, divergence-free, no solver.</div><div class="s" id="capS">drag to orbit · grow the obstacle</div></div>
+<div class="cap"><div class="t" id="capT">A swirling current, drawn directly — no fluid solver runs. Grow the ball and the flow slides around it; flip the twist and the whole swirl reverses.</div><div class="s" id="capS">drag to orbit · grow the ball · try Snow / Embers</div></div>
 <div class="fps" id="fps"></div>
 <a class="alt" href="interactive.html">2D instrumented · A/B →</a>
 <div class="err" id="err"><div><b style="color:var(--ink)">WebGL2 unavailable.</b><br>Try the <a href="interactive.html" style="color:var(--teal)">2D CPU view</a>.</div></div>
@@ -145,12 +145,14 @@ layout(location=1) in vec3 a_vel;
 layout(location=2) in vec2 a_aux;
 out vec3 v_pos; out vec3 v_vel; out vec2 v_aux;
 uniform float uDt, uSpeed, uMix, uR;
+uniform vec3 uDrift;    // constant art-direction drift (snow falls, embers rise); 0 = pure field
 void main(){
   vec3 p=a_pos;
   vec3 u=mix(hxA(p),hxB(p),uMix);
   vec3 w=mix(hxACurl(p),hxBCurl(p),uMix);
   float rawSp=length(u);
   float h=dot(u,w)/(rawSp*length(w)+1e-6);
+  float rampAll=1.0;                     // 1 away from the wall → drift full; →0 at the wall
   if(uR>0.001){
     vec3 rp=p-vec3(${glslFloat(CENTER)}); float dist=length(rp); vec3 n=rp/max(dist,1e-5);
     float d=dist-uR;
@@ -159,11 +161,11 @@ void main(){
       float ramp=x*x*(3.0-2.0*x);
       float dramp=(d>0.0)?6.0*x*(1.0-x)/${glslFloat(SHELL)}:0.0;
       vec3 A=mix(hxAPot(p),hxBPot(p),uMix);
-      u=ramp*u+dramp*cross(n,A);
+      u=ramp*u+dramp*cross(n,A); rampAll=ramp;
       if(d<0.0) u+=n*(0.6*-d+0.3);      // expel interior stragglers
     }
   }
-  vec3 vel=u*uSpeed;
+  vec3 vel=u*uSpeed + uDrift*rampAll;    // drift parts around the obstacle too
   p+=vel*uDt;
   v_pos=mod(p,${glslFloat(BOX)}); v_vel=vel;
   v_aux=vec2(mix(a_aux.x,h,0.08),rawSp);
@@ -196,11 +198,10 @@ const RENDER_FS = `#version 300 es
 precision mediump float;
 in float f_t; in vec2 f_aux; in float f_depth; in float f_env;
 out vec4 outColor;
-uniform float uAlpha; uniform vec3 uSpeedP;
-const vec3 AMBER=vec3(0.957,0.631,0.235); const vec3 TEAL=vec3(0.184,0.839,0.749);
+uniform float uAlpha; uniform vec3 uSpeedP; uniform vec3 uColLow, uColHigh;
 void main(){
   float t=clamp(f_aux.x*0.8+0.5,0.0,1.0);
-  vec3 c=mix(AMBER,TEAL,t);
+  vec3 c=mix(uColLow,uColHigh,t);
   c+=vec3(0.85,0.88,0.9)*smoothstep(uSpeedP.y,uSpeedP.z,f_aux.y)*0.35;
   float bright=0.10+1.7*smoothstep(uSpeedP.x,uSpeedP.y,f_aux.y);
   float taper=(1.0-f_t)*(1.0-f_t);
@@ -239,8 +240,8 @@ const bubbleProg=linkProgram(gl,BUBBLE_VS,BUBBLE_FS);
 const postProg=linkProgram(gl,POST_VS,POST_FS);
 const uu=n=>gl.getUniformLocation(updateProg,n), ur=n=>gl.getUniformLocation(renderProg,n),
       ub=n=>gl.getUniformLocation(bubbleProg,n), up=n=>gl.getUniformLocation(postProg,n);
-const U={dt:uu("uDt"),speed:uu("uSpeed"),mix:uu("uMix"),r:uu("uR")};
-const R={vp:ur("uViewProj"),center:ur("uCenter"),trail:ur("uTrail"),alpha:ur("uAlpha"),speedP:ur("uSpeedP"),mix:ur("uMix"),speed:ur("uSpeed")};
+const U={dt:uu("uDt"),speed:uu("uSpeed"),mix:uu("uMix"),r:uu("uR"),drift:uu("uDrift")};
+const R={vp:ur("uViewProj"),center:ur("uCenter"),trail:ur("uTrail"),alpha:ur("uAlpha"),speedP:ur("uSpeedP"),mix:ur("uMix"),speed:ur("uSpeed"),colLow:ur("uColLow"),colHigh:ur("uColHigh")};
 const B={vp:ub("uViewProj"),r:ub("uR"),eye:ub("uEye"),a:ub("uA"),tint:ub("uTint")};
 const PP={tex:up("uTex"),exp:up("uExposure"),grade:up("uGrade")};
 const postVao=gl.createVertexArray();
@@ -295,7 +296,7 @@ function build(){ const data=initData(params.count); const mk=()=>{const b=gl.cr
   for(let i=0;i<180;i++) step(1/60);  // warm up filaments (all GPU)
 }
 function step(dt){ const src=bufs.cur===0?bufs.uA:bufs.uB, dst=bufs.cur===0?bufs.b:bufs.a;
-  gl.useProgram(updateProg); gl.uniform1f(U.dt,dt); gl.uniform1f(U.speed,params.speed); gl.uniform1f(U.mix,mixT); gl.uniform1f(U.r,radius);
+  gl.useProgram(updateProg); gl.uniform1f(U.dt,dt); gl.uniform1f(U.speed,params.speed); gl.uniform1f(U.mix,mixT); gl.uniform1f(U.r,radius); gl.uniform3fv(U.drift,scene.drift);
   gl.enable(gl.RASTERIZER_DISCARD); gl.bindVertexArray(src);
   gl.bindBufferBase(gl.TRANSFORM_FEEDBACK_BUFFER,0,dst); gl.beginTransformFeedback(gl.POINTS);
   gl.drawArrays(gl.POINTS,0,params.count); gl.endTransformFeedback();
@@ -314,9 +315,14 @@ function viewProj(){ const ex=Math.cos(cam.az)*Math.cos(cam.el)*cam.dist, ey=Mat
 
 // ── interactive state + scenes ──────────────────────────────────────────────
 let mixT=0.9, radius=0;                     // mixT=(hel+1)/2 ; radius 0 = obstacle off
-const SCENES=[ {grade:[1,1,1],exp:1.5,bg:[0.012,0.017,0.026]},        // Helix
-               {grade:[0.82,0.95,1.18],exp:1.42,bg:[0.008,0.013,0.024]}, // Frost
-               {grade:[1.22,0.94,0.72],exp:1.55,bg:[0.020,0.013,0.011]} ]; // Ember
+// Materials — each re-tints, re-drifts and re-trails the SAME field, no recompile.
+// Current: abstract teal/amber ribbons, no drift (used for the exactly div-free obstacle).
+// Snow: pale flakes drifting down through the swirl. Embers: warm motes rising.
+const SCENES=[
+  { name:"Current", colLow:[0.957,0.631,0.235], colHigh:[0.184,0.839,0.749], drift:[0,0,0],    trail:0.9,  grade:[1,1,1],          exp:1.5,  bg:[0.012,0.017,0.026] },
+  { name:"Snow",    colLow:[0.98,0.92,0.82],     colHigh:[0.80,0.90,1.0],     drift:[0,-1.0,0], trail:0.30, grade:[0.92,0.98,1.14], exp:1.35, bg:[0.010,0.014,0.028] },
+  { name:"Embers",  colLow:[1.0,0.32,0.06],      colHigh:[1.0,0.80,0.30],     drift:[0,0.7,0],  trail:0.6,  grade:[1.22,0.92,0.70], exp:1.5,  bg:[0.022,0.012,0.010] },
+];
 let scene=SCENES[0];
 
 // ── render loop ─────────────────────────────────────────────────────────────
@@ -331,8 +337,9 @@ function drawFrame(){
   gl.enable(gl.BLEND); gl.blendFunc(gl.ONE,gl.ONE); gl.disable(gl.DEPTH_TEST);
   gl.useProgram(renderProg);
   gl.uniformMatrix4fv(R.vp,false,vp); gl.uniform3fv(R.center,center);
-  gl.uniform1f(R.trail,params.trail); gl.uniform1f(R.alpha,Math.min(2.2,Math.max(0.25,6e4/params.count))*0.55);
+  gl.uniform1f(R.trail,scene.trail); gl.uniform1f(R.alpha,Math.min(2.2,Math.max(0.25,6e4/params.count))*0.55);
   gl.uniform3f(R.speedP,pcts[0],pcts[1],pcts[2]); gl.uniform1f(R.mix,mixT); gl.uniform1f(R.speed,params.speed);
+  gl.uniform3fv(R.colLow,scene.colLow); gl.uniform3fv(R.colHigh,scene.colHigh);
   gl.bindVertexArray(bufs.cur===0?bufs.rA:bufs.rB);
   gl.drawArraysInstanced(gl.LINE_STRIP,0,SEG_VERTS,params.count); gl.bindVertexArray(null);
   if(radius>0.02){
@@ -386,9 +393,9 @@ function readouts(){
 const cap=(t,s)=>{document.getElementById("capT").innerHTML=t;document.getElementById("capS").textContent=s;};
 const hel=document.getElementById("hel"), rad=document.getElementById("rad"), spd=document.getElementById("spd");
 hel.addEventListener("input",()=>{ const p=+hel.value; mixT=(p+1)/2; document.getElementById("vHel").textContent=(p>=0?"+":"")+(0.9*p).toFixed(2); dirty=true;
-  cap(`Helicity <b>p=${(0.9*p>=0?"+":"")+(0.9*p).toFixed(2)}</b> — the same energy re-splits between the two corkscrew channels; teal right-handed, amber left.`,"chirality"); });
+  cap(`Twist <b>${(0.9*p>=0?"+":"")+(0.9*p).toFixed(2)}</b> — one dial winds the whole swirl from left-handed to right-handed. Same motion, opposite spin.`,"the twist dial"); });
 rad.addEventListener("input",()=>{ radius=+rad.value; document.getElementById("vR").textContent=radius.toFixed(2); dirty=true;
-  cap(radius>0.02?`Solid obstacle radius <b>${radius.toFixed(2)}</b> — we ramp the vector <b>potential</b> then curl, so the stream parts around it (free-slip) while <b>∇·u stays ≈0</b>. No solver.`:`No obstacle — the free divergence-free stream.`, radius>0.02?"potential-ramp boundary":"free stream"); });
+  cap(radius>0.02?`Ball radius <b>${radius.toFixed(2)}</b> — the flow slides around the solid and never leaks inside. No collision code, no solver.`:`No ball — the open flow.`, radius>0.02?"a solid in the flow":"open flow"); });
 spd.addEventListener("input",()=>{ params.speed=+spd.value; document.getElementById("vSp").textContent=params.speed.toFixed(2); });
 document.querySelectorAll("#scenes button").forEach(b=>b.addEventListener("click",()=>{
   document.querySelectorAll("#scenes button").forEach(x=>x.classList.remove("on")); b.classList.add("on"); scene=SCENES[+b.dataset.s]; }));
@@ -414,19 +421,19 @@ const FPS=+(_cq.get("fps")||60), DT=1/FPS, DUR=+(_cq.get("dur")||24);
 const sstep=(a,b,x)=>{ const t=Math.min(1,Math.max(0,(x-a)/(b-a))); return t*t*(3-2*t); };
 const lerp=(a,b,t)=>a+(b-a)*t;
 function beat(t){
-  cam.az = 0.7 + t*0.20;                                    // continuous slow orbit
-  cam.el = 0.30 + 0.12*Math.sin(t*0.5);
-  cam.dist = lerp(8.2, 6.8, sstep(8,13,t));                 // ease in as the obstacle appears
-  let hel = lerp(0.8,-0.9, sstep(4,7,t)); hel = lerp(hel, 0.8, sstep(7,9.5,t));  // +.8 → −.9 → +.8
+  cam.az = 0.6 + t*0.19;                                     // continuous slow orbit
+  cam.el = 0.28 + 0.12*Math.sin(t*0.45);
+  cam.dist = lerp(8.6, 7.0, sstep(11,15,t));                 // ease in for the ball
+  let hel = lerp(0.8,-0.85, sstep(6,8.5,t)); hel = lerp(hel, 0.8, sstep(8.5,10.5,t));  // reverse & return
   mixT = (Math.max(-1,Math.min(1,hel))+1)/2;
-  radius = lerp(0,1.5, sstep(9,13,t)) * (1 - sstep(19,22.5,t));   // grow, hold, shrink
-  params.speed = 0.35;
-  scene = t<15?SCENES[0] : t<20?SCENES[1] : SCENES[2];
-  const c = t<4  ? ["A divergence-free helical field — evaluated analytically, advected on the GPU.","helix noise"]
-          : t<9  ? ["Helicity: one dial slides the flow from left-handed to right-handed corkscrews.","chirality"]
-          : t<15 ? ["A solid obstacle — the stream parts around it, free-slip, while <b>∇·u stays ≈0</b>. No solver.","div-free boundary"]
-          : t<20 ? ["No added solver cost — the whole field is a shader. Millions of streaklets, in real time.","real-time"]
-          :        ["Helix Noise — controllable, divergence-free flow for graphics.","spectral · helicity · coherence"];
+  radius = lerp(0,1.5, sstep(11.5,14.5,t)) * (1 - sstep(15.8,17,t));   // obstacle lives in the Current phase
+  params.speed = t<11 ? 0.30 : t<17 ? 0.36 : 0.30;
+  scene = t<11 ? SCENES[1] : t<17 ? SCENES[0] : SCENES[2];   // Snow → Current → Embers
+  const c = t<6   ? ["Swirling snow on an invisible current — no fluid solver runs, the flow is drawn directly.","swirling snow"]
+          : t<11  ? ["Turn one dial and the whole storm reverses its swirl — watch the snow wind the other way.","reverse the swirl"]
+          : t<17  ? ["The same flow, made visible. Drop a solid ball in the stream — it slides around, and never leaks inside.","a solid in the flow"]
+          : t<21  ? ["Same field, restyled as rising embers — one control changes the look; the motion is the same flow.","restyle it"]
+          :         ["One field, a handful of dials — controllable, natural-looking flow for graphics.","helix noise"];
   cap(c[0], c[1]);
 }
 if(CAP){
