@@ -196,9 +196,12 @@ class HelixField:
             c = int(rng() * nc)
             ci[j] = c
             phc = -(kxc * cx[c] + kyc * cy[c] + kzc * cz[c])
-            bx = (1.0 - lam) * math.cos(phr) + lam * math.cos(phc)
-            by = (1.0 - lam) * math.sin(phr) + lam * math.sin(phc)
-            ph[j] = math.atan2(by, bx)
+            # Additive phase interpolation (helical-fields Eq. 9): reference at full
+            # weight, random part fading as lam->1. ph = phc + (1-lam)*phr -- uniform
+            # random at lam=0, locked to the reference at lam=1, well-defined for every
+            # lam (no lam=1/2 antipodal singularity of the old complex-plane "chord"
+            # blend). |a_j| untouched, so energy spectrum and helicity bias are frozen.
+            ph[j] = phc + (1.0 - lam) * phr
 
         # Time evolution: all draws AFTER the spatial loop, so the t=0 field is
         # unchanged by the time knobs.

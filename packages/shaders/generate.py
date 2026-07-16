@@ -27,7 +27,7 @@ from decimal import Decimal, ROUND_HALF_UP
 
 TAU = 2.0 * math.pi
 GA = math.pi * (3.0 - math.sqrt(5.0))  # golden angle
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 
 
 # ---------------------------------------------------------------------------
@@ -227,9 +227,10 @@ class HelixField:
             c = int(rng() * nc)
             ci[j] = c
             phc = -(kxc * cx[c] + kyc * cy[c] + kzc * cz[c])
-            bx = (1.0 - lam) * math.cos(phr) + lam * math.cos(phc)
-            by = (1.0 - lam) * math.sin(phr) + lam * math.sin(phc)
-            ph[j] = math.atan2(by, bx)
+            # Additive phase interpolation (helical-fields Eq. 9): reference at full
+            # weight, random part fading as lam->1; well-defined for every lam (no
+            # lam=1/2 antipodal singularity of the old complex-plane "chord" blend).
+            ph[j] = phc + (1.0 - lam) * phr
 
         # Time evolution — all draws AFTER the spatial loop.
         chi = max(0.0, p["churn"])

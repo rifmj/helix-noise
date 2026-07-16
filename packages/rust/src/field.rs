@@ -304,9 +304,13 @@ impl HelixField {
             let c = (rng.next_f64() * nc as f64) as usize;
             ci[j] = c;
             let phc = -(kxc * cx[c] + kyc * cy[c] + kzc * cz[c]);
-            let bx = (1.0 - lam) * phr.cos() + lam * phc.cos();
-            let by = (1.0 - lam) * phr.sin() + lam * phc.sin();
-            self.ph[j] = by.atan2(bx);
+            // Additive phase interpolation (helical-fields Eq. 9): the structured center
+            // reference stays at full weight while the random part fades as λ→1.
+            // ph = φc + (1−λ)·φr — uniform-random at λ=0, locked to the reference at λ=1,
+            // and well-defined for every λ (no λ=½ antipodal singularity of the earlier
+            // complex-plane "chord" blend). |a_j| is untouched, so the energy spectrum and
+            // helicity bias are frozen at every λ; only the phase moves.
+            self.ph[j] = phc + (1.0 - lam) * phr;
         }
 
         // Time evolution — all draws happen AFTER the spatial loop, so the t = 0 field is

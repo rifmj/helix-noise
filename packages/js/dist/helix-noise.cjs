@@ -32,7 +32,7 @@ module.exports = __toCommonJS(src_exports);
 
 // src/constants.ts
 var TAU = 2 * Math.PI;
-var VERSION = "1.0.0";
+var VERSION = "1.1.0";
 var DEFAULTS = {
   modes: 48,
   // number of helical modes (cost of one sample is O(modes))
@@ -625,9 +625,7 @@ var HelixField = class {
       const c = rng() * nc | 0;
       ci[j] = c;
       const phc = -(kxc * cx[c] + kyc * cy[c] + kzc * cz[c]);
-      const bx = (1 - lam) * Math.cos(phr) + lam * Math.cos(phc);
-      const by = (1 - lam) * Math.sin(phr) + lam * Math.sin(phc);
-      this.ph[j] = Math.atan2(by, bx);
+      this.ph[j] = phc + (1 - lam) * phr;
     }
     const chi = Math.max(0, p.churn);
     this.cvx = new Float64Array(nc);

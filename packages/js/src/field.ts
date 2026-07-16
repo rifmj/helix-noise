@@ -187,9 +187,13 @@ export class HelixField implements Field, ModeData {
       const c = (rng() * nc) | 0;
       ci[j] = c;
       const phc = -(kxc * cx[c] + kyc * cy[c] + kzc * cz[c]);
-      const bx = (1 - lam) * Math.cos(phr) + lam * Math.cos(phc);
-      const by = (1 - lam) * Math.sin(phr) + lam * Math.sin(phc);
-      this.ph[j] = Math.atan2(by, bx);
+      // Additive phase interpolation (helical-fields Eq. 9): the structured center
+      // reference stays at full weight while the random part fades as λ→1.
+      // ph = φc + (1−λ)·φr — uniform-random at λ=0, locked to the reference at λ=1,
+      // and well-defined for every λ (no λ=½ antipodal singularity of the earlier
+      // complex-plane "chord" blend). |a_j| is untouched, so the energy spectrum and
+      // helicity bias are frozen at every λ; only the phase moves.
+      this.ph[j] = phc + (1 - lam) * phr;
     }
 
     // Time evolution (all draws AFTER the spatial ones, so the t = 0 field is unchanged by the

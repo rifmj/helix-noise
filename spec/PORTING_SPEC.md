@@ -19,7 +19,7 @@ JS reference to ~1e-12 relative, NOT bit-for-bit. Parity tests must use a tolera
 ```
 TAU  = 2*pi
 GA   = pi * (3 - sqrt(5))     # golden angle (Fibonacci sphere azimuth step)
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 ```
 
 Defaults (every option):
@@ -137,9 +137,10 @@ for j in 0..N:
     phr = TAU*rng()                                          # 1 draw
     c   = floor(rng()*nc)                                    # 1 draw ; ci[j]=c
     phc = -(kxc*cx[c] + kyc*cy[c] + kzc*cz[c])
-    bx = (1-lam)*cos(phr) + lam*cos(phc)
-    by = (1-lam)*sin(phr) + lam*sin(phc)
-    ph[j] = atan2(by, bx)
+    # additive phase interpolation (helical-fields Eq. 9): reference at full weight,
+    # random part fades as lam->1. Well-defined for every lam (no lam=1/2 antipodal
+    # singularity of the old complex-plane "chord" blend atan2((1-lam)e^iphr+lam e^iphc)).
+    ph[j] = phc + (1-lam)*phr                                # lam=0 -> uniform random ; lam=1 -> phc
 
 # --- time evolution: ALL draws happen AFTER the spatial loop above ---
 chi = max(0, churn)

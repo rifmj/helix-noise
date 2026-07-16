@@ -6,9 +6,9 @@ const vec3 helixNoise_E1[6] = vec3[6](vec3(0.1126100,0.9936393,0.000000),vec3(0.
 const vec3 helixNoise_E2[6] = vec3[6](vec3(-0.1844395,0.02090270,0.9826216),vec3(0.07649007,0.5061513,0.8590461),vec3(-0.01026559,0.9996167,0.02570951),vec3(-0.1527683,-0.8407006,0.5195040),vec3(-0.3299165,-0.1207364,0.9362574),vec3(-0.08897417,0.2816401,0.9553860));
 const float helixNoise_S[6] = float[6](1.000000,-1.000000,-1.000000,-1.000000,1.000000,-1.000000);
 const float helixNoise_A[6] = float[6](0.4627751,0.05792916,0.08273869,0.1397357,0.09471702,0.2675197);
-const float helixNoise_PH[6] = float[6](-0.7706052,-1.449096,0.9696963,0.009051523,-0.8603216,-1.342637);
+const float helixNoise_PH[6] = float[6](-2.456775,20.16733,12.83511,-10.23302,18.59161,-2.671793);
 const float helixNoise_OM[6] = float[6](-1.378571,3.276872,2.824585,-2.270502,2.669859,1.732215);
-const float helixNoise_SCALE = 1.778330;
+const float helixNoise_SCALE = 1.822267;
 const float helixNoise_NU = 0.02000000;
 
 vec3 helixNoise(vec3 p, float t) {

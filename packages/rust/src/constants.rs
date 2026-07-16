@@ -15,7 +15,7 @@ pub fn ga() -> f64 {
 }
 
 /// Library version string, mirroring the reference package.
-pub const VERSION: &str = "1.0.0";
+pub const VERSION: &str = "1.1.0";
 
 /// Mode layout strategy.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
