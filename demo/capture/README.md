@@ -32,12 +32,23 @@ node demo/capture/record.mjs --w 1920 --h 1080 --n 400000 --dur 24 --fps 60 \
 
 Quick check: `--w 960 --h 540 --n 80000 --dur 4 --fps 30` (a few seconds).
 
+## Performance — use the real GPU
+
+By default the driver runs headless Chrome on the **real GPU** (ANGLE Metal on macOS / desktop
+GL elsewhere) — the demo is GPU-native, so this matters enormously: **~30 ms/frame on an M4 Max
+vs ~9 s/frame on SwiftShader (~260×)**. The screenshot encode (JPEG by default) is then the
+bottleneck. A 24 s / 30 fps / 1080p trailer renders in a couple of minutes.
+
+- `--sw` forces the SwiftShader software path (deterministic on any machine, no GPU — but ~1000×
+  slower; only for CI boxes without a usable GPU).
+- `--png` writes lossless PNG frames instead of quality-95 JPEG (slower, larger; the H.264 encode
+  makes the difference invisible for a trailer — reach for it only for a ProRes master).
+
 ## Requirements
 
 - **ffmpeg** on PATH.
 - **puppeteer** — local (`npm i -D puppeteer`) or global; the script finds either.
-- **Chrome/Chromium** — auto-detected (macOS/Linux paths), or set `CHROME_PATH`. Runs on
-  ANGLE/SwiftShader, so no discrete GPU is required (slower, but deterministic).
+- **Chrome/Chromium** — auto-detected (macOS/Linux paths), or set `CHROME_PATH`.
 
 ## Notes
 

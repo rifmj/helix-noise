@@ -26,9 +26,15 @@ const opt = (k, d) => { const i = args.indexOf("--" + k); return i >= 0 ? args[i
 const has = (k) => args.includes("--" + k);
 const W = +opt("w", 1920), H = +opt("h", 1080), N = +opt("n", 400000);
 const DUR = +opt("dur", 24), FPS = +opt("fps", 60);
-const CLEAN = has("clean"), KEEP = has("keep");
+const CLEAN = has("clean"), KEEP = has("keep"), SW = has("sw"), PNG = has("png");
 const OUT = resolve(HERE, opt("out", "out/trailer.mp4"));
 const FRAMES = resolve(HERE, "frames");
+const EXT = PNG ? "png" : "jpg";                     // jpg screenshots encode far faster than png
+
+// Real GPU by default (SwiftShader is ~1000× slower); --sw forces software.
+const gpuArgs = SW
+  ? ["--use-gl=angle", "--use-angle=swiftshader", "--enable-unsafe-swiftshader"]
+  : ["--ignore-gpu-blocklist", "--enable-gpu", ...(process.platform === "darwin" ? ["--use-angle=metal"] : [])];
 
 // ---- resolve puppeteer: local first, then global ----------------------------
 async function loadPuppeteer() {
@@ -77,8 +83,7 @@ console.log(`[capture] ${url}`);
 
 const browser = await puppeteer.launch({
   headless: true, executablePath: exe, protocolTimeout: 120000,
-  args: ["--use-gl=angle", "--use-angle=swiftshader", "--enable-unsafe-swiftshader",
-    "--no-sandbox", "--disable-gpu-sandbox", "--disable-dev-shm-usage", `--window-size=${W},${H}`],
+  args: [...gpuArgs, "--no-sandbox", "--disable-gpu-sandbox", "--disable-dev-shm-usage", `--window-size=${W},${H}`],
 });
 const page = await browser.newPage();
 await page.setViewport({ width: W, height: H, deviceScaleFactor: 1 });
@@ -90,17 +95,20 @@ const total = await page.evaluate("window.__cap.TOTAL");
 const paint = () => page.evaluate(() => new Promise((res) => {   // wait one paint, but never stall
   let done = false; requestAnimationFrame(() => { done = true; res(); }); setTimeout(() => { if (!done) res(); }, 60);
 }));
+const shotOpts = PNG ? { type: "png" } : { type: "jpeg", quality: 95 };
 async function shoot(path) {                                     // transient CDP errors → retry
   for (let a = 0; a < 3; a++) {
-    try { await page.screenshot({ path, type: "png" }); return; }
+    try { await page.screenshot({ path, ...shotOpts }); return; }
     catch (e) { if (a === 2) throw e; await new Promise((r) => setTimeout(r, 150)); }
   }
 }
+const rend = await page.evaluate(() => { const g = document.createElement("canvas").getContext("webgl2"); const d = g && g.getExtension("WEBGL_debug_renderer_info"); return d ? g.getParameter(d.UNMASKED_RENDERER_WEBGL) : "unknown"; });
+console.log(`[capture] renderer: ${rend}`);
 const t0 = Date.now();
 for (let i = 0; i < total; i++) {
   await page.evaluate((k) => window.__cap.frame(k), i);
   await paint();
-  await shoot(join(FRAMES, `f_${String(i).padStart(5, "0")}.png`));
+  await shoot(join(FRAMES, `f_${String(i).padStart(5, "0")}.${EXT}`));
   if (i % 30 === 0 || i === total - 1) {
     const pct = (((i + 1) / total) * 100).toFixed(0);
     process.stdout.write(`\r[capture] frame ${i + 1}/${total} (${pct}%)   `);
@@ -114,7 +122,7 @@ srv.close();
 console.log("[ffmpeg] encoding H.264 …");
 await new Promise((res, rej) => {
   const ff = spawn("ffmpeg", ["-y", "-framerate", String(FPS),
-    "-i", join(FRAMES, "f_%05d.png"),
+    "-i", join(FRAMES, `f_%05d.${EXT}`),
     "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "18", "-preset", "slow",
     "-movflags", "+faststart", OUT], { stdio: ["ignore", "ignore", "inherit"] });
   ff.on("close", (c) => (c === 0 ? res() : rej(new Error("ffmpeg exit " + c))));
