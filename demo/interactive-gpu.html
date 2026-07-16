@@ -181,7 +181,7 @@ function pass(prog,fbo,vw,vh,setup){
 const bind=(unit,tex,loc)=>{ gl.activeTexture(gl.TEXTURE0+unit); gl.bindTexture(gl.TEXTURE_2D,tex); gl.uniform1i(loc,unit); };
 
 // ── camera ──────────────────────────────────────────────────────────────────
-let yaw=0.6, pitch=0.25, dist=11, spin=true, bloom=true, drag=false, lx=0, ly=0;
+let yaw=0.6, pitch=0.25, dist=11, spin=true, bloom=true, drag=false, lx=0, ly=0, dirty=false;
 cv.addEventListener("pointerdown",e=>{drag=true;lx=e.clientX;ly=e.clientY;cv.setPointerCapture?.(e.pointerId);});
 cv.addEventListener("pointermove",e=>{ if(!drag)return; yaw+=(e.clientX-lx)*0.005; pitch=Math.max(-1.2,Math.min(1.2,pitch-(e.clientY-ly)*0.005)); lx=e.clientX;ly=e.clientY; });
 addEventListener("pointerup",()=>drag=false);
@@ -191,6 +191,7 @@ cv.addEventListener("wheel",e=>{e.preventDefault(); dist=Math.max(5,Math.min(24,
 let last=0, fAcc=0, fN=0;
 function frame(now){
   const dt=Math.min(0.05,(now-last)/1000||0.016); last=now;
+  if(dirty){ dirty=false; rebuild(); }          // coalesce slider churn: ≤1 shader rebuild/frame
   if(spin&&!drag) yaw+=0.0022;
   sim.step(dt);
 
@@ -199,10 +200,12 @@ function frame(now){
   const vp=orbitViewProjection({ yaw,pitch,distance:dist, aspect:W/H });
   renderer.draw(sim, { viewProjection:vp, pointScale:Math.min(2,devicePixelRatio||1) });
 
-  // bloom (half-res): bright → blurH → blurV
-  pass(pBright,brightF.fbo,HW,HH,()=>{ bind(0,scene.tex,U.bT); gl.uniform1f(U.bThr,0.55); });
-  pass(pBlur, blurA.fbo, HW,HH,()=>{ bind(0,brightF.tex,U.lT); gl.uniform2f(U.lDir,1.4/HW,0); });
-  pass(pBlur, blurB.fbo, HW,HH,()=>{ bind(0,blurA.tex,U.lT); gl.uniform2f(U.lDir,0,1.4/HH); });
+  // bloom (half-res): bright → blurH → blurV — skipped entirely when off
+  if(bloom){
+    pass(pBright,brightF.fbo,HW,HH,()=>{ bind(0,scene.tex,U.bT); gl.uniform1f(U.bThr,0.55); });
+    pass(pBlur, blurA.fbo, HW,HH,()=>{ bind(0,brightF.tex,U.lT); gl.uniform2f(U.lDir,1.4/HW,0); });
+    pass(pBlur, blurB.fbo, HW,HH,()=>{ bind(0,blurA.tex,U.lT); gl.uniform2f(U.lDir,0,1.4/HH); });
+  }
 
   // composite → screen
   gl.bindFramebuffer(gl.FRAMEBUFFER,null); gl.viewport(0,0,W,H);
@@ -245,7 +248,7 @@ const cap=(t,s)=>{document.getElementById("capT").innerHTML=t;document.getElemen
 function rebuild(){ field=create({ ...P }); sim.setField(field); readouts(); }
 function bind3(id,valId,fmt,key,cb){
   const el=document.getElementById(id),out=document.getElementById(valId);
-  el.addEventListener("input",()=>{ P[key]=+el.value; out.textContent=fmt(+el.value); rebuild(); cb&&cb(+el.value); });
+  el.addEventListener("input",()=>{ P[key]=+el.value; out.textContent=fmt(+el.value); dirty=true; cb&&cb(+el.value); });
   out.textContent=fmt(+el.value);
 }
 bind3("slope","vSlope",v=>v.toFixed(2),"slope",v=>cap(`Slope <b>s=${v.toFixed(2)}</b> re-weights the same modes — the cloud coarsens or shreds without re-seeding.`,"spectral slope"));

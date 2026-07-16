@@ -122,7 +122,7 @@ let baseline= create({ ...P, coherence:0 });               // random-phase surro
 let bounded = null;                                        // BoundedField when obstacle on
 const Z0 = 1.7;                                            // slice height
 const WS = 0.010;                                          // world units per CSS pixel
-let compare=false, obstacle=false;
+let compare=false, obstacle=false, dirty=false;
 
 // sphere obstacle in world space (centred on the viewport, mapped each resize)
 const OB = { x:0, y:0, z:Z0, r:0 };
@@ -186,6 +186,7 @@ function stepParticle(i, fld, useHel, x0, x1){
 
 // ── render loop ────────────────────────────────────────────────────────────
 function frame(){
+  if(dirty){ dirty=false; rebuild(); }          // coalesce slider churn: ≤1 field rebuild/frame
   // fade to black → luminous trails
   ctx.fillStyle="rgba(5,7,11,0.055)"; ctx.fillRect(0,0,W,H);
   ctx.globalCompositeOperation="lighter";
@@ -232,7 +233,8 @@ function measureDivergence(){
 }
 function updateReadouts(){
   drawSpectrum();
-  document.getElementById("rho").textContent = (field.relativeHelicity(10)>=0?"+":"")+field.relativeHelicity(10).toFixed(3);
+  const r=field.relativeHelicity(10);
+  document.getElementById("rho").textContent = (r>=0?"+":"")+r.toFixed(3);
   measureDivergence();
 }
 
@@ -246,7 +248,7 @@ function rebuild(keepSpectrum){
 const cap=(t,s)=>{document.getElementById("capT").innerHTML=t;document.getElementById("capS").textContent=s;};
 function bind(id,valId,fmt,key,cb){
   const el=document.getElementById(id), out=document.getElementById(valId);
-  el.addEventListener("input",()=>{ P[key]=+el.value; out.textContent=fmt(+el.value); rebuild(); cb&&cb(+el.value); });
+  el.addEventListener("input",()=>{ P[key]=+el.value; out.textContent=fmt(+el.value); dirty=true; cb&&cb(+el.value); });
   out.textContent=fmt(+el.value);
 }
 bind("slope","vSlope",v=>v.toFixed(2),"slope",v=>cap(`Slope <b>s=${v.toFixed(2)}</b> re-weights the same modes — steep = smooth large scales, shallow = fine ragged detail.`,"spectral slope"));
