@@ -90,7 +90,7 @@
     <input type="range" id="spd" min="0.08" max="0.7" step="0.01" value="0.35">
   </div>
   <div class="seg" id="scenes">
-    <button data-s="0" class="on">Current</button><button data-s="1">Snow</button><button data-s="2">Embers</button>
+    <button data-s="0" class="on">Current</button><button data-s="1">Snow</button><button data-s="2">Rain</button><button data-s="3">Embers</button>
   </div>
   <div class="toggles">
     <button id="tSpin" class="on">auto-orbit</button>
@@ -108,7 +108,7 @@
   <div class="row"><span class="k">streaklets</span><span class="v" id="np">—</span></div>
 </div>
 
-<div class="cap"><div class="t" id="capT">A swirling current, drawn directly — no fluid solver runs. Grow the ball and the flow slides around it; flip the twist and the whole swirl reverses.</div><div class="s" id="capS">drag to orbit · grow the ball · try Snow / Embers</div></div>
+<div class="cap"><div class="t" id="capT">A swirling current, drawn directly — no fluid solver runs. Grow the ball and the flow slides around it; flip the twist and the whole swirl reverses.</div><div class="s" id="capS">drag to orbit · grow the ball · try Snow / Rain / Embers</div></div>
 <div class="fps" id="fps"></div>
 <a class="alt" href="interactive.html">2D instrumented · A/B →</a>
 <div class="err" id="err"><div><b style="color:var(--ink)">WebGL2 unavailable.</b><br>Try the <a href="interactive.html" style="color:var(--teal)">2D CPU view</a>.</div></div>
@@ -323,6 +323,7 @@ let mixT=0.9, radius=0;                     // mixT=(hel+1)/2 ; radius 0 = obsta
 const SCENES=[
   { name:"Current", colLow:[0.957,0.631,0.235], colHigh:[0.184,0.839,0.749], drift:[0,0,0],    trail:0.9,  grade:[1,1,1],          exp:1.5,  bg:[0.012,0.017,0.026] },
   { name:"Snow",    colLow:[0.98,0.92,0.82],     colHigh:[0.80,0.90,1.0],     drift:[0,-1.0,0], trail:0.30, grade:[0.92,0.98,1.14], exp:1.35, bg:[0.010,0.014,0.028] },
+  { name:"Rain",    colLow:[0.54,0.60,0.68],     colHigh:[0.70,0.79,0.90],    drift:[0,-2.6,0], trail:0.85, grade:[0.94,0.97,1.06], exp:1.25, bg:[0.009,0.011,0.017] },
   { name:"Embers",  colLow:[1.0,0.32,0.06],      colHigh:[1.0,0.80,0.30],     drift:[0,0.7,0],  trail:0.6,  grade:[1.22,0.92,0.70], exp:1.5,  bg:[0.022,0.012,0.010] },
 ];
 let scene=SCENES[0];
@@ -436,19 +437,19 @@ const FPS=+(_cq.get("fps")||60), DT=1/FPS, DUR=+(_cq.get("dur")||24);
 const sstep=(a,b,x)=>{ const t=Math.min(1,Math.max(0,(x-a)/(b-a))); return t*t*(3-2*t); };
 const lerp=(a,b,t)=>a+(b-a)*t;
 function beat(t){
-  cam.az = 0.6 + t*0.19;                                     // continuous slow orbit
-  cam.el = 0.28 + 0.12*Math.sin(t*0.45);
-  cam.dist = lerp(8.6, 7.0, sstep(11,15,t));                 // ease in for the ball
-  let hel = lerp(0.8,-0.85, sstep(6,8.5,t)); hel = lerp(hel, 0.8, sstep(8.5,10.5,t));  // reverse & return
-  mixT = (Math.max(-1,Math.min(1,hel))+1)/2;
-  radius = lerp(0,1.5, sstep(11.5,14.5,t)) * (1 - sstep(15.8,17,t));   // obstacle lives in the Current phase
-  params.speed = t<11 ? 0.30 : t<17 ? 0.36 : 0.30;
-  scene = t<11 ? SCENES[1] : t<17 ? SCENES[0] : SCENES[2];   // Snow → Current → Embers
-  const c = t<6   ? ["Swirling snow on an invisible current — no fluid solver runs, the flow is drawn directly.","swirling snow"]
-          : t<11  ? ["Turn one dial and the whole storm reverses its swirl — watch the snow wind the other way.","reverse the swirl"]
-          : t<17  ? ["The same flow, made visible. Drop a solid ball in the stream — it slides around, and never leaks inside.","a solid in the flow"]
-          : t<21  ? ["Same field, restyled as rising embers — one control changes the look; the motion is the same flow.","restyle it"]
-          :         ["One field, a handful of dials — controllable, natural-looking flow for graphics.","helix noise"];
+  cam.az = 0.6 + t*0.16;                                     // continuous slow orbit
+  cam.el = 0.28 + 0.10*Math.sin(t*0.4);
+  cam.dist = lerp(8.8, 7.2, sstep(5,9,t));                   // ease in as the ball appears
+  mixT = 0.9;                                                // helicity fixed (right-handed)
+  radius = lerp(0,1.45, sstep(5,9,t)) * (1 - sstep(20,21.5,t));   // ball grows in snow, holds thru rain+current, then goes
+  params.speed = 0.34;
+  scene = t<10.5 ? SCENES[1] : t<16 ? SCENES[2] : t<21.5 ? SCENES[0] : SCENES[3];  // Snow → Rain → Current → Embers
+  const c = t<5    ? ["Swirling snow, carried by a divergence-free flow field — no fluid solver runs.","swirling snow"]
+          : t<10.5 ? ["Drop a rock into the storm — the snow streams around it and never leaks inside.","snow · obstacle"]
+          : t<16   ? ["Switch to rain: the same field, now falling fast — and it still parts around the solid.","rain · obstacle"]
+          : t<21.5 ? ["The flow field itself is exactly divergence-free — the meter holds near zero as it wraps the ball.","div-free · ∇·u ≈ 0"]
+          : t<26   ? ["Or restyle it as rising embers — one field, many looks.","restyle it"]
+          :          ["Helix Noise — controllable, divergence-free flow for graphics.","helix noise"];
   cap(c[0], c[1]);
 }
 if(CAP){
