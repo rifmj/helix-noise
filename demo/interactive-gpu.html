@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Helix Noise — GPU field (1M particles)</title>
+<style>
+  :root{
+    --bg:#05070b; --ink:#e8eef2; --dim:#8b97a4; --line:rgba(255,255,255,.09);
+    --teal:#35e0c7; --amber:#f6a542; --panel:rgba(12,16,22,.6);
+    --mono:"SF Mono",ui-monospace,"JetBrains Mono",Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);
+    font-family:var(--sans);overflow:hidden;-webkit-font-smoothing:antialiased}
+  canvas{position:fixed;inset:0;width:100%;height:100%;display:block;touch-action:none;cursor:grab}
+  canvas:active{cursor:grabbing}
+
+  .panel{position:fixed;top:18px;left:18px;width:290px;padding:16px;background:var(--panel);
+    border:1px solid var(--line);border-radius:14px;backdrop-filter:blur(14px) saturate(1.3);
+    -webkit-backdrop-filter:blur(14px) saturate(1.3);box-shadow:0 20px 60px rgba(0,0,0,.5);z-index:5}
+  .brand{color:var(--dim)}
+  .brand b{display:block;color:var(--ink);font-weight:600;font-size:16px}
+  .brand span{display:block;margin-top:3px;font-size:10.5px;letter-spacing:.14em;text-transform:uppercase}
+  .ctl{margin-top:15px}
+  .ctl label{display:flex;justify-content:space-between;font-size:12.5px;color:var(--dim);margin-bottom:6px}
+  .ctl label .val{color:var(--ink);font-family:var(--mono);font-size:12px}
+  input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:3px;border-radius:3px;
+    background:linear-gradient(90deg,var(--teal),#4a5b6b);outline:none;cursor:pointer}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;height:15px;border-radius:50%;
+    background:#fff;box-shadow:0 0 0 4px rgba(53,224,199,.18);cursor:pointer}
+  input[type=range].chir{background:linear-gradient(90deg,var(--amber),#4a5b6b,var(--teal))}
+  .toggles{margin-top:16px;display:flex;gap:8px}
+  .toggles button{flex:1;padding:8px 6px;font-size:12px;color:var(--dim);background:rgba(255,255,255,.03);
+    border:1px solid var(--line);border-radius:9px;cursor:pointer;transition:.15s}
+  .toggles button:hover{color:var(--ink);border-color:rgba(255,255,255,.2)}
+  .toggles button.on{color:#05070b;background:var(--teal);border-color:var(--teal);font-weight:600}
+  .hint{margin-top:13px;font-size:11px;line-height:1.5;color:var(--dim)}
+  .hint b{color:var(--ink)}
+
+  .inst{position:fixed;top:18px;right:18px;width:222px;padding:14px 15px;background:var(--panel);
+    border:1px solid var(--line);border-radius:14px;backdrop-filter:blur(14px);
+    -webkit-backdrop-filter:blur(14px);z-index:5}
+  .inst h4{margin:0 0 4px;font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);font-weight:600}
+  .spec{height:54px;display:flex;align-items:flex-end;gap:2px;margin:4px 0 2px}
+  .spec i{flex:1;background:linear-gradient(180deg,var(--teal),rgba(53,224,199,.15));border-radius:1px 1px 0 0;min-height:1px}
+  .froze{font-size:10px;color:var(--dim);margin-bottom:12px}
+  .froze b{color:var(--teal)}
+  .row{display:flex;justify-content:space-between;align-items:baseline;padding:6px 0;border-top:1px solid var(--line)}
+  .row .k{font-size:11.5px;color:var(--dim)}
+  .row .v{font-family:var(--mono);font-size:13px}
+  .row .v.good{color:var(--teal)}
+  .row small{display:block;font-size:9.5px;color:var(--dim);text-align:right}
+
+  .cap{position:fixed;left:50%;bottom:32px;transform:translateX(-50%);max-width:min(760px,86vw);
+    text-align:center;z-index:5;pointer-events:none}
+  .cap .t{font-size:15px;line-height:1.55;color:var(--ink);text-shadow:0 2px 20px rgba(0,0,0,.9)}
+  .cap .t b{color:var(--teal)}
+  .cap .s{margin-top:6px;font-size:11.5px;letter-spacing:.06em;color:var(--dim);text-transform:uppercase}
+  .fps{position:fixed;left:18px;bottom:16px;z-index:5;font-family:var(--mono);font-size:11px;color:var(--dim)}
+  .err{position:fixed;inset:0;display:none;place-items:center;text-align:center;padding:40px;z-index:9;color:var(--dim)}
+  a.alt{position:fixed;right:20px;bottom:16px;z-index:5;font-size:11px;color:var(--dim);text-decoration:none;border-bottom:1px dotted var(--line)}
+  a.alt:hover{color:var(--ink)}
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+
+<div class="panel">
+  <div class="brand"><b>Helix Noise · GPU</b><span>1M particles · transform feedback</span></div>
+  <div class="ctl">
+    <label>Spectral slope <span class="val" id="vSlope">1.8</span></label>
+    <input type="range" id="slope" min="0.6" max="3.2" step="0.05" value="1.8">
+  </div>
+  <div class="ctl">
+    <label>Helicity <span style="color:var(--amber)">◀</span>·<span style="color:var(--teal)">▶</span> <span class="val" id="vHel">+0.80</span></label>
+    <input type="range" id="hel" class="chir" min="-1" max="1" step="0.02" value="0.8">
+  </div>
+  <div class="ctl">
+    <label>Phase coherence <span class="val" id="vCoh">0.65</span></label>
+    <input type="range" id="coh" min="0" max="1" step="0.01" value="0.65">
+  </div>
+  <div class="toggles">
+    <button id="tBloom" class="on">bloom</button>
+    <button id="tSpin" class="on">auto-orbit</button>
+  </div>
+  <div class="hint" id="hint"><b>Drag</b> to orbit · <b>scroll</b> to zoom. Raise <b>coherence</b> — the spectrum on the right stays frozen; only the phases lock into vortices.</div>
+</div>
+
+<div class="inst">
+  <h4>Energy spectrum E(k)</h4>
+  <div class="spec" id="spec"></div>
+  <div class="froze">re-weighted by <b>slope</b> only · <b>frozen</b> under coherence</div>
+  <div class="row"><span class="k">relative helicity ρ</span><span class="v" id="rho">—</span></div>
+  <div class="row"><span class="k">divergence ∇·u</span><span class="v good" id="div">—<small>exact (FD trunc.)</small></span></div>
+  <div class="row"><span class="k">particles</span><span class="v" id="np">—</span></div>
+</div>
+
+<div class="cap"><div class="t" id="capT">A million particles advected on the GPU by the analytic Beltrami field — divergence-free by construction, no solver, no per-frame CPU.</div><div class="s" id="capS">drag to orbit</div></div>
+<div class="fps" id="fps"></div>
+<a class="alt" href="interactive.html">2D instrumented view · obstacle + A/B →</a>
+<div class="err" id="err"><div><b style="color:var(--ink)">WebGL2 unavailable.</b><br>This demo needs a WebGL2 context. Try the <a href="interactive.html" style="color:var(--teal)">2D CPU view</a>.</div></div>
+
+<script type="module">
+import { create } from "../packages/js/dist/helix-noise.js";
+import { HelixParticleSim, HelixParticleRenderer, orbitViewProjection } from "../packages/gpu/dist/index.js";
+import { linkProgram } from "../packages/gpu/dist/index.js";
+
+const TAU = Math.PI*2;
+const cv = document.getElementById("gl");
+const gl = cv.getContext("webgl2", { alpha:false, antialias:false, powerPreference:"high-performance" });
+if(!gl){ document.getElementById("err").style.display="grid"; throw new Error("no webgl2"); }
+
+const qs = new URLSearchParams(location.search);
+const COUNT = Math.max(1000, (+qs.get("n") || 1_000_000));
+
+// ── field + engine ─────────────────────────────────────────────────────────
+const P = { modes:48, slope:1.8, helicity:0.8, coherence:0.65, seed:7, kmin:1, kmax:6.2, centers:5, churn:0.9, tileable:true };
+let field = create(P);
+const sim = new HelixParticleSim(gl, field, { count:COUNT, box:TAU, speed:0.55 });
+const renderer = new HelixParticleRenderer(gl, {
+  box:TAU, clear:true, clearColor:[0.016,0.024,0.036,1],
+  colorLow:[0.96,0.55,0.18], colorHigh:[0.21,0.88,0.78],
+});
+document.getElementById("np").textContent = COUNT.toLocaleString();
+
+// ── post-fx: bright-pass → separable blur → tonemapped composite ────────────
+const VERT = `#version 300 es
+out vec2 uv; void main(){ vec2 p=vec2((gl_VertexID<<1)&2, gl_VertexID&2); uv=p; gl_Position=vec4(p*2.0-1.0,0.0,1.0); }`;
+const BRIGHT = `#version 300 es
+precision highp float; in vec2 uv; out vec4 o; uniform sampler2D t; uniform float thr;
+void main(){ vec3 c=texture(t,uv).rgb; float l=dot(c,vec3(0.299,0.587,0.114)); o=vec4(c*max(0.0,l-thr)/max(l,1e-4),1.0); }`;
+const BLUR = `#version 300 es
+precision highp float; in vec2 uv; out vec4 o; uniform sampler2D t; uniform vec2 dir;
+void main(){ float w[5]=float[](0.227027,0.194595,0.121622,0.054054,0.016216);
+  vec3 s=texture(t,uv).rgb*w[0];
+  for(int i=1;i<5;i++){ s+=texture(t,uv+dir*float(i)).rgb*w[i]; s+=texture(t,uv-dir*float(i)).rgb*w[i]; }
+  o=vec4(s,1.0); }`;
+const COMP = `#version 300 es
+precision highp float; in vec2 uv; out vec4 o; uniform sampler2D scene; uniform sampler2D bloom; uniform float amt;
+vec3 aces(vec3 x){ return clamp((x*(2.51*x+0.03))/(x*(2.43*x+0.59)+0.14),0.0,1.0); }
+void main(){ vec3 c=texture(scene,uv).rgb + texture(bloom,uv).rgb*amt; c=aces(c*1.15);
+  vec2 d=uv-0.5; c*=mix(0.68,1.0,smoothstep(0.85,0.30,length(d))); o=vec4(c,1.0); }`;
+const pBright=linkProgram(gl,VERT,BRIGHT), pBlur=linkProgram(gl,VERT,BLUR), pComp=linkProgram(gl,VERT,COMP);
+const triVao = gl.createVertexArray();
+const u=(p,n)=>gl.getUniformLocation(p,n);
+const U={ bT:u(pBright,"t"), bThr:u(pBright,"thr"), lT:u(pBlur,"t"), lDir:u(pBlur,"dir"),
+  cS:u(pComp,"scene"), cB:u(pComp,"bloom"), cA:u(pComp,"amt") };
+
+function mkFBO(w,h){
+  const tex=gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D,tex);
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,w,h,0,gl.RGBA,gl.UNSIGNED_BYTE,null);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+  const fbo=gl.createFramebuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER,fbo);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,tex,0);
+  gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+  return { fbo,tex,w,h };
+}
+let scene,brightF,blurA,blurB, W=0,H=0,HW=0,HH=0;
+function freeFBO(f){ if(f){ gl.deleteTexture(f.tex); gl.deleteFramebuffer(f.fbo); } }
+function resize(){
+  const dpr=Math.min(2,devicePixelRatio||1);
+  const cw=(innerWidth||document.documentElement.clientWidth||1280);
+  const ch=(innerHeight||document.documentElement.clientHeight||720);
+  cv.width=Math.round(cw*dpr); cv.height=Math.round(ch*dpr);
+  W=cv.width; H=cv.height; HW=Math.max(1,W>>1); HH=Math.max(1,H>>1);
+  [scene,brightF,blurA,blurB].forEach(freeFBO);
+  scene=mkFBO(W,H); brightF=mkFBO(HW,HH); blurA=mkFBO(HW,HH); blurB=mkFBO(HW,HH);
+}
+addEventListener("resize",resize); resize();
+
+function pass(prog,fbo,vw,vh,setup){
+  gl.bindFramebuffer(gl.FRAMEBUFFER, fbo); gl.viewport(0,0,vw,vh);
+  gl.useProgram(prog); gl.disable(gl.BLEND); gl.disable(gl.DEPTH_TEST);
+  gl.bindVertexArray(triVao); setup(); gl.drawArrays(gl.TRIANGLES,0,3); gl.bindVertexArray(null);
+}
+const bind=(unit,tex,loc)=>{ gl.activeTexture(gl.TEXTURE0+unit); gl.bindTexture(gl.TEXTURE_2D,tex); gl.uniform1i(loc,unit); };
+
+// ── camera ──────────────────────────────────────────────────────────────────
+let yaw=0.6, pitch=0.25, dist=11, spin=true, bloom=true, drag=false, lx=0, ly=0;
+cv.addEventListener("pointerdown",e=>{drag=true;lx=e.clientX;ly=e.clientY;cv.setPointerCapture?.(e.pointerId);});
+cv.addEventListener("pointermove",e=>{ if(!drag)return; yaw+=(e.clientX-lx)*0.005; pitch=Math.max(-1.2,Math.min(1.2,pitch-(e.clientY-ly)*0.005)); lx=e.clientX;ly=e.clientY; });
+addEventListener("pointerup",()=>drag=false);
+cv.addEventListener("wheel",e=>{e.preventDefault(); dist=Math.max(5,Math.min(24,dist*(1+Math.sign(e.deltaY)*0.08)));},{passive:false});
+
+// ── render loop ─────────────────────────────────────────────────────────────
+let last=0, fAcc=0, fN=0;
+function frame(now){
+  const dt=Math.min(0.05,(now-last)/1000||0.016); last=now;
+  if(spin&&!drag) yaw+=0.0022;
+  sim.step(dt);
+
+  // scene → sceneFBO (renderer clears + additive-splats into it)
+  gl.bindFramebuffer(gl.FRAMEBUFFER, scene.fbo);
+  const vp=orbitViewProjection({ yaw,pitch,distance:dist, aspect:W/H });
+  renderer.draw(sim, { viewProjection:vp, pointScale:Math.min(2,devicePixelRatio||1) });
+
+  // bloom (half-res): bright → blurH → blurV
+  pass(pBright,brightF.fbo,HW,HH,()=>{ bind(0,scene.tex,U.bT); gl.uniform1f(U.bThr,0.55); });
+  pass(pBlur, blurA.fbo, HW,HH,()=>{ bind(0,brightF.tex,U.lT); gl.uniform2f(U.lDir,1.4/HW,0); });
+  pass(pBlur, blurB.fbo, HW,HH,()=>{ bind(0,blurA.tex,U.lT); gl.uniform2f(U.lDir,0,1.4/HH); });
+
+  // composite → screen
+  gl.bindFramebuffer(gl.FRAMEBUFFER,null); gl.viewport(0,0,W,H);
+  gl.useProgram(pComp); gl.disable(gl.BLEND); gl.bindVertexArray(triVao);
+  bind(0,scene.tex,U.cS); bind(1,blurB.tex,U.cB); gl.uniform1f(U.cA, bloom?0.85:0.0);
+  gl.drawArrays(gl.TRIANGLES,0,3); gl.bindVertexArray(null);
+
+  fAcc+=dt; if(++fN>=30){ document.getElementById("fps").textContent=(fN/fAcc|0)+" fps · "+COUNT.toLocaleString()+" pts"; fAcc=0;fN=0; }
+  requestAnimationFrame(frame);
+}
+
+// ── instruments (CPU, from the field object) ────────────────────────────────
+const specEl=document.getElementById("spec");
+const bars=[...Array(18)].map(()=>{const b=document.createElement("i");specEl.appendChild(b);return b;});
+function drawSpectrum(){
+  const NB=bars.length,e=new Float64Array(NB),kmax=P.kmax*1.02;
+  for(let j=0;j<field.N;j++){ const b=Math.min(NB-1,(field.km[j]/kmax*NB)|0); e[b]+=field.a[j]*field.a[j]; }
+  const m=Math.max(...e)||1; bars.forEach((bar,i)=>bar.style.height=(4+e[i]/m*50)+"px");
+}
+function measureDiv(){
+  const h=0.004,oa=[0,0,0,0,0,0],ob=[0,0,0,0,0,0]; let mx=0;
+  for(let gx=0;gx<5;gx++)for(let gy=0;gy<5;gy++){
+    const x=(gx+.5)/5*TAU,y=(gy+.5)/5*TAU; let d=0;
+    field.sampleUW(x+h,y,1.7,oa);field.sampleUW(x-h,y,1.7,ob);d+=(oa[0]-ob[0])/(2*h);
+    field.sampleUW(x,y+h,1.7,oa);field.sampleUW(x,y-h,1.7,ob);d+=(oa[1]-ob[1])/(2*h);
+    field.sampleUW(x,y,1.7+h,oa);field.sampleUW(x,y,1.7-h,ob);d+=(oa[2]-ob[2])/(2*h);
+    mx=Math.max(mx,Math.abs(d));
+  }
+  document.getElementById("div").innerHTML=mx.toExponential(1)+'<small>exact (FD trunc.)</small>';
+}
+function readouts(){
+  drawSpectrum();
+  const r=field.relativeHelicity(10);
+  document.getElementById("rho").textContent=(r>=0?"+":"")+r.toFixed(3);
+  measureDiv();
+}
+
+// ── controls ────────────────────────────────────────────────────────────────
+const cap=(t,s)=>{document.getElementById("capT").innerHTML=t;document.getElementById("capS").textContent=s;};
+function rebuild(){ field=create({ ...P }); sim.setField(field); readouts(); }
+function bind3(id,valId,fmt,key,cb){
+  const el=document.getElementById(id),out=document.getElementById(valId);
+  el.addEventListener("input",()=>{ P[key]=+el.value; out.textContent=fmt(+el.value); rebuild(); cb&&cb(+el.value); });
+  out.textContent=fmt(+el.value);
+}
+bind3("slope","vSlope",v=>v.toFixed(2),"slope",v=>cap(`Slope <b>s=${v.toFixed(2)}</b> re-weights the same modes — the cloud coarsens or shreds without re-seeding.`,"spectral slope"));
+bind3("hel","vHel",v=>(v>=0?"+":"")+v.toFixed(2),"helicity",v=>cap(`Helicity <b>p=${(v>=0?"+":"")+v.toFixed(2)}</b> — teal is right-handed, amber left-handed. The whole cloud re-polarizes in place.`,"chirality"));
+bind3("coh","vCoh",v=>v.toFixed(2),"coherence",v=>cap(`Coherence <b>λ=${v.toFixed(2)}</b> at fixed spectrum — E(k) doesn't move. The haze condenses into rolling vortices; only the phases changed.`,"the axis curl-noise lacks"));
+document.getElementById("tBloom").addEventListener("click",e=>{ bloom=!bloom; e.target.classList.toggle("on",bloom); });
+document.getElementById("tSpin").addEventListener("click",e=>{ spin=!spin; e.target.classList.toggle("on",spin); });
+
+readouts(); requestAnimationFrame(frame);
+</script>
+</body>
+</html>

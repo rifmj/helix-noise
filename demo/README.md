@@ -1,10 +1,15 @@
-# demo/ — interactive field explorer
+# demo/ — interactive field explorers
 
-`interactive.html` is a self-contained, zero-build page that drives the **shipped
-`helix-noise`** library live (it imports `../packages/js/dist/helix-noise.js`), so what
-you see is exactly the paper's field — not a re-implementation.
+Two self-contained, zero-build pages that drive the **shipped** packages live, so what you
+see is exactly the paper's field — not a re-implementation.
 
-It's the **wow / supplementary** surface and the source we capture the trailer from.
+| Page | Engine | Role |
+|---|---|---|
+| **`interactive-gpu.html`** | `helix-noise-gpu` (WebGL2 transform feedback) | the **hero / wow** surface — up to 1M GPU-advected particles, helicity colour, bloom post-fx, orbit camera |
+| `interactive.html` | `helix-noise` (CPU sample, Canvas2D) | the **instrumented proof** — vs-baseline split + solid-obstacle (free-slip, ∇·u≈0) |
+
+Both carry the live "receipts": frozen `E(k)`, relative helicity ρ, and an `∇·u` meter.
+These pages are the source we capture the supplementary trailer from.
 
 ## What it shows (the "receipts")
 
@@ -29,10 +34,12 @@ python3 -m http.server 8097                        # then open http://localhost:
 
 ## Roadmap (to the trailer)
 
-1. **[this file]** CPU-sampled 2D skeleton — correct-by-construction, all controls + receipts. ✅
-2. **GPU upgrade** — move advection to the `packages/gpu` WebGL2 engine (or WebGPU) for
-   millions of particles + bloom/DOF, keeping the same UI and instruments.
-3. **Art-directed hero scene** — map the field to swirling snow / smoke around a character.
+1. **CPU-sampled 2D skeleton** (`interactive.html`) — correct-by-construction, all controls + receipts. ✅
+2. **GPU upgrade** (`interactive-gpu.html`) — advection on the `packages/gpu` WebGL2 engine
+   (transform feedback, up to 1M particles) + a bright-pass→blur→tonemap **bloom** post-fx, same
+   UI and instruments. ✅
+3. **Art-directed hero scene** — map the field to swirling snow / smoke around a character;
+   GPU-native obstacle via the potential bake (`bakePotential3D`).
 4. **Deterministic capture** — Playwright drives the page through a scripted beat sheet
    (helicity −1→+1, coherence 0→1, obstacle drop) at fixed `dt`; frames → `ffmpeg` → MP4
    with typographic lower-thirds. This becomes the paper's supplementary video.
