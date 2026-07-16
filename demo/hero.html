@@ -116,8 +116,9 @@ import { create } from "../packages/js/dist/helix-noise.js";
 import { calibrateSpeed, linkProgram, perspective, lookAt, multiply, version } from "../packages/gpu/dist/index.js";
 
 const TAU = Math.PI*2;
+const CAP = new URLSearchParams(location.search).has("capture");   // deterministic trailer capture
 const cv = document.getElementById("gl");
-const gl = cv.getContext("webgl2", { alpha:false, antialias:false, powerPreference:"high-performance" });
+const gl = cv.getContext("webgl2", { alpha:false, antialias:false, preserveDrawingBuffer:CAP, powerPreference:"high-performance" });
 if(!gl){ document.getElementById("err").style.display="grid"; throw new Error("no webgl2"); }
 const glslFloat = x => { const s=String(x); return /[.eE]/.test(s)?s:s+".0"; };
 const qs = new URLSearchParams(location.search);
@@ -322,13 +323,7 @@ let scene=SCENES[0];
 function resize(){ const dpr=Math.min(2,devicePixelRatio||1); cv.width=Math.max(1,Math.round((cv.clientWidth||innerWidth||1280)*dpr)); cv.height=Math.max(1,Math.round((cv.clientHeight||innerHeight||720)*dpr)); }
 addEventListener("resize",resize); resize(); build();
 
-let last=0, ema=0, fc=0;
-function frame(now){
-  requestAnimationFrame(frame);
-  const dt=Math.min(1/30,last?(now-last)*0.001:1/60); last=now;
-  if(dirty){ dirty=false; readouts(); }
-  if(spin&&!drag) cam.az+=dt*0.16;
-  step(dt);
+function drawFrame(){
   const {vp,center,eye}=viewProj();
   ensureFbo();
   gl.bindFramebuffer(gl.FRAMEBUFFER,fbo); gl.viewport(0,0,fboW,fboH);
@@ -350,6 +345,16 @@ function frame(now){
   gl.useProgram(postProg); gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,fboTex);
   gl.uniform1i(PP.tex,0); gl.uniform1f(PP.exp,scene.exp); gl.uniform3fv(PP.grade,scene.grade);
   gl.bindVertexArray(postVao); gl.drawArrays(gl.TRIANGLES,0,3); gl.bindVertexArray(null); gl.bindTexture(gl.TEXTURE_2D,null);
+}
+
+let last=0, ema=0, fc=0;
+function frame(now){
+  requestAnimationFrame(frame);
+  const dt=Math.min(1/30,last?(now-last)*0.001:1/60); last=now;
+  if(dirty){ dirty=false; readouts(); }
+  if(spin&&!drag) cam.az+=dt*0.16;
+  step(dt);
+  drawFrame();
   ema=ema?ema*0.95+dt*0.05:dt;
   if(++fc%30===0) document.getElementById("fps").textContent=`${(1/ema).toFixed(0)} fps · ${(COUNT/1e6).toFixed(2)}M streaklets`;
 }
@@ -403,7 +408,36 @@ document.getElementById("tRec").addEventListener("click",e=>{
   recorder.start(); e.target.textContent="⏹ stop"; e.target.classList.add("on");
 });
 
-readouts(); requestAnimationFrame(frame);
+// ── deterministic trailer capture (?capture=1[&dur=24][&clean]) ─────────────
+const _cq=new URLSearchParams(location.search);
+const FPS=+(_cq.get("fps")||60), DT=1/FPS, DUR=+(_cq.get("dur")||24);
+const sstep=(a,b,x)=>{ const t=Math.min(1,Math.max(0,(x-a)/(b-a))); return t*t*(3-2*t); };
+const lerp=(a,b,t)=>a+(b-a)*t;
+function beat(t){
+  cam.az = 0.7 + t*0.20;                                    // continuous slow orbit
+  cam.el = 0.30 + 0.12*Math.sin(t*0.5);
+  cam.dist = lerp(8.2, 6.8, sstep(8,13,t));                 // ease in as the obstacle appears
+  let hel = lerp(0.8,-0.9, sstep(4,7,t)); hel = lerp(hel, 0.8, sstep(7,9.5,t));  // +.8 → −.9 → +.8
+  mixT = (Math.max(-1,Math.min(1,hel))+1)/2;
+  radius = lerp(0,1.5, sstep(9,13,t)) * (1 - sstep(19,22.5,t));   // grow, hold, shrink
+  params.speed = 0.35;
+  scene = t<15?SCENES[0] : t<20?SCENES[1] : SCENES[2];
+  const c = t<4  ? ["A divergence-free helical field — evaluated analytically, advected on the GPU.","helix noise"]
+          : t<9  ? ["Helicity: one dial slides the flow from left-handed to right-handed corkscrews.","chirality"]
+          : t<15 ? ["A solid obstacle — the stream parts around it, free-slip, while <b>∇·u stays ≈0</b>. No solver.","div-free boundary"]
+          : t<20 ? ["No added solver cost — the whole field is a shader. Millions of streaklets, in real time.","real-time"]
+          :        ["Helix Noise — controllable, divergence-free flow for graphics.","spectral · helicity · coherence"];
+  cap(c[0], c[1]);
+}
+if(CAP){
+  document.querySelector(".fps").style.display="none";
+  document.querySelector("a.alt").style.display="none";
+  if(new URLSearchParams(location.search).has("clean")){ document.querySelector(".panel").style.display="none"; document.querySelector(".inst").style.display="none"; }
+  window.__cap = { FPS, TOTAL: Math.round(DUR*FPS),
+    frame(i){ beat(i*DT); if(i%8===0) readouts(); step(DT); drawFrame(); } };
+} else {
+  readouts(); requestAnimationFrame(frame);
+}
 </script>
 </body>
 </html>
