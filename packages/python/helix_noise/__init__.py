@@ -12,4 +12,4 @@ from .field import HelixField, create
 
 __all__ = ["create", "HelixField", "BoundedField", "TAU", "GA", "VERSION", "__version__"]
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"

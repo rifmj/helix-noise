@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "helix-noise"
-version = "0.1.0"
+version = "0.1.1"
 description = "Spectral, divergence-free helical flow-field generator (numpy port of the JS helix-noise library)."
 readme = "README.md"
 requires-python = ">=3.9"
