@@ -10,6 +10,7 @@
     --teal:#35e0c7; --amber:#f6a542; --panel:rgba(12,16,22,.6);
     --mono:"SF Mono",ui-monospace,"JetBrains Mono",Menlo,Consolas,monospace;
     --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif;
+    --barH:0px;
   }
   *{box-sizing:border-box}
   html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);
@@ -45,22 +46,22 @@
   .hint{margin-top:13px;font-size:11px;line-height:1.5;color:var(--dim)}
   .hint b{color:var(--ink)}
 
-  .inst{position:fixed;top:18px;right:18px;width:222px;padding:14px 15px;background:var(--panel);
+  .inst{position:fixed;top:18px;right:18px;width:clamp(222px,17vw,330px);padding:14px 15px;background:var(--panel);
     border:1px solid var(--line);border-radius:14px;backdrop-filter:blur(14px);
     -webkit-backdrop-filter:blur(14px);z-index:5}
-  .inst h4{margin:0 0 4px;font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);font-weight:600}
-  .spec{height:52px;display:flex;align-items:flex-end;gap:2px;margin:4px 0 2px}
+  .inst h4{margin:0 0 4px;font-size:clamp(10.5px,1.25vh,15px);letter-spacing:.14em;text-transform:uppercase;color:var(--dim);font-weight:600}
+  .spec{height:clamp(52px,6vh,74px);display:flex;align-items:flex-end;gap:2px;margin:4px 0 2px}
   .spec i{flex:1;background:linear-gradient(180deg,var(--teal),rgba(53,224,199,.15));border-radius:1px 1px 0 0;min-height:1px}
-  .froze{font-size:10px;color:var(--dim);margin-bottom:12px}
+  .froze{font-size:clamp(10px,1.2vh,14px);color:var(--dim);margin-bottom:12px}
   .froze b{color:var(--teal)}
   .row{display:flex;justify-content:space-between;align-items:baseline;padding:6px 0;border-top:1px solid var(--line)}
-  .row .k{font-size:11.5px;color:var(--dim)}
-  .row .v{font-family:var(--mono);font-size:13px}
+  .row .k{font-size:clamp(11.5px,1.35vh,17px);color:var(--dim)}
+  .row .v{font-family:var(--mono);font-size:clamp(13px,1.6vh,20px)}
   .row .v.good{color:var(--teal)}
-  .row small{display:block;font-size:9.5px;color:var(--dim);text-align:right}
+  .row small{display:block;font-size:clamp(9.5px,1.1vh,13px);color:var(--dim);text-align:right}
 
   .cap{position:fixed;left:50%;bottom:6vh;transform:translateX(-50%);max-width:min(1120px,90vw);
-    text-align:center;z-index:5;pointer-events:none}
+    text-align:center;z-index:9;pointer-events:none}
   .cap .t{font-size:clamp(20px,3.1vh,46px);line-height:1.42;font-weight:500;color:#fff;
     text-shadow:0 2px 6px rgba(0,0,0,.95),0 4px 34px rgba(0,0,0,.85)}
   .cap .t b{color:var(--teal)}
@@ -70,10 +71,33 @@
   a.alt{position:fixed;right:20px;bottom:14px;z-index:5;font-size:11px;color:var(--dim);text-decoration:none;border-bottom:1px dotted var(--line)}
   a.alt:hover{color:var(--ink)}
   .err{position:fixed;inset:0;display:none;place-items:center;text-align:center;padding:40px;z-index:9;color:var(--dim)}
+
+  /* cinema mode (letterbox 2.39:1) — on by default in capture, ?cine=1 live */
+  .bar{position:fixed;left:0;right:0;height:var(--barH);background:#000;z-index:7;display:none}
+  .barT{top:0}.barB{bottom:0}
+  body.cine .bar{display:block}
+  body.cine .cap{bottom:calc(var(--barH) + 4vh)}
+  body.cine .inst{top:calc(var(--barH) + 16px)}
+  body.cine .panel{top:calc(var(--barH) + 16px)}
+
+  /* outro product card */
+  .card{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);width:min(92vw,1100px);
+    text-align:center;z-index:8;opacity:0;pointer-events:none}
+  .card .c-kicker{font-size:clamp(10px,1.5vh,16px);letter-spacing:.34em;color:var(--teal);margin-bottom:2.2vh}
+  .card .c-title{font-size:clamp(52px,10.5vh,128px);font-weight:600;line-height:1.02;color:#fff;letter-spacing:-.015em}
+  .card .c-title b{font-weight:600;background:linear-gradient(92deg,var(--teal),var(--amber));
+    -webkit-background-clip:text;background-clip:text;color:transparent}
+  .card .c-sub{margin-top:1.6vh;font-size:clamp(15px,2.3vh,27px);color:#c8d2da}
+  .card .c-install{margin-top:3.4vh;display:flex;gap:max(10px,1.2vw);justify-content:center;flex-wrap:wrap}
+  .card .c-install code{font-family:var(--mono);font-size:clamp(13px,2vh,23px);color:var(--ink);
+    padding:1.2vh 1.6vw;border:1px solid rgba(255,255,255,.16);border-radius:12px;
+    background:rgba(10,14,19,.55);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
+  .card .c-ref{margin-top:2.6vh;font-size:clamp(10px,1.5vh,16px);letter-spacing:.06em;color:var(--dim)}
 </style>
 </head>
 <body>
 <canvas id="gl"></canvas>
+<div class="bar barT"></div><div class="bar barB"></div>
 
 <div class="panel">
   <div class="brand"><b>Helix Noise · Hero</b><span>streaklets · div-free obstacle</span></div>
@@ -94,9 +118,10 @@
   </div>
   <div class="toggles">
     <button id="tSpin" class="on">auto-orbit</button>
+    <button id="tFly">● fly ball</button>
     <button id="tRec" class="rec">⏺ record</button>
   </div>
-  <div class="hint" id="hint"><b>Drag</b> to orbit. Grow the <b>obstacle</b> — the stream parts around a solid bubble while <b>∇·u stays ≈0</b>. No solver.</div>
+  <div class="hint" id="hint"><b>Drag</b> to orbit. Grow the <b>obstacle</b> or hit <b>fly ball</b> — the stream parts around a moving solid while <b>∇·u stays ≈0</b>. No solver.</div>
 </div>
 
 <div class="inst">
@@ -108,7 +133,16 @@
   <div class="row"><span class="k">streaklets</span><span class="v" id="np">—</span></div>
 </div>
 
-<div class="cap"><div class="t" id="capT">A swirling current, drawn directly — no fluid solver runs. Grow the ball and the flow slides around it; flip the twist and the whole swirl reverses.</div><div class="s" id="capS">drag to orbit · grow the ball · try Snow / Rain / Embers</div></div>
+<div class="cap"><div class="t" id="capT">A swirling current, drawn directly — no fluid solver runs. Fly the ball through it; flip the twist; restyle it as snow, rain or embers.</div><div class="s" id="capS">drag to orbit · fly the ball · snow / rain / embers</div></div>
+
+<div class="card" id="card">
+  <div class="c-kicker">DIVERGENCE-FREE BY CONSTRUCTION</div>
+  <div class="c-title">helix <b>noise</b></div>
+  <div class="c-sub">Controllable flow fields for graphics — exact ∇·u = 0, moving solids, no solver.</div>
+  <div class="c-install"><code>npm i helix-noise</code><code>cargo add helix-noise</code></div>
+  <div class="c-ref">JS · Rust · Python · GLSL — MIT · github.com/rifmj/helix-noise · paper doi:10.5281/zenodo.21246333</div>
+</div>
+
 <div class="fps" id="fps"></div>
 <a class="alt" href="interactive.html">2D instrumented · A/B →</a>
 <div class="err" id="err"><div><b style="color:var(--ink)">WebGL2 unavailable.</b><br>Try the <a href="interactive.html" style="color:var(--teal)">2D CPU view</a>.</div></div>
@@ -118,16 +152,17 @@ import { create } from "../packages/js/dist/helix-noise.js";
 import { calibrateSpeed, linkProgram, perspective, lookAt, multiply, version } from "../packages/gpu/dist/index.js";
 
 const TAU = Math.PI*2;
-const CAP = new URLSearchParams(location.search).has("capture");   // deterministic trailer capture
+const qs = new URLSearchParams(location.search);
+const CAP = qs.has("capture");                                     // deterministic trailer capture
+const CINE = CAP ? qs.get("cine")!=="0" : qs.has("cine");          // letterbox on by default when capturing
 const cv = document.getElementById("gl");
 const gl = cv.getContext("webgl2", { alpha:false, antialias:false, preserveDrawingBuffer:CAP, powerPreference:"high-performance" });
 if(!gl){ document.getElementById("err").style.display="grid"; throw new Error("no webgl2"); }
 const glslFloat = x => { const s=String(x); return /[.eE]/.test(s)?s:s+".0"; };
-const qs = new URLSearchParams(location.search);
 const COUNT = Math.max(2000, (+qs.get("n") || 500_000));
 
 // ── two fields, identical but for handedness; mixing stays divergence-free ──
-const SEED=9, BOX=TAU, CENTER=BOX/2, SHELL=0.9;
+const SEED=38, BOX=TAU, CENTER=BOX/2, SHELL=0.9;   // seed 38: ρ-readout symmetric in ±helicity (probed 1..48)
 const baseOpts = { modes:40, slope:2.0, coherence:0.65, seed:SEED, tileable:true, churn:0 };
 const fieldA = create({ ...baseOpts, helicity:-0.9 });
 const fieldB = create({ ...baseOpts, helicity:+0.9 });
@@ -136,7 +171,12 @@ const chunkB = fieldB.glsl({ name:"hxB", curl:true, potential:true, precision:6 
 const pcts = calibrateSpeed(fieldA, BOX, 1200);
 document.getElementById("np").textContent = COUNT.toLocaleString();
 
-// ── update TF: advect + exactly div-free obstacle (u = ramp·u + ramp'·n×A) ──
+// ── update TF: advect + exactly div-free MOVING obstacle ────────────────────
+// The wall is imposed on the RELATIVE flow (ambient + drift − ball velocity) via its own
+// vector potential, then the ball velocity is added back:
+//   u = curl(ramp·A_rel) + v_ball,  A_rel = uSpeed·A + ½(drift−v_ball)×(p−c)
+// so ∇·u ≡ 0 exactly everywhere, the surface is free-slip in the ball's frame, and the
+// boundary condition travels with the ball. Drift is inside the construction too → exact.
 const STRIDE = 8*4;
 const UPDATE_VS = `#version 300 es
 precision highp float;
@@ -148,26 +188,28 @@ layout(location=2) in vec2 a_aux;
 out vec3 v_pos; out vec3 v_vel; out vec2 v_aux;
 uniform float uDt, uSpeed, uMix, uR;
 uniform vec3 uDrift;    // constant art-direction drift (snow falls, embers rise); 0 = pure field
+uniform vec3 uObsC;     // obstacle centre (field space)
+uniform vec3 uObsV;     // obstacle velocity (sim units)
 void main(){
   vec3 p=a_pos;
   vec3 u=mix(hxA(p),hxB(p),uMix);
   vec3 w=mix(hxACurl(p),hxBCurl(p),uMix);
   float rawSp=length(u);
   float h=dot(u,w)/(rawSp*length(w)+1e-6);
-  float rampAll=1.0;                     // 1 away from the wall → drift full; →0 at the wall
+  vec3 vel=u*uSpeed+uDrift;
   if(uR>0.001){
-    vec3 rp=p-vec3(${glslFloat(CENTER)}); float dist=length(rp); vec3 n=rp/max(dist,1e-5);
+    vec3 rp=p-uObsC; float dist=length(rp); vec3 n=rp/max(dist,1e-5);
     float d=dist-uR;
     if(d<${glslFloat(SHELL)}){
       float x=clamp(d/${glslFloat(SHELL)},0.0,1.0);
       float ramp=x*x*(3.0-2.0*x);
       float dramp=(d>0.0)?6.0*x*(1.0-x)/${glslFloat(SHELL)}:0.0;
-      vec3 A=mix(hxAPot(p),hxBPot(p),uMix);
-      u=ramp*u+dramp*cross(n,A); rampAll=ramp;
-      if(d<0.0) u+=n*(0.6*-d+0.3);      // expel interior stragglers
+      vec3 W=uDrift-uObsV;
+      vec3 Ar=mix(hxAPot(p),hxBPot(p),uMix)*uSpeed+0.5*cross(W,rp);
+      vel=ramp*(u*uSpeed+W)+dramp*cross(n,Ar)+uObsV;
+      if(d<0.0) vel+=n*(0.6*-d+0.3);      // expel interior stragglers (inside the solid only)
     }
   }
-  vec3 vel=u*uSpeed + uDrift*rampAll;    // drift parts around the obstacle too
   p+=vel*uDt;
   v_pos=mod(p,${glslFloat(BOX)}); v_vel=vel;
   v_aux=vec2(mix(a_aux.x,h,0.08),rawSp);
@@ -216,8 +258,8 @@ const BUBBLE_VS = `#version 300 es
 precision highp float;
 layout(location=0) in vec3 a_pos;
 out vec3 f_n; out vec3 f_w;
-uniform mat4 uViewProj; uniform float uR;
-void main(){ vec3 w=a_pos*uR; f_n=a_pos; f_w=w; gl_Position=uViewProj*vec4(w,1.0); }`;
+uniform mat4 uViewProj; uniform float uR; uniform vec3 uC;
+void main(){ vec3 w=a_pos*uR+uC; f_n=a_pos; f_w=w; gl_Position=uViewProj*vec4(w,1.0); }`;
 const BUBBLE_FS = `#version 300 es
 precision mediump float;
 in vec3 f_n; in vec3 f_w; out vec4 outColor;
@@ -225,16 +267,24 @@ uniform vec3 uEye; uniform float uA; uniform vec3 uTint;
 void main(){ vec3 V=normalize(uEye-f_w); float fr=pow(1.0-abs(dot(normalize(f_n),V)),2.8);
   outColor=vec4(uTint*(uA*(fr+0.02)),1.0); }`;
 
-// ── post: ACES tonemap + colour grade (scene) + vignette ────────────────────
+// ── post: chroma fringe + ACES + grade + vignette + deterministic film grain ─
 const POST_VS = `#version 300 es
 precision highp float; out vec2 f_uv;
 void main(){ vec2 p=vec2[3](vec2(-1.,-1.),vec2(3.,-1.),vec2(-1.,3.))[gl_VertexID]; f_uv=p*0.5+0.5; gl_Position=vec4(p,0.,1.); }`;
 const POST_FS = `#version 300 es
 precision mediump float; in vec2 f_uv; out vec4 outColor;
-uniform sampler2D uTex; uniform float uExposure; uniform vec3 uGrade;
+uniform sampler2D uTex; uniform float uExposure, uFrame; uniform vec3 uGrade;
 vec3 aces(vec3 x){ return clamp((x*(2.51*x+0.03))/(x*(2.43*x+0.59)+0.14),0.,1.); }
-void main(){ vec3 c=texture(uTex,f_uv).rgb*uExposure*uGrade; c=aces(c);
-  vec2 q=f_uv-0.5; c*=1.0-0.42*smoothstep(0.32,0.75,length(q)); outColor=vec4(c,1.); }`;
+void main(){
+  vec2 q=f_uv-0.5;
+  vec2 ca=q*dot(q,q)*0.010;                       // subtle radial chromatic fringe
+  vec3 c=vec3(texture(uTex,f_uv+ca).r,texture(uTex,f_uv).g,texture(uTex,f_uv-ca).b);
+  c*=uExposure*uGrade; c=aces(c);
+  c*=1.0-0.42*smoothstep(0.32,0.75,length(q));
+  float g=fract(sin(dot(gl_FragCoord.xy+uFrame*vec2(37.0,17.0),vec2(12.9898,78.233)))*43758.5453);
+  c=max(vec3(0.0),c+(g-0.5)*0.045);               // frame-seeded grain: deterministic per capture
+  outColor=vec4(c,1.);
+}`;
 
 const updateProg=linkProgram(gl,UPDATE_VS,UPDATE_FS,["v_pos","v_vel","v_aux"]);
 const renderProg=linkProgram(gl,RENDER_VS,RENDER_FS);
@@ -242,10 +292,10 @@ const bubbleProg=linkProgram(gl,BUBBLE_VS,BUBBLE_FS);
 const postProg=linkProgram(gl,POST_VS,POST_FS);
 const uu=n=>gl.getUniformLocation(updateProg,n), ur=n=>gl.getUniformLocation(renderProg,n),
       ub=n=>gl.getUniformLocation(bubbleProg,n), up=n=>gl.getUniformLocation(postProg,n);
-const U={dt:uu("uDt"),speed:uu("uSpeed"),mix:uu("uMix"),r:uu("uR"),drift:uu("uDrift")};
+const U={dt:uu("uDt"),speed:uu("uSpeed"),mix:uu("uMix"),r:uu("uR"),drift:uu("uDrift"),obsC:uu("uObsC"),obsV:uu("uObsV")};
 const R={vp:ur("uViewProj"),center:ur("uCenter"),trail:ur("uTrail"),alpha:ur("uAlpha"),speedP:ur("uSpeedP"),mix:ur("uMix"),speed:ur("uSpeed"),colLow:ur("uColLow"),colHigh:ur("uColHigh")};
-const B={vp:ub("uViewProj"),r:ub("uR"),eye:ub("uEye"),a:ub("uA"),tint:ub("uTint")};
-const PP={tex:up("uTex"),exp:up("uExposure"),grade:up("uGrade")};
+const B={vp:ub("uViewProj"),r:ub("uR"),eye:ub("uEye"),a:ub("uA"),tint:ub("uTint"),c:ub("uC")};
+const PP={tex:up("uTex"),exp:up("uExposure"),grade:up("uGrade"),frame:up("uFrame")};
 const postVao=gl.createVertexArray();
 
 // ── HDR fbo ─────────────────────────────────────────────────────────────────
@@ -299,27 +349,33 @@ function build(){ const data=initData(params.count); const mk=()=>{const b=gl.cr
 }
 function step(dt){ const src=bufs.cur===0?bufs.uA:bufs.uB, dst=bufs.cur===0?bufs.b:bufs.a;
   gl.useProgram(updateProg); gl.uniform1f(U.dt,dt); gl.uniform1f(U.speed,params.speed); gl.uniform1f(U.mix,mixT); gl.uniform1f(U.r,radius); gl.uniform3fv(U.drift,mat.drift);
+  gl.uniform3fv(U.obsC,obsC); gl.uniform3fv(U.obsV,obsV);
   gl.enable(gl.RASTERIZER_DISCARD); gl.bindVertexArray(src);
   gl.bindBufferBase(gl.TRANSFORM_FEEDBACK_BUFFER,0,dst); gl.beginTransformFeedback(gl.POINTS);
   gl.drawArrays(gl.POINTS,0,params.count); gl.endTransformFeedback();
   gl.bindBufferBase(gl.TRANSFORM_FEEDBACK_BUFFER,0,null); gl.bindVertexArray(null); gl.disable(gl.RASTERIZER_DISCARD);
   bufs.cur=bufs.cur===0?1:0; }
 
-// ── camera ──────────────────────────────────────────────────────────────────
-const cam={az:0.7,el:0.34,dist:7.6}; let spin=true, drag=false, lx=0, ly=0;
+// ── camera (orbits a movable target — beats push in / cut / track the ball) ─
+const cam={az:0.7,el:0.34,dist:7.6,tx:0,ty:0,tz:0}; let spin=true, drag=false, lx=0, ly=0;
 cv.addEventListener("pointerdown",e=>{drag=true;lx=e.clientX;ly=e.clientY;cv.setPointerCapture?.(e.pointerId);});
 cv.addEventListener("pointermove",e=>{ if(!drag)return; cam.az+=(e.clientX-lx)*0.005; cam.el=Math.min(1.35,Math.max(-1.35,cam.el+(e.clientY-ly)*0.005)); lx=e.clientX;ly=e.clientY; });
 addEventListener("pointerup",()=>drag=false);
 cv.addEventListener("wheel",e=>{e.preventDefault(); cam.dist=Math.min(16,Math.max(3.5,cam.dist*(1+e.deltaY*0.001)));},{passive:false});
-function viewProj(){ const ex=Math.cos(cam.az)*Math.cos(cam.el)*cam.dist, ey=Math.sin(cam.el)*cam.dist, ez=Math.sin(cam.az)*Math.cos(cam.el)*cam.dist;
-  const proj=perspective(50*Math.PI/180,cv.width/Math.max(1,cv.height),0.1,100), view=lookAt([ex,ey,ez],[0,0,0]);
+function viewProj(){
+  const ex=cam.tx+Math.cos(cam.az)*Math.cos(cam.el)*cam.dist, ey=cam.ty+Math.sin(cam.el)*cam.dist, ez=cam.tz+Math.sin(cam.az)*Math.cos(cam.el)*cam.dist;
+  const proj=perspective(50*Math.PI/180,cv.width/Math.max(1,cv.height),0.1,100), view=lookAt([ex,ey,ez],[cam.tx,cam.ty,cam.tz]);
   return { vp:multiply(proj,view), center:[CENTER,CENTER,CENTER], eye:[ex,ey,ez] }; }
 
 // ── interactive state + scenes ──────────────────────────────────────────────
 let mixT=0.9, radius=0;                     // mixT=(hel+1)/2 ; radius 0 = obstacle off
+const obsC=[CENTER,CENTER,CENTER];          // obstacle centre (field space)
+const obsV=[0,0,0];                         // obstacle velocity (sim units)
+let simScale=1, dim=1, frameNo=0;           // bullet-time factor · outro dim · grain seed
+const BR=1.35;                              // trailer/fly ball radius
+const sstep=(a,b,x)=>{ const t=Math.min(1,Math.max(0,(x-a)/(b-a))); return t*t*(3-2*t); };
+const lerp=(a,b,t)=>a+(b-a)*t;
 // Materials — each re-tints, re-drifts and re-trails the SAME field, no recompile.
-// Current: abstract teal/amber ribbons, no drift (used for the exactly div-free obstacle).
-// Snow: pale flakes drifting down through the swirl. Embers: warm motes rising.
 const SCENES=[
   { name:"Current", colLow:[0.957,0.631,0.235], colHigh:[0.184,0.839,0.749], drift:[0,0,0],    trail:0.9,  grade:[1,1,1],          exp:1.5,  bg:[0.012,0.017,0.026] },
   { name:"Snow",    colLow:[0.98,0.92,0.82],     colHigh:[0.80,0.90,1.0],     drift:[0,-1.0,0], trail:0.30, grade:[0.92,0.98,1.14], exp:1.35, bg:[0.010,0.014,0.028] },
@@ -359,63 +415,101 @@ function drawFrame(){
   gl.drawArraysInstanced(gl.LINE_STRIP,0,SEG_VERTS,params.count); gl.bindVertexArray(null);
   if(radius>0.02){
     gl.useProgram(bubbleProg); gl.uniformMatrix4fv(B.vp,false,vp); gl.uniform1f(B.r,radius); gl.uniform3fv(B.eye,eye);
+    gl.uniform3f(B.c,obsC[0]-CENTER,obsC[1]-CENTER,obsC[2]-CENTER);
     gl.uniform1f(B.a,0.5*Math.min(1,(radius/1.9)*2.5));
-    gl.uniform3f(B.tint,0.184+(0.957-0.184)*mixT,0.839+(0.631-0.839)*mixT,0.749+(0.235-0.749)*mixT);
+    gl.uniform3f(B.tint,0.35*mat.colLow[0]+0.65*mat.colHigh[0],0.35*mat.colLow[1]+0.65*mat.colHigh[1],0.35*mat.colLow[2]+0.65*mat.colHigh[2]);
     gl.enable(gl.CULL_FACE); gl.cullFace(gl.BACK); gl.bindVertexArray(bubbleVao); gl.drawArrays(gl.TRIANGLES,0,bubbleGeo.length/3); gl.bindVertexArray(null); gl.disable(gl.CULL_FACE);
   }
   gl.bindFramebuffer(gl.FRAMEBUFFER,null); gl.viewport(0,0,cv.width,cv.height); gl.disable(gl.BLEND);
   gl.useProgram(postProg); gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,fboTex);
-  gl.uniform1i(PP.tex,0); gl.uniform1f(PP.exp,mat.exp); gl.uniform3fv(PP.grade,mat.grade);
+  gl.uniform1i(PP.tex,0); gl.uniform1f(PP.exp,mat.exp*dim); gl.uniform3fv(PP.grade,mat.grade);
+  gl.uniform1f(PP.frame,frameNo%271);
   gl.bindVertexArray(postVao); gl.drawArrays(gl.TRIANGLES,0,3); gl.bindVertexArray(null); gl.bindTexture(gl.TEXTURE_2D,null);
 }
 
-let last=0, ema=0, fc=0;
+let last=0, ema=0, fc=0, flyT0=-1;
 function frame(now){
   requestAnimationFrame(frame);
   const dt=Math.min(1/30,last?(now-last)*0.001:1/60); last=now;
   if(dirty){ dirty=false; readouts(); }
   if(spin&&!drag) cam.az+=dt*0.16;
+  if(flyT0===-2) flyT0=now*0.001;
+  if(flyT0>0){ const ft=now*0.001-flyT0;
+    if(ft>8){ flyT0=-1; radius=+rad.value; obsC[0]=obsC[1]=obsC[2]=CENTER; obsV[0]=obsV[1]=obsV[2]=0; dirty=true; }
+    else{ const u=ft/8, e=0.7*u+0.3*u*u*(3-2*u), de=(0.7+1.8*u*(1-u))/8;
+      obsC[0]=CENTER+lerp(-2.7,2.7,e); obsC[1]=CENTER+0.35*Math.sin(u*Math.PI)-0.10; obsC[2]=CENTER;
+      obsV[0]=5.4*de; obsV[1]=0.35*Math.cos(u*Math.PI)*Math.PI/8; obsV[2]=0;
+      radius=Math.max(+rad.value, BR*Math.min(1,ft/0.7)*(1-sstep(7.2,8,ft)));
+      if((fc&15)===0) dirty=true;
+    }
+  }
   easeMat(dt);
   step(dt);
+  frameNo++;
   drawFrame();
   ema=ema?ema*0.95+dt*0.05:dt;
   if(++fc%30===0) document.getElementById("fps").textContent=`${(1/ema).toFixed(0)} fps · ${(COUNT/1e6).toFixed(2)}M streaklets`;
 }
 
-// ── instruments (CPU) ───────────────────────────────────────────────────────
+// ── instruments (CPU) — the meter measures exactly what the GPU advects ─────
 let dirty=false;
 const specEl=document.getElementById("spec"); const bars=[...Array(18)].map(()=>{const b=document.createElement("i");specEl.appendChild(b);return b;});
 (function drawSpectrum(){ const NB=bars.length,e=new Float64Array(NB),kmax=6.2*1.02;
   for(let j=0;j<fieldA.N;j++){ const b=Math.min(NB-1,(fieldA.km[j]/kmax*NB)|0); e[b]+=fieldA.a[j]*fieldA.a[j]; }
   const m=Math.max(...e)||1; bars.forEach((bar,i)=>bar.style.height=(4+e[i]/m*48)+"px"); })();
-function sphereSdf(r){ const c=CENTER; const s=(x,y,z)=>Math.hypot(x-c,y-c,z-c)-r; const g=(x,y,z)=>{const dx=x-c,dy=y-c,dz=z-c,l=Math.hypot(dx,dy,dz)||1;return[dx/l,dy/l,dz/l];}; return {s,g}; }
-function measureDiv(fld){ const h=0.004,oa=[0,0,0,0,0,0],ob=[0,0,0,0,0,0]; let mx=0;
+function sphereSdf(c,r){ const s=(x,y,z)=>Math.hypot(x-c[0],y-c[1],z-c[2])-r;
+  const g=(x,y,z)=>{const dx=x-c[0],dy=y-c[1],dz=z-c[2],l=Math.hypot(dx,dy,dz)||1;return[dx/l,dy/l,dz/l];}; return {s,g}; }
+function boundedUniform(W,c,r){   // exact bounded uniform flow: curl(ramp·½W×rp) — mirrors the shader
+  return (x,y,z)=>{ const dx=x-c[0],dy=y-c[1],dz=z-c[2]; const dist=Math.hypot(dx,dy,dz)||1e-9, d=dist-r;
+    if(d>=SHELL) return [W[0],W[1],W[2]];
+    const n=[dx/dist,dy/dist,dz/dist], xx=Math.min(1,Math.max(0,d/SHELL));
+    const ramp=xx*xx*(3-2*xx), dr=d>0?6*xx*(1-xx)/SHELL:0;
+    const A=[0.5*(W[1]*dz-W[2]*dy),0.5*(W[2]*dx-W[0]*dz),0.5*(W[0]*dy-W[1]*dx)];
+    return [ramp*W[0]+dr*(n[1]*A[2]-n[2]*A[1]), ramp*W[1]+dr*(n[2]*A[0]-n[0]*A[2]), ramp*W[2]+dr*(n[0]*A[1]-n[1]*A[0])];
+  }; }
+function measureDiv(sample,zc){ const h=0.004; let mx=0;
   for(let gx=0;gx<5;gx++)for(let gy=0;gy<5;gy++){ const x=(gx+.5)/5*TAU,y=(gy+.5)/5*TAU; let d=0;
-    fld.sampleUW(x+h,y,1.7,oa);fld.sampleUW(x-h,y,1.7,ob);d+=(oa[0]-ob[0])/(2*h);
-    fld.sampleUW(x,y+h,1.7,oa);fld.sampleUW(x,y-h,1.7,ob);d+=(oa[1]-ob[1])/(2*h);
-    fld.sampleUW(x,y,1.7+h,oa);fld.sampleUW(x,y,1.7-h,ob);d+=(oa[2]-ob[2])/(2*h); mx=Math.max(mx,Math.abs(d)); }
+    let a=sample(x+h,y,zc), b=sample(x-h,y,zc); d+=(a[0]-b[0])/(2*h);
+    a=sample(x,y+h,zc); b=sample(x,y-h,zc); d+=(a[1]-b[1])/(2*h);
+    a=sample(x,y,zc+h); b=sample(x,y,zc-h); d+=(a[2]-b[2])/(2*h);
+    mx=Math.max(mx,Math.abs(d)); }
   return mx; }
 function readouts(){
   const p=2*mixT-1;                                   // effective helicity ≈ 0.9·p
   const f=create({ ...baseOpts, helicity:Math.max(-1,Math.min(1,0.9*p)) });
   const rr=f.relativeHelicity(10);
   document.getElementById("rho").textContent=(rr>=0?"+":"")+rr.toFixed(3);
-  let fld=f, note="exact (FD trunc.)";
-  if(radius>0.02){ const {s,g}=sphereSdf(radius); fld=f.withBoundary(s,{thickness:SHELL,gradient:g}); note="with obstacle · exact"; }
-  document.getElementById("div").innerHTML=measureDiv(fld).toExponential(1)+'<small>'+note+'</small>';
+  const oa=[0,0,0,0,0,0]; let fn, zc, note;
+  if(radius>0.02){
+    const c=[obsC[0],obsC[1],obsC[2]], {s,g}=sphereSdf(c,radius);
+    const fb=f.withBoundary(s,{thickness:SHELL,gradient:g});
+    const W=[mat.drift[0]-obsV[0],mat.drift[1]-obsV[1],mat.drift[2]-obsV[2]];
+    const ubW=boundedUniform(W,c,radius);
+    fn=(x,y,z)=>{ fb.sampleUW(x,y,z,oa); const w=ubW(x,y,z);
+      return [oa[0]*params.speed+w[0]+obsV[0], oa[1]*params.speed+w[1]+obsV[1], oa[2]*params.speed+w[2]+obsV[2]]; };
+    zc=c[2]; note=Math.hypot(obsV[0],obsV[1],obsV[2])>1e-3?"moving obstacle · exact":"with obstacle · exact";
+  } else {
+    fn=(x,y,z)=>{ f.sampleUW(x,y,z,oa);
+      return [oa[0]*params.speed+mat.drift[0], oa[1]*params.speed+mat.drift[1], oa[2]*params.speed+mat.drift[2]]; };
+    zc=1.7; note="exact (FD trunc.)";
+  }
+  document.getElementById("div").innerHTML=measureDiv(fn,zc).toExponential(1)+'<small>'+note+'</small>';
 }
 
 // ── controls ────────────────────────────────────────────────────────────────
+const capEl=document.querySelector(".cap"), cardEl=document.getElementById("card");
 const cap=(t,s)=>{document.getElementById("capT").innerHTML=t;document.getElementById("capS").textContent=s;};
 const hel=document.getElementById("hel"), rad=document.getElementById("rad"), spd=document.getElementById("spd");
 hel.addEventListener("input",()=>{ const p=+hel.value; mixT=(p+1)/2; document.getElementById("vHel").textContent=(p>=0?"+":"")+(0.9*p).toFixed(2); dirty=true;
   cap(`Twist <b>${(0.9*p>=0?"+":"")+(0.9*p).toFixed(2)}</b> — one dial winds the whole swirl from left-handed to right-handed. Same motion, opposite spin.`,"the twist dial"); });
-rad.addEventListener("input",()=>{ radius=+rad.value; document.getElementById("vR").textContent=radius.toFixed(2); dirty=true;
-  cap(radius>0.02?`Ball radius <b>${radius.toFixed(2)}</b> — the flow slides around the solid and never leaks inside. No collision code, no solver.`:`No ball — the open flow.`, radius>0.02?"a solid in the flow":"open flow"); });
+rad.addEventListener("input",()=>{ if(flyT0<0) radius=+rad.value; document.getElementById("vR").textContent=(+rad.value).toFixed(2); dirty=true;
+  cap(+rad.value>0.02?`Ball radius <b>${(+rad.value).toFixed(2)}</b> — the flow slides around the solid and never leaks inside. No collision code, no solver.`:`No ball — the open flow.`, +rad.value>0.02?"a solid in the flow":"open flow"); });
 spd.addEventListener("input",()=>{ params.speed=+spd.value; document.getElementById("vSp").textContent=params.speed.toFixed(2); });
 document.querySelectorAll("#scenes button").forEach(b=>b.addEventListener("click",()=>{
   document.querySelectorAll("#scenes button").forEach(x=>x.classList.remove("on")); b.classList.add("on"); scene=SCENES[+b.dataset.s]; }));
 document.getElementById("tSpin").addEventListener("click",e=>{ spin=!spin; e.target.classList.toggle("on",spin); });
+document.getElementById("tFly").addEventListener("click",()=>{ flyT0=-2;
+  cap(`A solid flies through the flow — it <b>parts around the moving ball</b> and never leaks inside. The boundary travels with it, still exactly div-free.`,"fly-through · moving boundary"); });
 
 // ── recorder (canvas → webm, for the trailer) ───────────────────────────────
 let recorder=null,chunks=[];
@@ -431,34 +525,78 @@ document.getElementById("tRec").addEventListener("click",e=>{
   recorder.start(); e.target.textContent="⏹ stop"; e.target.classList.add("on");
 });
 
-// ── deterministic trailer capture (?capture=1[&dur=24][&clean]) ─────────────
-const _cq=new URLSearchParams(location.search);
-const FPS=+(_cq.get("fps")||60), DT=1/FPS, DUR=+(_cq.get("dur")||24);
-const sstep=(a,b,x)=>{ const t=Math.min(1,Math.max(0,(x-a)/(b-a))); return t*t*(3-2*t); };
-const lerp=(a,b,t)=>a+(b-a)*t;
+// ── cinema letterbox ────────────────────────────────────────────────────────
+function layoutBars(){ const bh=Math.max(0,(innerHeight-innerWidth/2.39)/2);
+  document.documentElement.style.setProperty("--barH",bh.toFixed(1)+"px"); }
+if(CINE){ document.body.classList.add("cine"); layoutBars(); addEventListener("resize",layoutBars); }
+
+// ── deterministic trailer capture (?capture=1[&dur=33][&clean][&cine=0]) ────
+const FPS=+(qs.get("fps")||60), DT=1/FPS, DUR=+(qs.get("dur")||33);
+// The ball's flight path (world space), pure in trailer time t — three passes over one arc:
+// snow left→right (bullet-time), rain right→left, then park at centre for the receipts beat.
+function ballPath(t){
+  if(t<4.5||t>=25.6) return {o:[0,0,0], r:0};
+  if(t<12.5){ const u=(t-4.5)/8, e=0.7*u+0.3*u*u*(3-2*u);
+    return {o:[lerp(-2.7,2.7,e), 0.35*Math.sin(u*Math.PI)-0.10, 0], r:BR*sstep(4.5,5.4,t)}; }
+  if(t<18){ const u=(t-12.5)/5.5, e=0.7*u+0.3*u*u*(3-2*u);
+    return {o:[lerp(2.8,-2.8,e), -0.15, 0], r:BR}; }
+  const g=sstep(18,19.6,t);
+  return {o:[lerp(-2.8,0,g), lerp(-0.15,0,g), 0], r:BR*(1-sstep(24.2,25.6,t))};
+}
+function ballKin(t){
+  const e=1/240, a=ballPath(t-e).o, b=ballPath(t+e).o, cur=ballPath(t);
+  let v=[(b[0]-a[0])/(2*e),(b[1]-a[1])/(2*e),(b[2]-a[2])/(2*e)];
+  const m=Math.hypot(v[0],v[1],v[2]); if(m>3){ v=v.map(x=>x*3/m); }   // kill FD spikes across cuts
+  return {o:cur.o, r:cur.r, v};
+}
+let ballW=[0,0,0];
+// Camera script: one shot per beat, eased inside, HARD CUT at boundaries; target tracks the ball.
+function shot(t){
+  const b=ballW; let az,el,di,tx=0,ty=0;
+  if(t<4.5){ const u=sstep(0,4.5,t); az=0.55+0.17*u; el=0.30-0.03*u; di=9.4-1.1*u; }
+  else if(t<12.5){ const u=sstep(4.5,12.5,t); az=1.22-0.30*u; el=0.15+0.05*u; di=8.0-2.1*sstep(6.0,10.5,t); tx=b[0]*0.60; ty=b[1]*0.60; }
+  else if(t<18){ const u=sstep(12.5,18,t); az=-0.45+0.27*u; el=0.44-0.12*u; di=7.6-0.9*u; tx=b[0]*0.45; ty=b[1]*0.45; }
+  else if(t<24){ const u=sstep(18,24,t); az=0.35+0.50*u; el=0.24; di=7.2-1.4*u; tx=b[0]*0.75; ty=b[1]*0.75; }
+  else if(t<28.6){ const u=sstep(24,28.6,t); az=2.15+0.27*u; el=-0.10+0.40*u; di=8.6-0.9*u; ty=0.4*u; }
+  else { const u=sstep(28.6,33,t); az=2.42+0.18*u; el=0.30-0.04*u; di=7.7+1.9*u; ty=0.4-0.25*u; }
+  cam.az=az; cam.el=el; cam.dist=di; cam.tx=tx; cam.ty=ty; cam.tz=0;
+}
 function beat(t){
-  cam.az = 0.6 + t*0.16;                                     // continuous slow orbit
-  cam.el = 0.28 + 0.10*Math.sin(t*0.4);
-  cam.dist = lerp(8.8, 7.2, sstep(5,9,t));                   // ease in as the ball appears
-  mixT = 0.9;                                                // helicity fixed (right-handed)
-  radius = lerp(0,1.45, sstep(5,9,t)) * (1 - sstep(20,21.5,t));   // ball grows in snow, holds thru rain+current, then goes
-  params.speed = 0.34;
-  scene = t<10.5 ? SCENES[1] : t<16 ? SCENES[2] : t<21.5 ? SCENES[0] : SCENES[3];  // Snow → Rain → Current → Embers
-  const c = t<5    ? ["Swirling snow, carried by a divergence-free flow field — no fluid solver runs.","swirling snow"]
-          : t<10.5 ? ["Drop a rock into the storm — the snow streams around it and never leaks inside.","snow · obstacle"]
-          : t<16   ? ["Switch to rain: the same field, now falling fast — and it still parts around the solid.","rain · obstacle"]
-          : t<21.5 ? ["The flow field itself is exactly divergence-free — the meter holds near zero as it wraps the ball.","div-free · ∇·u ≈ 0"]
-          : t<26   ? ["Or restyle it as rising embers — one field, many looks.","restyle it"]
-          :          ["Helix Noise — controllable, divergence-free flow for graphics.","helix noise"];
-  cap(c[0], c[1]);
+  const k=ballKin(t);
+  radius=k.r; ballW=k.o;
+  for(let i=0;i<3;i++) obsC[i]=CENTER+k.o[i];
+  // bullet-time: the FLOW slows, the ball keeps flying (obsV is per SIM second → ÷ scale)
+  simScale=1-0.78*(sstep(6.4,7.3,t)-sstep(9.2,10.3,t))+0.30*(sstep(10.3,10.9,t)-sstep(11.4,12.2,t));
+  const s=Math.max(0.05,simScale);
+  for(let i=0;i<3;i++) obsV[i]=k.v[i]/s;
+  mixT = t<20.4?0.9 : t<22.4? lerp(0.9,0.1,sstep(20.4,22.4,t)) : t<28.6? 0.1 : lerp(0.1,0.9,sstep(28.6,31,t));
+  params.speed=0.34;
+  scene = t<12.5?SCENES[1] : t<18?SCENES[2] : t<24?SCENES[0] : t<28.6?SCENES[3] : SCENES[0];
+  dim = 1-0.62*sstep(28.6,30.2,t);
+  shot(t);
+  const c = t<4.5 ? [`Swirling snow — every flake carried by one <b>divergence-free</b> flow field. No fluid solver runs.`,`helix noise · ${Math.round(COUNT/1000)}k streaklets · real-time`]
+    : t<7.2  ? [`A solid flies <b>through</b> the storm — the snow parts around it and <b>never leaks inside</b>.`,"exact free-slip boundary · no collision code"]
+    : t<12.5 ? [`Bullet time — flakes glide along the surface. The <b>boundary moves with the ball</b>, the maths stays exact.`,"slow motion · the field bends, nothing bounces"]
+    : t<18   ? [`Restyle it as <b>rain</b> — the same solid still parts the stream at full speed.`,"same field · new material"]
+    : t<20.9 ? [`Exactly <b>divergence-free</b> to machine precision — even hugging the moving ball. Watch the meter.`,"∇·u ≈ 0 · live receipts"]
+    : t<24   ? [`One dial flips the <b>twist</b> — every vortex in the sky reverses its spin.`,"helicity + → −"]
+    : t<28.6 ? [`Or rising <b>embers</b> — one field, any material.`,"snow · rain · current · embers"]
+    : ["",""];
+  cap(c[0],c[1]);
+  capEl.style.opacity=String(1-sstep(28.2,29.0,t));
+  document.querySelector(".inst").style.opacity=String(1-sstep(28.6,29.6,t));   // receipts bow out for the card
+  const o=sstep(29.0,30.4,t);
+  cardEl.style.opacity=String(o);
+  cardEl.style.transform=`translate(-50%,-50%) translateY(${((1-o)*26).toFixed(1)}px)`;
 }
 if(CAP){
   document.querySelector(".fps").style.display="none";
   document.querySelector("a.alt").style.display="none";
-  if(new URLSearchParams(location.search).has("clean")){ document.querySelector(".panel").style.display="none"; document.querySelector(".inst").style.display="none"; }
-  beat(0); snapMat(); for(let i=0;i<48;i++){ step(DT); }   // warm under the opening material
+  document.querySelector(".panel").style.display="none";     // controls mean nothing in a video
+  if(qs.has("clean")) document.querySelector(".inst").style.display="none";   // pure cinematic: receipts off too
+  beat(0); snapMat(); for(let i=0;i<48;i++){ step(DT); }     // warm under the opening material
   window.__cap = { FPS, TOTAL: Math.round(DUR*FPS),
-    frame(i){ beat(i*DT); easeMat(DT); if(i%8===0) readouts(); step(DT); drawFrame(); } };
+    frame(i){ frameNo=i; beat(i*DT); easeMat(DT); if(i%8===0) readouts(); step(DT*Math.max(0.05,simScale)); drawFrame(); } };
 } else {
   readouts(); requestAnimationFrame(frame);
 }

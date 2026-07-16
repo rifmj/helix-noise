@@ -25,7 +25,7 @@ const args = process.argv.slice(2);
 const opt = (k, d) => { const i = args.indexOf("--" + k); return i >= 0 ? args[i + 1] : d; };
 const has = (k) => args.includes("--" + k);
 const W = +opt("w", 1920), H = +opt("h", 1080), N = +opt("n", 400000);
-const DUR = +opt("dur", 24), FPS = +opt("fps", 60);
+const DUR = +opt("dur", 33), FPS = +opt("fps", 60);
 const CLEAN = has("clean"), KEEP = has("keep"), SW = has("sw"), PNG = has("png");
 const OUT = resolve(HERE, opt("out", "out/trailer.mp4"));
 const FRAMES = resolve(HERE, "frames");
