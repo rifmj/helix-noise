@@ -296,7 +296,7 @@ function build(){ const data=initData(params.count); const mk=()=>{const b=gl.cr
   for(let i=0;i<180;i++) step(1/60);  // warm up filaments (all GPU)
 }
 function step(dt){ const src=bufs.cur===0?bufs.uA:bufs.uB, dst=bufs.cur===0?bufs.b:bufs.a;
-  gl.useProgram(updateProg); gl.uniform1f(U.dt,dt); gl.uniform1f(U.speed,params.speed); gl.uniform1f(U.mix,mixT); gl.uniform1f(U.r,radius); gl.uniform3fv(U.drift,scene.drift);
+  gl.useProgram(updateProg); gl.uniform1f(U.dt,dt); gl.uniform1f(U.speed,params.speed); gl.uniform1f(U.mix,mixT); gl.uniform1f(U.r,radius); gl.uniform3fv(U.drift,mat.drift);
   gl.enable(gl.RASTERIZER_DISCARD); gl.bindVertexArray(src);
   gl.bindBufferBase(gl.TRANSFORM_FEEDBACK_BUFFER,0,dst); gl.beginTransformFeedback(gl.POINTS);
   gl.drawArrays(gl.POINTS,0,params.count); gl.endTransformFeedback();
@@ -324,6 +324,18 @@ const SCENES=[
   { name:"Embers",  colLow:[1.0,0.32,0.06],      colHigh:[1.0,0.80,0.30],     drift:[0,0.7,0],  trail:0.6,  grade:[1.22,0.92,0.70], exp:1.5,  bg:[0.022,0.012,0.010] },
 ];
 let scene=SCENES[0];
+// Eased "effective" material — every frame it crosses toward `scene` (the target the buttons /
+// beat sheet set), so switching materials glides instead of hard-cutting. All fields are numeric.
+const mat={ colLow:[...scene.colLow], colHigh:[...scene.colHigh], drift:[...scene.drift],
+            grade:[...scene.grade], bg:[...scene.bg], trail:scene.trail, exp:scene.exp };
+const _lp=(a,b,k)=>a+(b-a)*k;
+function easeMat(dt){
+  const k=1-Math.exp(-dt/0.30);        // ~0.3s crossfade time-constant
+  for(let i=0;i<3;i++){ mat.colLow[i]=_lp(mat.colLow[i],scene.colLow[i],k); mat.colHigh[i]=_lp(mat.colHigh[i],scene.colHigh[i],k);
+    mat.drift[i]=_lp(mat.drift[i],scene.drift[i],k); mat.grade[i]=_lp(mat.grade[i],scene.grade[i],k); mat.bg[i]=_lp(mat.bg[i],scene.bg[i],k); }
+  mat.trail=_lp(mat.trail,scene.trail,k); mat.exp=_lp(mat.exp,scene.exp,k);
+}
+function snapMat(){ for(let i=0;i<3;i++){ mat.colLow[i]=scene.colLow[i]; mat.colHigh[i]=scene.colHigh[i]; mat.drift[i]=scene.drift[i]; mat.grade[i]=scene.grade[i]; mat.bg[i]=scene.bg[i]; } mat.trail=scene.trail; mat.exp=scene.exp; }
 
 // ── render loop ─────────────────────────────────────────────────────────────
 function resize(){ const dpr=Math.min(2,devicePixelRatio||1); cv.width=Math.max(1,Math.round((cv.clientWidth||innerWidth||1280)*dpr)); cv.height=Math.max(1,Math.round((cv.clientHeight||innerHeight||720)*dpr)); }
@@ -333,13 +345,13 @@ function drawFrame(){
   const {vp,center,eye}=viewProj();
   ensureFbo();
   gl.bindFramebuffer(gl.FRAMEBUFFER,fbo); gl.viewport(0,0,fboW,fboH);
-  gl.clearColor(scene.bg[0],scene.bg[1],scene.bg[2],1); gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.clearColor(mat.bg[0],mat.bg[1],mat.bg[2],1); gl.clear(gl.COLOR_BUFFER_BIT);
   gl.enable(gl.BLEND); gl.blendFunc(gl.ONE,gl.ONE); gl.disable(gl.DEPTH_TEST);
   gl.useProgram(renderProg);
   gl.uniformMatrix4fv(R.vp,false,vp); gl.uniform3fv(R.center,center);
-  gl.uniform1f(R.trail,scene.trail); gl.uniform1f(R.alpha,Math.min(2.2,Math.max(0.25,6e4/params.count))*0.55);
+  gl.uniform1f(R.trail,mat.trail); gl.uniform1f(R.alpha,Math.min(2.2,Math.max(0.25,6e4/params.count))*0.55);
   gl.uniform3f(R.speedP,pcts[0],pcts[1],pcts[2]); gl.uniform1f(R.mix,mixT); gl.uniform1f(R.speed,params.speed);
-  gl.uniform3fv(R.colLow,scene.colLow); gl.uniform3fv(R.colHigh,scene.colHigh);
+  gl.uniform3fv(R.colLow,mat.colLow); gl.uniform3fv(R.colHigh,mat.colHigh);
   gl.bindVertexArray(bufs.cur===0?bufs.rA:bufs.rB);
   gl.drawArraysInstanced(gl.LINE_STRIP,0,SEG_VERTS,params.count); gl.bindVertexArray(null);
   if(radius>0.02){
@@ -350,7 +362,7 @@ function drawFrame(){
   }
   gl.bindFramebuffer(gl.FRAMEBUFFER,null); gl.viewport(0,0,cv.width,cv.height); gl.disable(gl.BLEND);
   gl.useProgram(postProg); gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,fboTex);
-  gl.uniform1i(PP.tex,0); gl.uniform1f(PP.exp,scene.exp); gl.uniform3fv(PP.grade,scene.grade);
+  gl.uniform1i(PP.tex,0); gl.uniform1f(PP.exp,mat.exp); gl.uniform3fv(PP.grade,mat.grade);
   gl.bindVertexArray(postVao); gl.drawArrays(gl.TRIANGLES,0,3); gl.bindVertexArray(null); gl.bindTexture(gl.TEXTURE_2D,null);
 }
 
@@ -360,6 +372,7 @@ function frame(now){
   const dt=Math.min(1/30,last?(now-last)*0.001:1/60); last=now;
   if(dirty){ dirty=false; readouts(); }
   if(spin&&!drag) cam.az+=dt*0.16;
+  easeMat(dt);
   step(dt);
   drawFrame();
   ema=ema?ema*0.95+dt*0.05:dt;
@@ -440,8 +453,9 @@ if(CAP){
   document.querySelector(".fps").style.display="none";
   document.querySelector("a.alt").style.display="none";
   if(new URLSearchParams(location.search).has("clean")){ document.querySelector(".panel").style.display="none"; document.querySelector(".inst").style.display="none"; }
+  beat(0); snapMat(); for(let i=0;i<48;i++){ step(DT); }   // warm under the opening material
   window.__cap = { FPS, TOTAL: Math.round(DUR*FPS),
-    frame(i){ beat(i*DT); if(i%8===0) readouts(); step(DT); drawFrame(); } };
+    frame(i){ beat(i*DT); easeMat(DT); if(i%8===0) readouts(); step(DT); drawFrame(); } };
 } else {
   readouts(); requestAnimationFrame(frame);
 }
