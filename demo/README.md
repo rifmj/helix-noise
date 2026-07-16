@@ -5,7 +5,8 @@ see is exactly the paper's field — not a re-implementation.
 
 | Page | Engine | Role |
 |---|---|---|
-| **`interactive-gpu.html`** | `helix-noise-gpu` (WebGL2 transform feedback) | the **hero / wow** surface — up to 1M GPU-advected particles, helicity colour, bloom post-fx, orbit camera |
+| **`hero.html`** | `helix-noise-gpu` (WebGL2 transform feedback) | the **flagship** — curved streaklets, an **exactly div-free solid obstacle** the flow parts around (analytic `∇×(ramp·A)`, fresnel bubble), live helicity, scene grades (Helix/Frost/Ember), ACES post, and a one-click **canvas recorder** (→ webm) for the trailer |
+| `interactive-gpu.html` | `helix-noise-gpu` | dense point-cloud + bloom variant — 1M particles, orbit |
 | `interactive.html` | `helix-noise` (CPU sample, Canvas2D) | the **instrumented proof** — vs-baseline split + solid-obstacle (free-slip, ∇·u≈0) |
 
 Both carry the live "receipts": frozen `E(k)`, relative helicity ρ, and an `∇·u` meter.
@@ -38,8 +39,10 @@ python3 -m http.server 8097                        # then open http://localhost:
 2. **GPU upgrade** (`interactive-gpu.html`) — advection on the `packages/gpu` WebGL2 engine
    (transform feedback, up to 1M particles) + a bright-pass→blur→tonemap **bloom** post-fx, same
    UI and instruments. ✅
-3. **Art-directed hero scene** — map the field to swirling snow / smoke around a character;
-   GPU-native obstacle via the potential bake (`bakePotential3D`).
+3. **Art-directed hero + GPU obstacle** (`hero.html`) — curved streaklets, scene grades, and a
+   solid obstacle the flow parts around. The obstacle is the **analytic** div-free boundary
+   `u = ramp(d)·u + ramp′(d)·(n × A)` (= `curl(ramp·A)`) evaluated in the update shader from the
+   emitted vector potential `hxPot` — exact, no 3D-texture bake needed for an analytic SDF. ✅
 4. **Deterministic capture** — Playwright drives the page through a scripted beat sheet
    (helicity −1→+1, coherence 0→1, obstacle drop) at fixed `dt`; frames → `ffmpeg` → MP4
    with typographic lower-thirds. This becomes the paper's supplementary video.
