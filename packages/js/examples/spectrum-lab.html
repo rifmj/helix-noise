@@ -1,0 +1,339 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Helix Noise — designing by wavenumber</title>
+<style>
+  html,body{margin:0;background:#070a0e;color:#cdd6dd;font-family:system-ui,sans-serif}
+  .wrap{max-width:1040px;margin:0 auto;padding:22px 16px}
+  h1{font-size:19px;font-weight:600;margin:0 0 6px}
+  h1 code{color:#f4a13c}
+  p{color:#8a97a2;font-size:13.5px;line-height:1.6;margin:0 0 14px}
+  p b{color:#cdd6dd;font-weight:500}
+  code{font-family:ui-monospace,Menlo,monospace;color:#f4a13c;font-size:12.5px}
+  .split{display:grid;grid-template-columns:1fr 1.05fr;gap:10px}
+  .cell{position:relative;border:1px solid rgba(150,180,200,.15);border-radius:10px;overflow:hidden;background:#070a0e}
+  #field{aspect-ratio:1/1}
+  .charts{display:grid;grid-template-rows:1fr 1fr;gap:10px}
+  .cell canvas{display:block;width:100%;height:100%}
+  .cap{position:absolute;left:8px;top:7px;font-family:ui-monospace,monospace;font-size:10px;color:#93a3b0;
+    background:rgba(7,10,14,.62);border-radius:5px;padding:3px 7px;pointer-events:none;letter-spacing:.05em}
+  .row{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-top:12px;font-family:ui-monospace,monospace;font-size:12px;color:#93a3b0}
+  .row label{display:flex;align-items:center;gap:7px}
+  input[type=range]{width:104px}
+  button{font-family:ui-monospace,monospace;font-size:11.5px;color:#cdd6dd;background:#0c1016;
+    border:1px solid rgba(150,180,200,.22);border-radius:7px;padding:6px 11px;cursor:pointer}
+  button:hover{border-color:#38d9d1}
+  button.on{border-color:#38d9d1;color:#fff}
+  table{width:100%;border-collapse:collapse;margin-top:16px;font-family:ui-monospace,monospace;font-size:11.5px}
+  th,td{padding:7px 9px;text-align:right;border-bottom:1px solid rgba(150,180,200,.1)}
+  th:first-child,td:first-child{text-align:left;color:#8a97a2}
+  th{color:#93a3b0;font-weight:400;text-transform:uppercase;letter-spacing:.09em;font-size:10px}
+  .chip{font-size:9.5px;letter-spacing:.09em;padding:2px 6px;border-radius:4px;text-transform:uppercase}
+  .chip.ok{background:rgba(47,214,191,.14);color:#2fd6bf}
+  .chip.id{background:rgba(180,142,240,.14);color:#b48ef0}
+  .chip.na{background:rgba(150,180,200,.1);color:#93a3b0}
+  .note{margin-top:14px;font-size:12px;color:#5d6b77;font-family:ui-monospace,monospace;line-height:1.7}
+  .scope{margin-top:14px;padding:11px 13px;border:1px solid rgba(150,180,200,.16);border-left:2px solid #b48ef0;
+    border-radius:0 8px 8px 0;font-size:12.5px;color:#8a97a2;line-height:1.65}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Designing by wavenumber — <code>shellPeak</code>, <code>rolloff</code>, <code>condensate</code></h1>
+  <p>Three of the dials take a <b>function of the wavenumber</b>, not just a number: the spectrum, the phase
+    coherence and the handedness can each be shaped scale by scale. This page draws the field on the left and,
+    on the right, what it actually contains — the energy per shell, and the handedness per shell. The
+    <b>ns</b> buttons load the library's polarization bundles and fill in a scorecard, including the rows they
+    <i>don't</i> hit.</p>
+
+  <div class="split">
+    <div class="cell" id="field"><canvas id="fc"></canvas><div class="cap" id="field-cap">field</div></div>
+    <div class="charts">
+      <div class="cell" style="aspect-ratio:2/1"><canvas id="ec"></canvas><div class="cap">energy per shell · log–log</div></div>
+      <div class="cell" style="aspect-ratio:2/1"><canvas id="pc"></canvas><div class="cap">handedness per shell · ⟨p⟩</div></div>
+    </div>
+  </div>
+
+  <div class="row">
+    <button id="p-plain" class="on">power law</button>
+    <button id="p-shell">shellPeak(4)</button>
+    <button id="p-roll">rolloff(4)</button>
+    <button id="p-cond">condensate(4, .9, 0)</button>
+    <button id="p-dev">nsDeveloped()</button>
+    <button id="p-forced">nsForced()</button>
+    <label>seed <input id="seed" type="range" min="1" max="60" step="1" value="7"><span id="v-seed">7</span></label>
+    <button id="ens">ensemble ×200</button>
+  </div>
+
+  <table id="score">
+    <thead><tr><th>quantity</th><th>this field</th><th>the bundle's target</th><th></th></tr></thead>
+    <tbody></tbody>
+  </table>
+
+  <div class="note" id="note">—</div>
+
+  <div class="scope">
+    <b style="color:#cdd6dd">Two things this page refuses to do.</b>
+    It will not print <code>slope: 1.6</code> next to Kolmogorov's −5/3, however close the digits look:
+    <code>slope</code> is an <b>amplitude</b> exponent (<code>a ∝ k^−slope</code>) and the default layout draws
+    <code>|k|</code> uniformly, so the measured <b>energy</b> slope is roughly <code>−2·slope</code> — see the
+    fit on the chart, which is nowhere near −1.67. And it calls <code>NS_TARGETS</code> <b>the library's
+    targets</b>, never "the measured numbers": those six constants appear in exactly one place in the source
+    with no citation attached, so this page treats them as a specification to hit, not as data.
+  </div>
+</div>
+
+<script src="../dist/helix-noise.global.js"></script>
+<script>
+(function(){
+  var TAU = Math.PI * 2;
+  var HN = HelixNoise;
+  var mode = "plain", seed = 7;
+
+  // ---- the field under study ---------------------------------------------
+  function opts(s){
+    var base = { modes: 160, seed: s, slope: 1.6, kmin: 1, kmax: 12, coherence: 0.3, layout: "random" };
+    if (mode === "shell") return Object.assign(base, { spectrum: HN.shellPeak(4), kmin: 1, kmax: 8 });
+    if (mode === "roll")  return Object.assign(base, { coherence: HN.rolloff(4) });
+    if (mode === "cond")  return Object.assign(base, { helicity: HN.condensate(4, 0.9, 0) });
+    if (mode === "dev")   return HN.nsDeveloped({ seed: s, modes: 160 });
+    if (mode === "forced")return HN.nsForced({ seed: s, modes: 160 });
+    return base;
+  }
+  var field = HN.create(opts(seed));
+
+  // ---- what the field actually contains, straight from the mode arrays ----
+  /** Bin the modes by |k| and report energy and energy-weighted handedness per bin. */
+  function shells(f, nb){
+    var kmin = 1e9, kmax = -1e9, j;
+    for (j = 0; j < f.N; j++){ if (f.km[j] < kmin) kmin = f.km[j]; if (f.km[j] > kmax) kmax = f.km[j]; }
+    var bins = [];
+    for (var b = 0; b < nb; b++) bins.push({ k: 0, e: 0, hp: 0, n: 0 });
+    for (j = 0; j < f.N; j++){
+      var u = (f.km[j] - kmin) / ((kmax - kmin) || 1);
+      var b2 = Math.min(nb - 1, Math.floor(u * nb));
+      var a2 = f.a[j] * f.a[j];
+      var chi = f.chi[j];
+      bins[b2].e += a2;
+      bins[b2].hp += a2 * (2 * chi) / (1 + chi * chi);   // per-mode circular fraction
+      bins[b2].k += f.km[j];
+      bins[b2].n++;
+    }
+    for (var b3 = 0; b3 < nb; b3++) if (bins[b3].n){ bins[b3].k /= bins[b3].n; bins[b3].hp /= bins[b3].e || 1; }
+    return bins.filter(function(x){ return x.n > 0; });
+  }
+
+  /** Energy-weighted mean of the per-mode circular fraction — what NS_TARGETS is defined against. */
+  function meanP(f){
+    var num = 0, den = 0;
+    for (var j = 0; j < f.N; j++){
+      var a2 = f.a[j] * f.a[j], chi = f.chi[j];
+      num += a2 * (2 * chi) / (1 + chi * chi);
+      den += a2;
+    }
+    return num / (den || 1);
+  }
+  function meanAbsP(f){
+    var num = 0, den = 0;
+    for (var j = 0; j < f.N; j++){
+      var a2 = f.a[j] * f.a[j], chi = Math.abs(f.chi[j]);
+      num += a2 * (2 * chi) / (1 + chi * chi);
+      den += a2;
+    }
+    return num / (den || 1);
+  }
+
+  // ---- charts -------------------------------------------------------------
+  function prep(cv){
+    var ctx = cv.getContext("2d");
+    var w = cv.clientWidth || 300, h = cv.clientHeight || 150;
+    var dpr = Math.min(2, devicePixelRatio || 1);
+    cv.width = Math.round(w*dpr); cv.height = Math.round(h*dpr);
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+    ctx.fillStyle = "#070a0e"; ctx.fillRect(0,0,w,h);
+    return { ctx: ctx, w: w, h: h };
+  }
+
+  var fitSlope = 0;
+  function drawEnergy(bins){
+    var c = prep(document.getElementById("ec")), ctx = c.ctx;
+    var pad = { l: 34, r: 10, t: 20, b: 20 };
+    var lk = bins.map(function(b){ return Math.log10(b.k); });
+    var le = bins.map(function(b){ return Math.log10(Math.max(b.e, 1e-12)); });
+    var kx0 = Math.min.apply(null, lk), kx1 = Math.max.apply(null, lk);
+    var ey0 = Math.min.apply(null, le), ey1 = Math.max.apply(null, le);
+    var X = function(v){ return pad.l + (v - kx0)/((kx1-kx0)||1) * (c.w-pad.l-pad.r); };
+    var Y = function(v){ return pad.t + (1 - (v - ey0)/((ey1-ey0)||1)) * (c.h-pad.t-pad.b); };
+
+    // least squares on the log-log points -> the measured ENERGY slope
+    var n = bins.length, sx=0, sy=0, sxx=0, sxy=0;
+    for (var i=0;i<n;i++){ sx+=lk[i]; sy+=le[i]; sxx+=lk[i]*lk[i]; sxy+=lk[i]*le[i]; }
+    fitSlope = (n*sxy - sx*sy) / ((n*sxx - sx*sx) || 1);
+    var b0 = (sy - fitSlope*sx)/n;
+
+    ctx.strokeStyle = "rgba(150,180,200,.16)";
+    ctx.beginPath(); ctx.moveTo(pad.l, pad.t); ctx.lineTo(pad.l, c.h-pad.b); ctx.lineTo(c.w-pad.r, c.h-pad.b); ctx.stroke();
+
+    ctx.strokeStyle = "rgba(244,161,60,.75)"; ctx.lineWidth = 1.4;
+    ctx.beginPath(); ctx.moveTo(X(kx0), Y(fitSlope*kx0+b0)); ctx.lineTo(X(kx1), Y(fitSlope*kx1+b0)); ctx.stroke();
+
+    ctx.fillStyle = "#2fd6bf";
+    for (var p=0;p<n;p++){ ctx.beginPath(); ctx.arc(X(lk[p]), Y(le[p]), 2.4, 0, TAU); ctx.fill(); }
+
+    ctx.fillStyle = "#5d6b77"; ctx.font = "10px ui-monospace, monospace";
+    ctx.fillText("Σa² per shell", 5, pad.t - 6);
+    ctx.fillStyle = "#f4a13c";
+    ctx.fillText("fit  E ∝ k^" + fitSlope.toFixed(2), c.w - pad.r - 96, pad.t + 8);
+  }
+
+  function drawHandedness(bins){
+    var c = prep(document.getElementById("pc")), ctx = c.ctx;
+    var pad = { l: 34, r: 10, t: 16, b: 22 };
+    var bw = (c.w-pad.l-pad.r)/bins.length;
+    var Y = function(v){ return pad.t + (1 - (v + 1)/2) * (c.h-pad.t-pad.b); };
+    ctx.strokeStyle = "rgba(150,180,200,.16)";
+    ctx.beginPath(); ctx.moveTo(pad.l, Y(0)); ctx.lineTo(c.w-pad.r, Y(0)); ctx.stroke();
+
+    for (var i=0;i<bins.length;i++){
+      var v = bins[i].hp, x = pad.l + i*bw;
+      ctx.fillStyle = v >= 0 ? "rgba(47,214,191,.75)" : "rgba(244,161,60,.75)";
+      ctx.fillRect(x+1, Math.min(Y(0), Y(v)), bw-2, Math.abs(Y(v)-Y(0)));
+      ctx.fillStyle = "#5d6b77"; ctx.font = "8.5px ui-monospace, monospace";
+      ctx.fillText(String(bins[i].n), x + bw/2 - 4, c.h - pad.b + 11);   // modes in this bin
+    }
+    // the requested condensate step, drawn over what was realized
+    if (mode === "cond"){
+      ctx.strokeStyle = "rgba(180,142,240,.9)"; ctx.lineWidth = 1.4; ctx.setLineDash([4,3]);
+      ctx.beginPath();
+      for (var b=0;b<bins.length;b++){
+        var want = bins[b].k <= 4 ? 0.9 : 0;
+        var x2 = pad.l + b*bw;
+        b ? ctx.lineTo(x2, Y(want)) : ctx.moveTo(x2, Y(want));
+        ctx.lineTo(x2+bw, Y(want));
+      }
+      ctx.stroke(); ctx.setLineDash([]);
+      ctx.fillStyle = "#b48ef0"; ctx.font = "10px ui-monospace, monospace";
+      ctx.fillText("requested", c.w - pad.r - 62, pad.t + 8);
+    }
+    ctx.fillStyle = "#5d6b77"; ctx.font = "10px ui-monospace, monospace";
+    ctx.fillText("+1", 8, Y(1)+4); ctx.fillText("0", 14, Y(0)+4); ctx.fillText("−1", 8, Y(-1)+4);
+    ctx.fillText("modes per shell →", pad.l, c.h - 4);
+  }
+
+  function drawField(f){
+    var c = prep(document.getElementById("fc")), ctx = c.ctx;
+    var rs = 24680; var rnd = function(){ rs = (rs*1664525+1013904223)>>>0; return rs/4294967296; };
+    ctx.lineWidth = 0.8; ctx.globalCompositeOperation = "lighter";
+    var uw = [0,0,0,0,0,0];
+    for (var i=0;i<700;i++){
+      var x = rnd()*TAU, y = rnd()*TAU, z = rnd()*TAU;
+      f.sampleUW(x,y,z,uw,0);
+      var hel = uw[0]*uw[3]+uw[1]*uw[4]+uw[2]*uw[5];
+      ctx.strokeStyle = hel>=0 ? "rgba(47,214,191,.5)" : "rgba(244,161,60,.5)";
+      ctx.beginPath(); ctx.moveTo((x/TAU)*c.w, c.h-(y/TAU)*c.h);
+      for (var s=0;s<24;s++){
+        f.sampleUW(x,y,z,uw,0);
+        x += uw[0]*0.05; y += uw[1]*0.05; z += uw[2]*0.05;
+        ctx.lineTo((x/TAU)*c.w, c.h-(y/TAU)*c.h);
+      }
+      ctx.stroke();
+    }
+    ctx.globalCompositeOperation = "source-over";
+  }
+
+  // ---- the scorecard ------------------------------------------------------
+  function scorecard(){
+    var body = document.querySelector("#score tbody");
+    body.innerHTML = "";
+    var isNs = mode === "dev" || mode === "forced";
+    var T = isNs ? (mode === "dev" ? HN.NS_TARGETS.dev : HN.NS_TARGETS.forced) : null;
+
+    function add(label, got, target, chip, chipCls){
+      var tr = document.createElement("tr");
+      tr.innerHTML = "<td>" + label + "</td><td>" + got + "</td><td>" + (target === null ? "—" : target) +
+        "</td><td><span class='chip " + chipCls + "'>" + chip + "</span></td>";
+      body.appendChild(tr);
+    }
+
+    var mp = meanP(field), map_ = meanAbsP(field);
+    var rhs = field.relativeHelicitySpectral(0), rh = field.relativeHelicity(16);
+
+    add("per-mode |p|, energy-weighted", map_.toFixed(6),
+        T ? T.absP.toFixed(6) : null,
+        T ? "identity" : "measured", T ? "id" : "na");
+    add("signed ⟨p⟩, this seed", mp.toFixed(4), T ? T.signedP.toFixed(4) : null,
+        T ? "one seed" : "measured", "na");
+    add("relativeHelicitySpectral(0)", rhs.toFixed(4), null, "exact", "ok");
+    add("relativeHelicity(16) — grid estimate", rh.toFixed(4), null, "estimate", "na");
+    if (T) add("linear polarization d", "not set by the bundle", T.d.toFixed(3), "out of reach", "na");
+    if (T && T.condensateK1 !== undefined) add("k=1 condensate", "not set by the bundle", T.condensateK1.toFixed(2), "not applied", "na");
+
+    document.getElementById("note").innerHTML =
+      "The same field, three ways: energy-weighted <b>⟨p⟩ " + mp.toFixed(4) + "</b>, " +
+      "<b>relativeHelicitySpectral " + rhs.toFixed(4) + "</b>, <b>relativeHelicity(16) " + rh.toFixed(4) + "</b>. " +
+      "They are different quantities, not disagreeing measurements of one: ⟨p⟩ is what the bundles are " +
+      "specified against, the spectral value carries a Cauchy–Schwarz deflation across the band, and the grid " +
+      "estimate adds quadrature error on top. " +
+      (mode === "dev" || mode === "forced"
+        ? "The <b>|p|</b> row above is an <b>identity</b>, not a passing test — the bundle computes ellipticity by " +
+          "inverting 2ε/(1+ε²) = |p|, so it comes back to fifteen decimal places by construction. The row that " +
+          "means something is the signed ⟨p⟩, and one seed is a lottery: press <b>ensemble ×200</b>."
+        : "Measured energy slope on this field: <b>" + fitSlope.toFixed(2) + "</b>.");
+  }
+
+  // ---- ensemble -----------------------------------------------------------
+  function ensemble(){
+    if (!(mode === "dev" || mode === "forced")) {
+      document.getElementById("note").innerHTML = "The ensemble is only meaningful for the <b>ns</b> bundles — " +
+        "it is checking whether their signed ⟨p⟩ target is hit on average. Pick nsDeveloped or nsForced first.";
+      return;
+    }
+    var T = mode === "dev" ? HN.NS_TARGETS.dev : HN.NS_TARGETS.forced;
+    var N = 200, vals = [];
+    for (var s = 0; s < N; s++){
+      var f = mode === "dev" ? HN.create(HN.nsDeveloped({ seed: 1000+s, modes: 160 }))
+                             : HN.create(HN.nsForced({ seed: 1000+s, modes: 160 }));
+      vals.push(meanP(f));
+    }
+    var mean = vals.reduce(function(a,b){return a+b;},0)/N;
+    var sd = Math.sqrt(vals.reduce(function(a,b){ return a + (b-mean)*(b-mean); },0)/(N-1));
+    var se = sd/Math.sqrt(N);
+    var z = Math.abs(mean - T.signedP)/se;
+    document.getElementById("note").innerHTML =
+      "<b>" + N + " seeds.</b> signed ⟨p⟩ = <b style='color:#2fd6bf'>" + mean.toFixed(4) + "</b> ± " + se.toFixed(4) +
+      " (s.e.) against the bundle's target <b>" + T.signedP.toFixed(4) + "</b> — that is <b>" + z.toFixed(2) +
+      "σ</b>. Per-seed spread is <b>" + sd.toFixed(3) + "</b>, i.e. roughly " + (sd/Math.abs(T.signedP)).toFixed(1) +
+      "× the target itself: any single field is a lottery, and the bundle is a statement about the ensemble, " +
+      "not about your seed.";
+  }
+
+  // ---- wiring -------------------------------------------------------------
+  var MODES = { "p-plain":"plain", "p-shell":"shell", "p-roll":"roll", "p-cond":"cond", "p-dev":"dev", "p-forced":"forced" };
+  var CAPS = { plain:"power law  a ∝ k^−1.6", shell:"spectrum: shellPeak(4)", roll:"coherence: rolloff(4)",
+               cond:"helicity: condensate(4, 0.9, 0)", dev:"nsDeveloped()", forced:"nsForced()" };
+
+  function redraw(){
+    field = HN.create(opts(seed));
+    document.getElementById("field-cap").textContent = CAPS[mode];
+    var bins = shells(field, 10);
+    drawField(field); drawEnergy(bins); drawHandedness(bins); scorecard();
+  }
+
+  var $ = function(id){ return document.getElementById(id); };
+  Object.keys(MODES).forEach(function(id){
+    $(id).onclick = function(){
+      mode = MODES[id];
+      Object.keys(MODES).forEach(function(o){ $(o).classList.toggle("on", o === id); });
+      redraw();
+    };
+  });
+  $("seed").oninput = function(e){ seed = +e.target.value; $("v-seed").textContent = seed; redraw(); };
+  $("ens").onclick = ensemble;
+  addEventListener("resize", redraw);
+  redraw();
+})();
+</script>
+</body>
+</html>
