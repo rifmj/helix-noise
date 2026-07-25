@@ -205,12 +205,15 @@
         solver, no bake, no grid to fill. The current above is the real library, running as you read.</p>
       <p class="body">The reason it feels like a fluid is one guarantee: it's <b>divergence-free</b> — nothing
         piles up and nothing vanishes, exactly like real, incompressible water. That's why tracers swirl and
-        fold instead of collapsing into blobs the way ordinary noise makes them. Three qualities shape the
-        look — how <b>big</b> the swirls are, which way they <b>spin</b>, and whether it reads as <b>calm noise
-        or organized eddies</b> — and each current above is one blend of the three.</p>
-      <p class="fine">For the curious: the field is a grid-free sum of divergence-free helical (Beltrami)
-        modes; the three qualities are spectral <code>slope</code>, <code>helicity</code>, and phase
-        <code>coherence</code>. Full details in the <a href="docs/">docs</a>.</p>
+        fold instead of collapsing into blobs the way ordinary noise makes them. Six qualities shape the
+        look — how <b>big</b> the swirls are, which way they <b>spin</b>, whether it reads as <b>calm noise
+        or organized eddies</b>, whether each wave is a <b>corkscrew or a flat sheet</b>, whether the texture
+        is <b>combed along an axis</b>, and how much it <b>shimmers</b> as it moves — and each current above is
+        one blend of them.</p>
+      <p class="fine">For the curious: the field is a grid-free sum of divergence-free helical waves; the six
+        qualities are spectral <code>slope</code>, <code>helicity</code>, phase <code>coherence</code>,
+        <code>ellipticity</code>, the polarization <code>grain</code> axis and <code>flutter</code>. Full
+        details in the <a href="docs/">docs</a>.</p>
     </section>
 
     <!-- CAPABILITIES -->
@@ -228,9 +231,10 @@
         <div class="cap" style="--ac:var(--amber)">
           <p class="k kicker">Art-directable</p>
           <h3>Qualities you can dial</h3>
-          <p>Set the size of the swirls, which way they spin, and how organized the flow reads. Handedness
-            and structure are things ordinary curl-noise simply can't do.</p>
-          <span class="term">slope · helicity · coherence</span>
+          <p>Set the size of the swirls, which way they spin, how organized the flow reads, whether each wave
+            is a corkscrew or a flat sheet, which axis the texture combs along, and how much it shimmers.
+            Handedness, structure and polarization are things ordinary curl-noise simply can't do.</p>
+          <span class="term">slope · helicity · coherence · ellipticity · grain · flutter</span>
         </div>
         <div class="cap" style="--ac:var(--violet)">
           <p class="k kicker">Grid-free</p>
@@ -279,7 +283,7 @@
           <div class="meta"><p class="t">Jetstream cirrus</p><p class="d">One dial shears an advected-dye sky — wisps combed along the jet, bands across it.</p></div>
         </a>
       </div>
-      <a class="all-demos" href="examples/index.html">All 14 demos — three.js · p5 · raw WebGL2 · audio-reactive →</a>
+      <a class="all-demos" href="examples/index.html">All 25 demos — three.js · p5 · raw WebGL2 · audio-reactive →</a>
     </section>
 
     <!-- PORTS -->

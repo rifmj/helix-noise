@@ -23,13 +23,17 @@
   <p>The entire field is generated in JS, then exported as a GLSL function with
     <code>field.glsl()</code> and pasted straight into a WebGL2 fragment shader. Every pixel below
     evaluates the same divergence-free field on the GPU and traces a short streamline through it
-    (line-integral convolution), tinted by helicity. No framework — raw WebGL2. Move the sliders to
-    regenerate the shader live.</p>
+    (line-integral convolution). The emitter ships more than the velocity: <code>glsl({gradient:true})</code>
+    also writes <code>mat3 helixNoiseGrad(vec3 p)</code> — the <b>analytic</b> velocity gradient — and
+    <code>float helixNoiseQ(vec3 p)</code> on top of it, so the tint button switches between helicity
+    density and the <b>Q-criterion evaluated entirely on the GPU</b>, with no extra uniforms or textures.
+    No framework — raw WebGL2. Move the sliders to regenerate the shader live.</p>
   <canvas id="c"></canvas>
   <div class="row">
     <label>helicity <input id="heli" type="range" min="-1" max="1" step="0.02" value="0.7"><span id="v-heli">+0.70</span></label>
     <label>slope <input id="slope" type="range" min="0.6" max="3" step="0.1" value="1.4"><span id="v-slope">1.4</span></label>
     <label>coherence <input id="coh" type="range" min="0" max="1" step="0.01" value="0.5"><span id="v-coh">50%</span></label>
+    <button id="tint">tint: u·ω</button>
   </div>
   <div class="note" id="note">compiling…</div>
 </div>
@@ -47,7 +51,7 @@
 
   function fragSource(glslField){
     return "#version 300 es\nprecision highp float;\n"
-      + "uniform vec2 uRes; uniform float uTime; out vec4 outColor;\n"
+      + "uniform vec2 uRes; uniform float uTime; uniform float uMode; out vec4 outColor;\n"
       + glslField + "\n"
       + "float hash(vec3 p){ p=fract(p*0.3183099+0.1); p*=17.0; return fract(p.x*p.y*p.z*(p.x+p.y+p.z)); }\n"
       + "void main(){\n"
@@ -58,7 +62,8 @@
       + "  vec3 q2=p;\n"
       + "  for(int i=0;i<13;i++){ vec3 v=helixNoise(q2); q2 -= v/(length(v)+1e-4)*0.07; acc+=hash(floor(q2*7.0)); n+=1.0; }\n"
       + "  float lic = acc/n;\n"
-      + "  vec3 v=helixNoise(p), w=helixNoiseCurl(p); float h=dot(v,w);\n"
+      + "  vec3 v=helixNoise(p), w=helixNoiseCurl(p);\n"
+      + "  float h = uMode < 0.5 ? dot(v,w) : helixNoiseQ(p);\n"   // helicity density, or the emitted Q-criterion
       + "  vec3 tint = h>=0.0 ? vec3(0.18,0.84,0.75) : vec3(0.96,0.63,0.24);\n"
       + "  float lum = 0.22 + 1.35*(lic-0.5);\n"
       + "  outColor = vec4(vec3(0.03,0.04,0.055) + tint*lum, 1.0);\n"
@@ -71,10 +76,11 @@
     return s;
   }
   var vao = gl.createVertexArray(); gl.bindVertexArray(vao);
-  var prog=null, uRes=null, uTime=null;
+  var prog=null, uRes=null, uTime=null, uMode=null, colourQ=false;
   function buildProgram(){
     var field = HelixNoise.create({ modes:params.modes, slope:params.slope, helicity:params.heli, coherence:params.coh, seed:params.seed });
-    var frag = fragSource(field.glsl({ name:"helixNoise" }));
+    var src = field.glsl({ name:"helixNoise", gradient:true });   // 1.7.0: also emits helixNoiseGrad + helixNoiseQ
+    var frag = fragSource(src);
     var p = gl.createProgram();
     gl.attachShader(p, compile(gl.VERTEX_SHADER, VERT));
     gl.attachShader(p, compile(gl.FRAGMENT_SHADER, frag));
@@ -83,14 +89,15 @@
     if(prog) gl.deleteProgram(prog);
     prog = p; gl.useProgram(prog);
     uRes = gl.getUniformLocation(prog, "uRes"); uTime = gl.getUniformLocation(prog, "uTime");
-    $("note").textContent = params.modes + " modes → " + (field.glsl().length/1024).toFixed(1) + " kB of GLSL, compiled on the GPU · ⟨u·ω⟩ " + field.relativeHelicity(10).toFixed(2);
+    uMode = gl.getUniformLocation(prog, "uMode");
+    $("note").textContent = params.modes + " modes → " + (src.length/1024).toFixed(1) + " kB of GLSL (velocity + curl + analytic gradient + Q), compiled on the GPU · ρ " + field.relativeHelicitySpectral(0).toFixed(2);
   }
 
   function resize(){ var w=cv.clientWidth, h=cv.clientHeight, dpr=Math.min(2,window.devicePixelRatio||1);
     cv.width=Math.round(w*dpr); cv.height=Math.round(h*dpr); }
   var t0=0;
   function frame(t){ if(!t0)t0=t; gl.viewport(0,0,cv.width,cv.height); gl.useProgram(prog);
-    gl.uniform2f(uRes, cv.width, cv.height); gl.uniform1f(uTime, (t-t0)*0.001);
+    gl.uniform2f(uRes, cv.width, cv.height); gl.uniform1f(uTime, (t-t0)*0.001); gl.uniform1f(uMode, colourQ?1:0);
     gl.bindVertexArray(vao); gl.drawArrays(gl.TRIANGLES, 0, 3); requestAnimationFrame(frame); }
 
   function bind(id,key,fmt){ $(id).addEventListener("input",function(e){ params[key]=parseFloat(e.target.value); $("v-"+id).textContent=fmt(params[key]); buildProgram(); }); }
@@ -99,6 +106,11 @@
   bind("coh","coh",function(v){return Math.round(v*100)+"%";});
 
   resize(); window.addEventListener("resize", resize);
+  $("tint").addEventListener("click", function(){
+    colourQ = !colourQ;
+    $("tint").textContent = colourQ ? "tint: Q" : "tint: u\u00b7\u03c9";
+  });
+
   try { buildProgram(); requestAnimationFrame(frame); }
   catch(e){ $("note").textContent = "Shader error: " + e.message; }
 })();

@@ -150,7 +150,7 @@
     allH.sort((a,b)=>a-b);
     const H90 = allH[(allH.length*0.9)|0] || 1;
 
-    let rho = field.relativeHelicity(10), nT=0;
+    let rho = field.relativeHelicitySpectral(0), nT=0;
     const c = new THREE.Color();
     for(const {pts, hs} of lines){
       const curve = new THREE.CatmullRomCurve3(pts);

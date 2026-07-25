@@ -477,7 +477,7 @@ function measureDiv(sample,zc){ const h=0.004; let mx=0;
 function readouts(){
   const p=2*mixT-1;                                   // effective helicity ≈ 0.9·p
   const f=create({ ...baseOpts, helicity:Math.max(-1,Math.min(1,0.9*p)) });
-  const rr=f.relativeHelicity(10);
+  const rr=f.relativeHelicitySpectral(0);
   document.getElementById("rho").textContent=(rr>=0?"+":"")+rr.toFixed(3);
   const oa=[0,0,0,0,0,0]; let fn, zc, note;
   if(radius>0.02){

@@ -140,8 +140,10 @@
   <div class="foot">
     <span id="foot-key"><span class="key"><span class="sw" style="background:var(--teal)"></span>right-handed (u·ω &gt; 0)</span> <span class="key"><span class="sw" style="background:var(--amber)"></span>left-handed (u·ω &lt; 0)</span></span>
     <br><br>
-    Powered by <code>Helix Noise</code> — the whole field is <code>HelixNoise.create({modes,slope,helicity,coherence,seed})</code>
-    and one <code>.sample()</code> call per particle. See <a href="README.md">README.md</a> for the API and how to embed it.
+    Powered by <code>Helix Noise</code> — the whole field is one <code>HelixNoise.create({…})</code> call
+    (this page drives <code>slope</code>, <code>helicity</code>, <code>coherence</code>, <code>ellipticity</code>,
+    <code>polarizationAxis</code>/<code>polarizationBias</code> and <code>flutter</code>, plus the
+    <code>rolloff</code>/<code>shellPeak</code> presets) and one <code>.sample()</code> call per particle. See <a href="README.md">README.md</a> for the API and how to embed it.
   </div>
 </div>
 
@@ -247,10 +249,18 @@
     if(scaleMode==="band"){ o.spectrum = HelixNoise.shellPeak(3.2); o.kmin = 1; o.kmax = 6.2; }
     return o;
   }
-  function rebuild(){ field.set(dials()); rho=field.relativeHelicity(10); updateBadge(); }
+  function rebuild(){ field.set(dials()); rho=field.relativeHelicitySpectral(0); updateBadge(); }
+  // When a scale-dependent preset is active the coherence SLIDER is not what the field uses:
+  // a callable sets the scalar lambda to 0 outright, so printing the slider % would be a lie.
+  function cohLabel(){
+    if(scaleMode==="rollers") return "rolloff(4)";
+    if(scaleMode==="band") return Math.round(params.coh*100)+"% \u00b7 shellPeak(3.2)";
+    return Math.round(params.coh*100)+"%";
+  }
+
   function updateBadge(){
     $("badge").textContent="Helix Noise · "+params.modes+" modes · "+(NP/1000).toFixed(1)+"k particles";
-    $("ro").innerHTML="p <b style=\"color:"+(params.heli>=0?"var(--teal)":"var(--amber)")+"\">"+(params.heli>0?"+":"")+params.heli.toFixed(2)+"</b><br>coherence <b>"+Math.round(params.coh*100)+"%</b><br>&#10216;u&#183;&#969;&#10217; <b style=\"color:var(--cyan)\">"+(rho>0?"+":"")+rho.toFixed(2)+"</b>";
+    $("ro").innerHTML="p <b style=\"color:"+(params.heli>=0?"var(--teal)":"var(--amber)")+"\">"+(params.heli>0?"+":"")+params.heli.toFixed(2)+"</b><br>coherence <b>"+cohLabel()+"</b><br>&#10216;u&#183;&#969;&#10217; <b style=\"color:var(--cyan)\">"+(rho>0?"+":"")+rho.toFixed(2)+"</b>";
   }
 
   function bind(id,key,fmt,rebuildOnChange){
@@ -284,7 +294,13 @@
   $("p-mirror").addEventListener("click",function(){preset(0.0,1.7,0.4,1);});
   $("p-sheets").addEventListener("click",function(){preset(0.0,1.9,0.5,0);});
   $("p-braid").addEventListener("click",function(){preset(0.6,1.6,0.4,0.5);});
-  $("p-rollers").addEventListener("click",function(){scaleMode = scaleMode==="rollers"?null:"rollers"; rebuild();});
+  $("p-rollers").addEventListener("click",function(){
+    scaleMode = scaleMode==="rollers"?null:"rollers";
+    // rolloff(k) replaces the scalar dial entirely — grey the slider out rather than leave it lying
+    $("coh").disabled = scaleMode==="rollers";
+    $("v-coh").textContent = scaleMode==="rollers" ? "rolloff(4)" : Math.round(params.coh*100)+"%";
+    rebuild();
+  });
   $("p-band").addEventListener("click",function(){scaleMode = scaleMode==="band"?null:"band"; rebuild();});
   $("p-colour").addEventListener("click",function(){
     colourByQ = !colourByQ;
@@ -308,7 +324,7 @@
   if(window.matchMedia&&matchMedia("(prefers-reduced-motion: reduce)").matches){playing=false;autoRot=false;$("play-lbl").textContent="Play";$("btn-play").classList.add("off");$("btn-rot").classList.add("off");}
 
   resize(); window.addEventListener("resize",resize);
-  initP(3000); rho=field.relativeHelicity(10); prime(); updateBadge();
+  initP(3000); rho=field.relativeHelicitySpectral(0); prime(); updateBadge();
   requestAnimationFrame(frame);
 })();
 </script>

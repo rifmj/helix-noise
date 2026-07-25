@@ -35,7 +35,7 @@
   <h1>Nebula — <code>field.glsl()</code> raymarched, alive in time</h1>
   <p>No volume texture, no simulation, no CPU per frame: the fragment shader evaluates the field
     <b>analytically at every step of every ray</b> through the emitted <code>hx(p, t)</code> — the
-    time-aware GLSL overload. Gas density is the field's own <b>speed</b> (so <b>coherence</b>
+    time-aware GLSL overload. Gas density is the field's own <b>vorticity magnitude</b> <code>|ω|</code> (so <b>coherence</b>
     literally condenses the nebula out of haze — slide it), colour is <b>helicity</b>:
     <span style="color:#2fd6bf">teal right-handed</span> vs
     <span style="color:#f4a13c">amber left-handed</span> gas. The churn you see is the library's
@@ -177,7 +177,7 @@
     prog=p; gl.useProgram(prog);
     ["uRes","uTime","uThr","camPos","camR","camU","camF","fovT","aspect"].forEach(function(n){U[n]=gl.getUniformLocation(prog,n);});
     $("note").textContent=params.modes+" modes → "+(frag.length/1024).toFixed(1)+" kB of GLSL · 46 raymarch steps × hxCurl(p,t) per pixel · transfer auto-calibrated (p72/p97 |ω| = "
-      +THR[0].toFixed(2)+"/"+THR[1].toFixed(2)+") · rebuilt in "+(performance.now()-t0).toFixed(0)+" ms · ⟨u·ω⟩ "+field.relativeHelicity(8).toFixed(2);
+      +THR[0].toFixed(2)+"/"+THR[1].toFixed(2)+") · rebuilt in "+(performance.now()-t0).toFixed(0)+" ms · ⟨u·ω⟩ "+field.relativeHelicitySpectral(0).toFixed(2);
   }
 
   var RW=840,RH=472;

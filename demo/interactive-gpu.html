@@ -238,7 +238,7 @@ function measureDiv(){
 }
 function readouts(){
   drawSpectrum();
-  const r=field.relativeHelicity(10);
+  const r=field.relativeHelicitySpectral(0);
   document.getElementById("rho").textContent=(r>=0?"+":"")+r.toFixed(3);
   measureDiv();
 }
