@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Helix Noise — vortex rings (closed-form structures)</title>
+<style>
+  html,body{margin:0;background:#070a0e;color:#cdd6dd;font-family:system-ui,sans-serif}
+  .wrap{max-width:980px;margin:0 auto;padding:22px 16px}
+  h1{font-size:19px;font-weight:600;margin:0 0 6px}
+  h1 code{color:#f4a13c}
+  p{color:#8a97a2;font-size:13.5px;line-height:1.6;margin:0 0 14px}
+  p b{color:#cdd6dd;font-weight:500}
+  code{font-family:ui-monospace,Menlo,monospace;color:#f4a13c;font-size:12.5px}
+  #stage{position:relative;width:100%;aspect-ratio:16/10;border:1px solid rgba(150,180,200,.15);border-radius:10px;overflow:hidden;background:#070a0e}
+  .badge{position:absolute;top:10px;left:12px;font-family:ui-monospace,monospace;font-size:10.5px;
+    letter-spacing:.12em;text-transform:uppercase;color:#93a3b0;background:rgba(7,10,14,.55);
+    border:1px solid rgba(150,180,200,.14);border-radius:6px;padding:4px 8px;pointer-events:none}
+  .ro{position:absolute;top:10px;right:12px;font-family:ui-monospace,monospace;font-size:11px;color:#93a3b0;
+    background:rgba(7,10,14,.55);border:1px solid rgba(150,180,200,.14);border-radius:6px;padding:5px 9px;
+    text-align:right;line-height:1.5;pointer-events:none}
+  .ro b{font-weight:400;color:#2fd6bf}
+  .row{display:flex;flex-wrap:wrap;gap:14px;align-items:center;margin-top:12px;font-family:ui-monospace,monospace;font-size:12px;color:#93a3b0}
+  .row label{display:flex;align-items:center;gap:8px}
+  input[type=range]{width:120px}
+  button{font-family:ui-monospace,monospace;font-size:11.5px;color:#cdd6dd;background:#0c1016;
+    border:1px solid rgba(150,180,200,.22);border-radius:7px;padding:6px 11px;cursor:pointer}
+  button:hover{border-color:#38d9d1}
+  button.on{border-color:#38d9d1;color:#fff}
+  .note{margin-top:12px;font-size:12px;color:#5d6b77;font-family:ui-monospace,monospace}
+  .key{display:inline-flex;align-items:center;gap:6px;margin-right:14px}
+  .sw{width:10px;height:10px;border-radius:2px;display:inline-block}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Vortex rings — <code>createRing</code>, <code>collidingRings</code>, <code>compose</code></h1>
+  <p>Not noise: a <b>closed-form structure</b>. A smoke ring is a compact torus of swirl pushing a jet
+    through its own middle, written as an explicit curl <code>u = ∇×A</code> — so it is exactly
+    divergence-free, carries an exact potential, and is <b>exactly zero outside its core</b> (that is why
+    the particles only move where the ring is). <b>Fly</b> sends it travelling at Kelvin's self-induced
+    speed <code>Γ/(4πR)·(ln(8R/c) − ¼)</code>. <b>Collide</b> fires two of them head-on;
+    <b>+ noise</b> composes the ring with a broadband field, which is the whole point of
+    <code>compose</code>. Drag to orbit.</p>
+  <div id="stage"><div class="badge">helix-noise · closed-form rings · three.js</div><div class="ro" id="ro">—</div></div>
+  <div class="row">
+    <button id="s-one" class="on">one ring</button>
+    <button id="s-two">collide</button>
+    <button id="s-mix">+ noise</button>
+    <button id="fly" class="on">fly ✓</button>
+    <label>circulation <input id="circ" type="range" min="0.4" max="3" step="0.1" value="1.6"><span id="v-circ">1.6</span></label>
+    <label>core <input id="core" type="range" min="0.15" max="0.7" step="0.01" value="0.42"><span id="v-core">0.42</span></label>
+  </div>
+  <div class="note" style="margin-top:10px">
+    <span class="key"><span class="sw" style="background:#2fd6bf"></span>u·ω &gt; 0 (right-handed)</span>
+    <span class="key"><span class="sw" style="background:#f4a13c"></span>u·ω &lt; 0 (left-handed)</span>
+  </div>
+  <div class="note" id="note">loading three.js…</div>
+</div>
+
+<script src="../dist/helix-noise.global.js"></script>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+  import * as THREE from "three";
+  import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+  const TAU = Math.PI * 2;
+  const R = 1.5, SEP = 2.2;
+  const params = { scene: "one", fly: true, circ: 1.6, core: 0.42 };
+
+  // ---- the field ---------------------------------------------------------
+  // Rings live along z. `compose` sums flows: the sum of divergence-free fields is
+  // divergence-free and its potential is the sum of theirs, so everything downstream still works.
+  let field, ringSpeed = 0;
+  function build() {
+    const o = { radius: R, core: params.core, circulation: params.circ, axis: [0, 0, 1], advect: params.fly };
+    ringSpeed = HelixNoise.ringSpeed(params.circ, R, params.core);
+    if (params.scene === "one") field = HelixNoise.createRing(o);
+    else if (params.scene === "two") field = HelixNoise.collidingRings({ ...o, advect: params.fly, separation: SEP });
+    else field = HelixNoise.compose(
+      HelixNoise.createRing({ ...o, advect: false }),
+      HelixNoise.create({ modes: 20, seed: 5, slope: 2.0, coherence: 0.3, amplitude: 0.32 })
+    );
+  }
+  build();
+
+  // ---- particles ---------------------------------------------------------
+  const N = 9000;
+  const pos = new Float32Array(3 * N);
+  const posD = new Float64Array(3 * N);
+  const life = new Float32Array(N);
+  const col = new Float32Array(3 * N);
+  let rs = 20260725;
+  const rnd = () => ((rs = (rs * 1664525 + 1013904223) >>> 0) / 4294967296);
+
+  /** Seed inside the structure — outside the core the ring's flow is exactly zero, so a particle
+   *  dropped there would simply stand still. The "+ noise" scene fills the whole box instead. */
+  function spawn(i) {
+    if (params.scene === "mix") {
+      posD[3 * i] = (rnd() - 0.5) * 5.5;
+      posD[3 * i + 1] = (rnd() - 0.5) * 5.5;
+      posD[3 * i + 2] = (rnd() - 0.5) * 5.5;
+    } else {
+      const th = rnd() * TAU, ph = rnd() * TAU, q = params.core * Math.sqrt(rnd());
+      const rr = R + q * Math.cos(ph);
+      let z = q * Math.sin(ph);
+      if (params.scene === "two") z += (rnd() < 0.5 ? -1 : 1) * SEP / 2;
+      posD[3 * i] = rr * Math.cos(th);
+      posD[3 * i + 1] = rr * Math.sin(th);
+      posD[3 * i + 2] = z;
+    }
+    life[i] = 30 + rnd() * 90;
+  }
+  for (let i = 0; i < N; i++) spawn(i);
+
+  // ---- three.js ----------------------------------------------------------
+  const stage = document.getElementById("stage");
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(Math.min(2, devicePixelRatio));
+  stage.appendChild(renderer.domElement);
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x070a0e);
+  const camera = new THREE.PerspectiveCamera(45, 16 / 10, 0.1, 100);
+  camera.position.set(4.2, 2.6, 6.4);
+  const controls = new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true; controls.autoRotate = true; controls.autoRotateSpeed = 0.5;
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute("color", new THREE.BufferAttribute(col, 3));
+  const points = new THREE.Points(geo, new THREE.PointsMaterial({
+    size: 0.035, vertexColors: true, transparent: true, opacity: 0.85,
+    blending: THREE.AdditiveBlending, depthWrite: false,
+  }));
+  scene.add(points);
+
+  // A faint wireframe of where the ring core actually is, so "zero outside" reads as a fact.
+  const guide = new THREE.Mesh(
+    new THREE.TorusGeometry(R, params.core, 10, 60),
+    new THREE.MeshBasicMaterial({ color: 0x2c4a52, wireframe: true, transparent: true, opacity: 0.35 })
+  );
+  const guide2 = guide.clone();
+  scene.add(guide, guide2);
+  function layoutGuides() {
+    const two = params.scene === "two";
+    guide.position.set(0, 0, two ? -SEP / 2 : 0);
+    guide2.position.set(0, 0, SEP / 2);
+    guide2.visible = two;
+  }
+  layoutGuides();
+
+  function resize() {
+    renderer.setSize(stage.clientWidth, stage.clientHeight);
+    camera.aspect = stage.clientWidth / stage.clientHeight;
+    camera.updateProjectionMatrix();
+  }
+  addEventListener("resize", resize); resize();
+
+  // ---- advection ---------------------------------------------------------
+  const TEAL = [0.184, 0.839, 0.749], AMBER = [0.957, 0.631, 0.235];
+  let t = 0, umax = 0;
+  const uw = [0, 0, 0, 0, 0, 0];
+  function step() {
+    const dt = 0.02;
+    t += dt;
+    umax = 0;
+    for (let i = 0; i < N; i++) {
+      const x = posD[3 * i], y = posD[3 * i + 1], z = posD[3 * i + 2];
+      field.sampleUW(x, y, z, uw, t);
+      const sp = Math.hypot(uw[0], uw[1], uw[2]);
+      if (sp > umax) umax = sp;
+      posD[3 * i] = x + uw[0] * dt;
+      posD[3 * i + 1] = y + uw[1] * dt;
+      posD[3 * i + 2] = z + uw[2] * dt;
+      if (--life[i] <= 0 || Math.abs(posD[3 * i + 2]) > 6) spawn(i);
+      pos[3 * i] = posD[3 * i]; pos[3 * i + 1] = posD[3 * i + 1]; pos[3 * i + 2] = posD[3 * i + 2];
+      // colour by the genuine helicity density u·ω, dimmed where the flow is weak
+      const h = uw[0] * uw[3] + uw[1] * uw[4] + uw[2] * uw[5];
+      const c = h >= 0 ? TEAL : AMBER;
+      const g = Math.min(1, 0.25 + sp * 0.5);
+      col[3 * i] = c[0] * g; col[3 * i + 1] = c[1] * g; col[3 * i + 2] = c[2] * g;
+    }
+    if (params.fly && params.scene !== "mix") {
+      const sh = ringSpeed * t;
+      guide.position.z = (params.scene === "two" ? -SEP / 2 : 0) + sh;
+      guide2.position.z = SEP / 2 - sh;
+    }
+    geo.attributes.position.needsUpdate = true;
+    geo.attributes.color.needsUpdate = true;
+  }
+
+  const ro = document.getElementById("ro");
+  function readout() {
+    ro.innerHTML = `Γ <b>${params.circ.toFixed(2)}</b> · core <b>${params.core.toFixed(2)}</b><br>` +
+      `Kelvin U <b>${ringSpeed.toFixed(3)}</b><br>|u|max <b>${umax.toFixed(2)}</b>`;
+  }
+
+  function frame() { step(); readout(); controls.update(); renderer.render(scene, camera); requestAnimationFrame(frame); }
+  frame();
+
+  // ---- controls ----------------------------------------------------------
+  const $ = (id) => document.getElementById(id);
+  function reset() {
+    build(); layoutGuides(); t = 0;
+    guide.geometry.dispose();
+    guide.geometry = new THREE.TorusGeometry(R, params.core, 10, 60);
+    guide2.geometry = guide.geometry;
+    for (let i = 0; i < N; i++) spawn(i);
+  }
+  function pickScene(name) {
+    params.scene = name;
+    for (const id of ["s-one", "s-two", "s-mix"]) $(id).classList.toggle("on", id === "s-" + name);
+    reset();
+  }
+  $("s-one").onclick = () => pickScene("one");
+  $("s-two").onclick = () => pickScene("two");
+  $("s-mix").onclick = () => pickScene("mix");
+  $("fly").onclick = () => {
+    params.fly = !params.fly;
+    $("fly").classList.toggle("on", params.fly);
+    $("fly").textContent = params.fly ? "fly ✓" : "fly";
+    reset();
+  };
+  $("circ").oninput = (e) => { params.circ = +e.target.value; $("v-circ").textContent = params.circ.toFixed(1); reset(); };
+  $("core").oninput = (e) => { params.core = +e.target.value; $("v-core").textContent = params.core.toFixed(2); reset(); };
+
+  document.getElementById("note").textContent =
+    `${N.toLocaleString()} particles advected by field.sampleUW() · the wireframe torus is the ring's core, ` +
+    "where the flow lives — outside it the field is identically zero · three.js r160";
+</script>
+</body>
+</html>
