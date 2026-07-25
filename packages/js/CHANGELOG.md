@@ -3,6 +3,46 @@
 All notable changes to this project are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [1.2.0]
+
+### Added
+
+- **`ellipticity` — the polarization dial** (`ε ∈ [0, 1]`, default `1`). Each mode's Beltrami sign
+  `s = ±1` generalizes to a continuous chirality `χ = ε·s`, morphing the texture between corkscrew
+  **tubes** (`ε = 1`, the classic engine, bit-identical) and laminated **sheets/jets** (`ε = 0`) at a
+  fixed spectrum and a fixed `helicity`. It is the third axis of the one-point spectral tensor
+  (`Φ = g·P⊥ + D + i·p·N`) — genuinely independent of both `anisotropy` (which only moves wavevector
+  *directions*) and `helicity` (which only biases the *sign* of `χ`). The field stays exactly
+  divergence-free and keeps an exact Coulomb-gauge vector potential for every `ε`, so `withBoundary`,
+  `bakePotential3D` and the emitted GLSL potential work unchanged.
+- Sandbox demo: an **ellipticity** slider plus `sheets` and `braid` presets.
+- `selfTest()` reports `ellipticityRho` (one mode's relative helicity vs the exact `2χ/(1+χ²)`) and
+  `fdDivergenceRmsElliptic`.
+- `ModeData` exposes the per-mode `chi` array; the emitted GLSL bakes it into `P_S` (no ABI change)
+  and switches `…Curl`/`…Pot` to the general two-term bodies when the modes are not Beltrami.
+
+### Fixed
+
+- **WASM batch kernel read stale mode data.** The kernel strides its mode arrays by the live mode
+  count, but the uploader wrote them at the reserved capacity — so any field built with fewer modes
+  than an earlier one got garbage velocities from `sampleMany`/`sampleManyUW` (silently: no error,
+  just a wrong field). Both now use the same stride.
+
+### Notes
+
+- `ellipticity` consumes **no RNG draws** — it is a deterministic post-transform of the already-drawn
+  sign, so every field's mode layout is bit-identical across `ε`, and all pre-existing parity-fixture
+  configs are unchanged.
+- Interaction to know: at `ε = 0` every mode is achiral, so the `helicity` slider has no visible
+  effect and `relativeHelicity()` reads ≈ 0. In general one mode's relative helicity is capped at
+  `2ε/(1+ε²)`.
+
+## [1.1.0]
+
+- `coherence` now blends phases additively (`ph = φ_center + (1−λ)·φ_random`, helical-fields Eq. 9)
+  instead of the complex-plane "chord" blend, which had a singularity at λ = ½ for antipodal phases.
+  The amplitude spectrum and helicity bias are frozen at every λ — only the phase moves.
+
 ## [1.0.2]
 
 - Docs-only release: restructured README for faster onboarding — code in the first screen,

@@ -2,7 +2,7 @@
 
 <p align="center">
   <b>Divergence-free helical flow fields you can art-direct — in four ecosystems, one algorithm.</b><br>
-  Sample a smooth, incompressible 3-D velocity field at any point: spectral slope, helicity, phase coherence.
+  Sample a smooth, incompressible 3-D velocity field at any point: spectral slope, helicity, phase coherence, polarization.
   No FFT, no grid, no simulation.
 </p>
 
@@ -22,11 +22,11 @@ algorithm once and re-verify every language in one CI run.
 
 | Package | Language | Registry | Version | Status |
 |---|---|---|---|---|
-| [`packages/js`](packages/js) | TypeScript / JS | npm `helix-noise` | `1.0.2` | reference implementation (spectral + atom engines, boundaries, GLSL, WASM batch kernel) |
-| [`packages/python`](packages/python) | Python 3 + numpy | PyPI `helix-noise` | `0.1.0` | spectral engine + boundary + GLSL; vectorized `sample_many` |
-| [`packages/rust`](packages/rust) | Rust | crates.io `helix-noise` | `0.1.0` | spectral **+ atom** engines + boundary (wraps either) + GLSL; zero runtime deps, WASM-friendly |
-| [`packages/wasm`](packages/wasm) | Rust → WebAssembly | npm `helix-noise-wasm` | `0.1.0` | `wasm-bindgen` build of the Rust core; both engines, native-speed sampling in the browser |
-| [`packages/shaders`](packages/shaders) | GLSL · HLSL · WGSL · Godot | — | `0.1.0` | code generator + ready-to-paste shaders for Shadertoy / Unity / Unreal / Godot / WebGPU |
+| [`packages/js`](packages/js) | TypeScript / JS | npm `helix-noise` | `1.2.0` | reference implementation (spectral + atom engines, boundaries, GLSL, WASM batch kernel) |
+| [`packages/python`](packages/python) | Python 3 + numpy | PyPI `helix-noise` | `0.2.0` | spectral engine + boundary + GLSL; vectorized `sample_many` |
+| [`packages/rust`](packages/rust) | Rust | crates.io `helix-noise` | `0.3.0` | spectral **+ atom** engines + boundary (wraps either) + GLSL; zero runtime deps, WASM-friendly |
+| [`packages/wasm`](packages/wasm) | Rust → WebAssembly | npm `helix-noise-wasm` | `0.2.0` | `wasm-bindgen` build of the Rust core; both engines, native-speed sampling in the browser |
+| [`packages/shaders`](packages/shaders) | GLSL · HLSL · WGSL · Godot | — | `0.2.0` | code generator + ready-to-paste shaders for Shadertoy / Unity / Unreal / Godot / WebGPU |
 | [`packages/r3f`](packages/r3f) | TypeScript / React | npm `helix-noise-r3f` | `0.1.0` | react-three-fiber components (declarative particles + material); CPU + GPU engines, SDF obstacles |
 | [`packages/gpu`](packages/gpu) | TypeScript / WebGL2 | npm `helix-noise-gpu` | `0.1.0` | framework-agnostic GPU particle engine (transform-feedback advection via injected `field.glsl()`, ~10⁶ particles); no three.js/React |
 
@@ -51,7 +51,7 @@ Everything under [`spec/`](spec) is the single source of truth:
 - [`spec/PORTING_SPEC.md`](spec/PORTING_SPEC.md) — the language-agnostic algorithm (RNG, mode construction,
   sampling, boundaries, GLSL emitter). Port from this.
 - [`spec/parity_fixture.json`](spec/parity_fixture.json) — the canonical fixture (mode arrays + sample
-  outputs for 6 configs incl. a boundary case), **generated from `packages/js`**.
+  outputs for 8 configs incl. two boundary cases), **generated from `packages/js`**.
 - [`spec/ref_glsl_*.glsl`](spec) — exact GLSL emitter targets.
 
 Each port's test suite asserts it reproduces the fixture within `1e-9`. Regenerate the fixture with:

@@ -27,7 +27,7 @@ from decimal import Decimal, ROUND_HALF_UP
 
 TAU = 2.0 * math.pi
 GA = math.pi * (3.0 - math.sqrt(5.0))  # golden angle
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 
 
 # ---------------------------------------------------------------------------
@@ -108,6 +108,7 @@ DEFAULTS = {
     "decay": 0.0,
     "anisotropy": 0.0,
     "axis": (0.0, 0.0, 1.0),
+    "ellipticity": 1.0,
     "spectrum": None,
 }
 
@@ -140,6 +141,10 @@ class HelixField:
         fib = p["layout"] != "random"
         ci = [0] * N
         gam = min(9.0, max(-0.99, p["anisotropy"]))
+        # Polarization ellipticity: chi_j = eps*s_j. Draw-free, so the RNG sequence is identical
+        # for every eps; eps == 1 keeps the legacy Beltrami path the parity fixture pins.
+        eps = min(1.0, max(0.0, p["ellipticity"]))
+        self._beltrami = eps == 1.0
         ax = p["axis"]
         an = math.hypot(ax[0], ax[1], ax[2]) or 1.0
         anx, any_, anz = ax[0] / an, ax[1] / an, ax[2] / an
@@ -161,6 +166,7 @@ class HelixField:
         km = [0.0] * N
         a = [0.0] * N
         s = [0.0] * N
+        chi = [0.0] * N
         ph = [0.0] * N
         om = [0.0] * N
         e1x = [0.0] * N
@@ -221,6 +227,7 @@ class HelixField:
             e1x[j], e1y[j], e1z[j] = f[0], f[1], f[2]
             e2x[j], e2y[j], e2z[j] = f[3], f[4], f[5]
             s[j] = 1.0 if rng() < (1.0 + p["helicity"]) / 2.0 else -1.0
+            chi[j] = eps * s[j]
             spec = p["spectrum"]
             a[j] = max(0.0, spec(kmj)) if spec else math.pow(kmj, -p["slope"])
             phr = TAU * rng()
@@ -233,11 +240,11 @@ class HelixField:
             ph[j] = phc + (1.0 - lam) * phr
 
         # Time evolution — all draws AFTER the spatial loop.
-        chi = max(0.0, p["churn"])
+        churn_rate = max(0.0, p["churn"])  # `chi` is reserved for chirality
         cvx = [0.0] * nc
         cvy = [0.0] * nc
         cvz = [0.0] * nc
-        sg = chi / math.sqrt(3.0)
+        sg = churn_rate / math.sqrt(3.0)
         for m in range(nc):
             r1 = math.sqrt(-2.0 * math.log(1.0 - rng()))
             a1 = TAU * rng()
@@ -246,7 +253,7 @@ class HelixField:
             cvx[m] = sg * r1 * math.cos(a1)
             cvy[m] = sg * r1 * math.sin(a1)
             cvz[m] = sg * r2 * math.cos(a2)
-        rate0 = chi * math.cbrt(max(p["kmin"], 1e-9))
+        rate0 = churn_rate * math.cbrt(max(p["kmin"], 1e-9))
         for j in range(N):
             sgn = -1.0 if rng() < 0.5 else 1.0
             c = ci[j]
@@ -256,6 +263,7 @@ class HelixField:
 
         self.kx, self.ky, self.kz, self.km = kx, ky, kz, km
         self.a, self.s, self.ph, self.om = a, s, ph, om
+        self.chi = chi
         self.e1x, self.e1y, self.e1z = e1x, e1y, e1z
         self.e2x, self.e2y, self.e2z = e2x, e2y, e2z
         self.nu = max(0.0, p["decay"])
@@ -274,18 +282,30 @@ class HelixField:
             phi = self.kx[j] * x + self.ky[j] * y + self.kz[j] * z + self.ph[j] + self.om[j] * t
             c = math.cos(phi)
             sn = math.sin(phi)
-            s = self.s[j]
             a = self._amp(j, t)
-            tx = a * (c * self.e1x[j] - s * sn * self.e2x[j])
-            ty = a * (c * self.e1y[j] - s * sn * self.e2y[j])
-            tz = a * (c * self.e1z[j] - s * sn * self.e2z[j])
-            ux += tx
-            uy += ty
-            uz += tz
-            g = s * self.km[j]
-            wx += g * tx
-            wy += g * ty
-            wz += g * tz
+            if self._beltrami:
+                s = self.s[j]
+                tx = a * (c * self.e1x[j] - s * sn * self.e2x[j])
+                ty = a * (c * self.e1y[j] - s * sn * self.e2y[j])
+                tz = a * (c * self.e1z[j] - s * sn * self.e2z[j])
+                ux += tx
+                uy += ty
+                uz += tz
+                g = s * self.km[j]
+                wx += g * tx
+                wy += g * ty
+                wz += g * tz
+            else:
+                # Elliptic modes: w_j = a*k*(chi*cos(phi)*e1 - sin(phi)*e2).
+                xi = self.chi[j]
+                cx, sx = xi * c, xi * sn
+                ux += a * (c * self.e1x[j] - sx * self.e2x[j])
+                uy += a * (c * self.e1y[j] - sx * self.e2y[j])
+                uz += a * (c * self.e1z[j] - sx * self.e2z[j])
+                gk = a * self.km[j]
+                wx += gk * (cx * self.e1x[j] - sn * self.e2x[j])
+                wy += gk * (cx * self.e1y[j] - sn * self.e2y[j])
+                wz += gk * (cx * self.e1z[j] - sn * self.e2z[j])
         sc = self._scale
         return (ux * sc, uy * sc, uz * sc, wx * sc, wy * sc, wz * sc)
 
@@ -351,7 +371,7 @@ def _mode_columns(f, pr):
     K = [(fl(f.kx[j], pr), fl(f.ky[j], pr), fl(f.kz[j], pr)) for j in range(N)]
     E1 = [(fl(f.e1x[j], pr), fl(f.e1y[j], pr), fl(f.e1z[j], pr)) for j in range(N)]
     E2 = [(fl(f.e2x[j], pr), fl(f.e2y[j], pr), fl(f.e2z[j], pr)) for j in range(N)]
-    S = [fl(f.s[j], pr) for j in range(N)]
+    S = [fl(f.chi[j], pr) for j in range(N)]  # P_S holds chi = ellipticity*s
     A = [fl(f.a[j], pr) for j in range(N)]
     PH = [fl(f.ph[j], pr) for j in range(N)]
     OM = [fl(f.om[j], pr) for j in range(N)]
@@ -408,8 +428,10 @@ def emit_glsl(f, name="helixNoise", pr=7, curl=True, pot=False):
             "  vec3 w = vec3(0.0);",
             "  for (int j = 0; j < %sN; j++) {" % P,
             "    float phi = dot(%sK[j], p) + %sPH[j] + %sOM[j] * t;" % (P, P, P),
-            "    vec3 tv = (%s) * (cos(phi) * %sE1[j] - %sS[j] * sin(phi) * %sE2[j]);" % (amp, P, P, P),
-            "    w += %sS[j] * length(%sK[j]) * tv;" % (P, P),
+            *(["    vec3 tv = (%s) * (cos(phi) * %sE1[j] - %sS[j] * sin(phi) * %sE2[j]);" % (amp, P, P, P),
+               "    w += %sS[j] * length(%sK[j]) * tv;" % (P, P)] if f._beltrami else
+              ["    vec3 tw = (%s) * (%sS[j] * cos(phi) * %sE1[j] - sin(phi) * %sE2[j]);" % (amp, P, P, P),
+               "    w += length(%sK[j]) * tw;" % P]),
             "  }",
             "  return w * %sSCALE;" % P,
             "}",
@@ -422,8 +444,10 @@ def emit_glsl(f, name="helixNoise", pr=7, curl=True, pot=False):
             "  vec3 A = vec3(0.0);",
             "  for (int j = 0; j < %sN; j++) {" % P,
             "    float phi = dot(%sK[j], p) + %sPH[j] + %sOM[j] * t;" % (P, P, P),
-            "    vec3 tv = (%s) * (cos(phi) * %sE1[j] - %sS[j] * sin(phi) * %sE2[j]);" % (amp, P, P, P),
-            "    A += (%sS[j] / length(%sK[j])) * tv;" % (P, P),
+            *(["    vec3 tv = (%s) * (cos(phi) * %sE1[j] - %sS[j] * sin(phi) * %sE2[j]);" % (amp, P, P, P),
+               "    A += (%sS[j] / length(%sK[j])) * tv;" % (P, P)] if f._beltrami else
+              ["    vec3 tw = (%s) * (%sS[j] * cos(phi) * %sE1[j] - sin(phi) * %sE2[j]);" % (amp, P, P, P),
+               "    A += tw / length(%sK[j]);" % P]),
             "  }",
             "  return A * %sSCALE;" % P,
             "}",
@@ -481,8 +505,10 @@ def emit_hlsl(f, name="helixNoise", pr=7, curl=True, pot=False):
             "  float3 w = float3(0.0, 0.0, 0.0);",
             "  [loop] for (int j = 0; j < %sN; j++) {" % P,
             "    float phi = dot(%sK[j], p) + %sPH[j] + %sOM[j] * t;" % (P, P, P),
-            "    float3 tv = (%s) * (cos(phi) * %sE1[j] - %sS[j] * sin(phi) * %sE2[j]);" % (amp, P, P, P),
-            "    w += %sS[j] * length(%sK[j]) * tv;" % (P, P),
+            *(["    float3 tv = (%s) * (cos(phi) * %sE1[j] - %sS[j] * sin(phi) * %sE2[j]);" % (amp, P, P, P),
+               "    w += %sS[j] * length(%sK[j]) * tv;" % (P, P)] if f._beltrami else
+              ["    float3 tw = (%s) * (%sS[j] * cos(phi) * %sE1[j] - sin(phi) * %sE2[j]);" % (amp, P, P, P),
+               "    w += length(%sK[j]) * tw;" % P]),
             "  }",
             "  return w * %sSCALE;" % P,
             "}",
@@ -495,8 +521,10 @@ def emit_hlsl(f, name="helixNoise", pr=7, curl=True, pot=False):
             "  float3 A = float3(0.0, 0.0, 0.0);",
             "  [loop] for (int j = 0; j < %sN; j++) {" % P,
             "    float phi = dot(%sK[j], p) + %sPH[j] + %sOM[j] * t;" % (P, P, P),
-            "    float3 tv = (%s) * (cos(phi) * %sE1[j] - %sS[j] * sin(phi) * %sE2[j]);" % (amp, P, P, P),
-            "    A += (%sS[j] / length(%sK[j])) * tv;" % (P, P),
+            *(["    float3 tv = (%s) * (cos(phi) * %sE1[j] - %sS[j] * sin(phi) * %sE2[j]);" % (amp, P, P, P),
+               "    A += (%sS[j] / length(%sK[j])) * tv;" % (P, P)] if f._beltrami else
+              ["    float3 tw = (%s) * (%sS[j] * cos(phi) * %sE1[j] - sin(phi) * %sE2[j]);" % (amp, P, P, P),
+               "    A += tw / length(%sK[j]);" % P]),
             "  }",
             "  return A * %sSCALE;" % P,
             "}",
@@ -554,8 +582,10 @@ def emit_wgsl(f, name="helixNoise", pr=7, curl=True, pot=False):
             "  var w = vec3f(0.0);",
             "  for (var j: i32 = 0; j < %sN; j = j + 1) {" % P,
             "    let phi = dot(%sK[j], p) + %sPH[j] + %sOM[j] * t;" % (P, P, P),
-            "    let tv = (%s) * (cos(phi) * %sE1[j] - %sS[j] * sin(phi) * %sE2[j]);" % (amp, P, P, P),
-            "    w = w + %sS[j] * length(%sK[j]) * tv;" % (P, P),
+            *(["    let tv = (%s) * (cos(phi) * %sE1[j] - %sS[j] * sin(phi) * %sE2[j]);" % (amp, P, P, P),
+               "    w = w + %sS[j] * length(%sK[j]) * tv;" % (P, P)] if f._beltrami else
+              ["    let tw = (%s) * (%sS[j] * cos(phi) * %sE1[j] - sin(phi) * %sE2[j]);" % (amp, P, P, P),
+               "    w = w + length(%sK[j]) * tw;" % P]),
             "  }",
             "  return w * %sSCALE;" % P,
             "}",
@@ -568,8 +598,10 @@ def emit_wgsl(f, name="helixNoise", pr=7, curl=True, pot=False):
             "  var a = vec3f(0.0);",
             "  for (var j: i32 = 0; j < %sN; j = j + 1) {" % P,
             "    let phi = dot(%sK[j], p) + %sPH[j] + %sOM[j] * t;" % (P, P, P),
-            "    let tv = (%s) * (cos(phi) * %sE1[j] - %sS[j] * sin(phi) * %sE2[j]);" % (amp, P, P, P),
-            "    a = a + (%sS[j] / length(%sK[j])) * tv;" % (P, P),
+            *(["    let tv = (%s) * (cos(phi) * %sE1[j] - %sS[j] * sin(phi) * %sE2[j]);" % (amp, P, P, P),
+               "    a = a + (%sS[j] / length(%sK[j])) * tv;" % (P, P)] if f._beltrami else
+              ["    let tw = (%s) * (%sS[j] * cos(phi) * %sE1[j] - sin(phi) * %sE2[j]);" % (amp, P, P, P),
+               "    a = a + tw / length(%sK[j]);" % P]),
             "  }",
             "  return a * %sSCALE;" % P,
             "}",
@@ -627,8 +659,10 @@ def emit_godot(f, name="helixNoise", pr=7, curl=True, pot=False):
             "  vec3 w = vec3(0.0);",
             "  for (int j = 0; j < %sN; j++) {" % P,
             "    float phi = dot(%sK[j], p) + %sPH[j] + %sOM[j] * t;" % (P, P, P),
-            "    vec3 tv = (%s) * (cos(phi) * %sE1[j] - %sS[j] * sin(phi) * %sE2[j]);" % (amp, P, P, P),
-            "    w += %sS[j] * length(%sK[j]) * tv;" % (P, P),
+            *(["    vec3 tv = (%s) * (cos(phi) * %sE1[j] - %sS[j] * sin(phi) * %sE2[j]);" % (amp, P, P, P),
+               "    w += %sS[j] * length(%sK[j]) * tv;" % (P, P)] if f._beltrami else
+              ["    vec3 tw = (%s) * (%sS[j] * cos(phi) * %sE1[j] - sin(phi) * %sE2[j]);" % (amp, P, P, P),
+               "    w += length(%sK[j]) * tw;" % P]),
             "  }",
             "  return w * %sSCALE;" % P,
             "}",
@@ -641,8 +675,10 @@ def emit_godot(f, name="helixNoise", pr=7, curl=True, pot=False):
             "  vec3 A = vec3(0.0);",
             "  for (int j = 0; j < %sN; j++) {" % P,
             "    float phi = dot(%sK[j], p) + %sPH[j] + %sOM[j] * t;" % (P, P, P),
-            "    vec3 tv = (%s) * (cos(phi) * %sE1[j] - %sS[j] * sin(phi) * %sE2[j]);" % (amp, P, P, P),
-            "    A += (%sS[j] / length(%sK[j])) * tv;" % (P, P),
+            *(["    vec3 tv = (%s) * (cos(phi) * %sE1[j] - %sS[j] * sin(phi) * %sE2[j]);" % (amp, P, P, P),
+               "    A += (%sS[j] / length(%sK[j])) * tv;" % (P, P)] if f._beltrami else
+              ["    vec3 tw = (%s) * (%sS[j] * cos(phi) * %sE1[j] - sin(phi) * %sE2[j]);" % (amp, P, P, P),
+               "    A += tw / length(%sK[j]);" % P]),
             "  }",
             "  return A * %sSCALE;" % P,
             "}",
@@ -668,6 +704,7 @@ def build_field_from_args(args):
         seed=args.seed,
         slope=args.slope,
         helicity=args.helicity,
+        ellipticity=args.ellipticity,
         coherence=args.coherence,
         kmin=args.kmin,
         kmax=args.kmax,
@@ -705,6 +742,8 @@ def make_parser():
     ap.add_argument("--anisotropy", type=float, default=0.0, help="axis stretch (default: 0)")
     ap.add_argument("--axis", type=float, nargs=3, default=[0.0, 0.0, 1.0],
                     metavar=("X", "Y", "Z"), help="anisotropy axis (default: 0 0 1)")
+    ap.add_argument("--ellipticity", type=float, default=1.0,
+                    help="polarization ellipticity eps in [0,1]: 1 = circular/tubes (default), 0 = linear/sheets")
     ap.add_argument("--name", default="helixNoise", help="emitted function name (default: helixNoise)")
     ap.add_argument("--precision", type=int, default=7, help="float literal precision (default: 7)")
     ap.add_argument("--no-curl", dest="curl", action="store_false", help="omit the Curl (vorticity) function")

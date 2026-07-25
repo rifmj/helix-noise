@@ -90,6 +90,11 @@ class HelixField:
         lam = min(1.0, max(0.0, p["coherence"]))
         fib = p["layout"] != "random"
         gam = min(9.0, max(-0.99, p["anisotropy"]))
+        # Polarization ellipticity: chi_j = eps*s_j. Draw-free (a post-transform of the
+        # already-drawn sign), so the RNG sequence is identical for every eps; eps == 1
+        # keeps the legacy Beltrami code path, which the parity fixture pins bit-for-bit.
+        eps = min(1.0, max(0.0, p["ellipticity"]))
+        self._beltrami = eps == 1.0
         axis = p["axis"]
         an = math.hypot(axis[0], axis[1], axis[2]) or 1.0
         anx, any_, anz = axis[0] / an, axis[1] / an, axis[2] / an
@@ -100,6 +105,7 @@ class HelixField:
         km = np.zeros(N)
         a = np.zeros(N)
         s = np.zeros(N)
+        chi = np.zeros(N)
         ph = np.zeros(N)
         om = np.zeros(N)
         e1x = np.zeros(N)
@@ -191,6 +197,7 @@ class HelixField:
             e2z[j] = f2z
 
             s[j] = 1.0 if rng() < (1.0 + p["helicity"]) / 2.0 else -1.0
+            chi[j] = eps * s[j]
             a[j] = max(0.0, spectrum(kmj)) if spectrum else math.pow(kmj, -slope)
             phr = TAU * rng()
             c = int(rng() * nc)
@@ -205,11 +212,11 @@ class HelixField:
 
         # Time evolution: all draws AFTER the spatial loop, so the t=0 field is
         # unchanged by the time knobs.
-        chi = max(0.0, p["churn"])
+        churn_rate = max(0.0, p["churn"])  # `chi` is reserved for chirality
         cvx = [0.0] * nc
         cvy = [0.0] * nc
         cvz = [0.0] * nc
-        sg = chi / math.sqrt(3.0)
+        sg = churn_rate / math.sqrt(3.0)
         for m in range(nc):
             r1 = math.sqrt(-2.0 * math.log(1.0 - rng()))
             a1 = TAU * rng()
@@ -219,7 +226,7 @@ class HelixField:
             cvy[m] = sg * r1 * math.sin(a1)
             cvz[m] = sg * r2 * math.cos(a2)
 
-        rate0 = chi * np.cbrt(max(kmin, 1e-9))
+        rate0 = churn_rate * np.cbrt(max(kmin, 1e-9))
         for j in range(N):
             sgn = -1.0 if rng() < 0.5 else 1.0
             c = ci[j]
@@ -230,6 +237,7 @@ class HelixField:
 
         self.kx, self.ky, self.kz, self.km = kx, ky, kz, km
         self.a, self.s, self.ph, self.om = a, s, ph, om
+        self.chi = chi
         self.e1x, self.e1y, self.e1z = e1x, e1y, e1z
         self.e2x, self.e2y, self.e2z = e2x, e2y, e2z
         self.cvx = np.array(cvx)
@@ -254,25 +262,40 @@ class HelixField:
         A = self._amps(t)
         ux = uy = uz = wx = wy = wz = 0.0
         kx, ky, kz, km = self.kx, self.ky, self.kz, self.km
-        ph, om, s = self.ph, self.om, self.s
+        ph, om, s, chi = self.ph, self.om, self.s, self.chi
         e1x, e1y, e1z = self.e1x, self.e1y, self.e1z
         e2x, e2y, e2z = self.e2x, self.e2y, self.e2z
+        beltrami = self._beltrami
         for j in range(self.N):
             phi = kx[j] * x + ky[j] * y + kz[j] * z + ph[j] + om[j] * t
             c = math.cos(phi)
             sn = math.sin(phi)
-            sj = s[j]
             aj = A[j]
-            tx = aj * (c * e1x[j] - sj * sn * e2x[j])
-            ty = aj * (c * e1y[j] - sj * sn * e2y[j])
-            tz = aj * (c * e1z[j] - sj * sn * e2z[j])
-            ux += tx
-            uy += ty
-            uz += tz
-            g = sj * km[j]
-            wx += g * tx
-            wy += g * ty
-            wz += g * tz
+            if beltrami:
+                # Legacy Beltrami path: bit-compatible with spec 1.0 (w = s*k * u).
+                sj = s[j]
+                tx = aj * (c * e1x[j] - sj * sn * e2x[j])
+                ty = aj * (c * e1y[j] - sj * sn * e2y[j])
+                tz = aj * (c * e1z[j] - sj * sn * e2z[j])
+                ux += tx
+                uy += ty
+                uz += tz
+                g = sj * km[j]
+                wx += g * tx
+                wy += g * ty
+                wz += g * tz
+            else:
+                # Elliptic modes: w_j = a*k*(chi*cos(phi)*e1 - sin(phi)*e2).
+                xi = chi[j]
+                sx = xi * sn
+                cx = xi * c
+                ux += aj * (c * e1x[j] - sx * e2x[j])
+                uy += aj * (c * e1y[j] - sx * e2y[j])
+                uz += aj * (c * e1z[j] - sx * e2z[j])
+                gk = aj * km[j]
+                wx += gk * (cx * e1x[j] - sn * e2x[j])
+                wy += gk * (cx * e1y[j] - sn * e2y[j])
+                wz += gk * (cx * e1z[j] - sn * e2z[j])
         sc = self._scale
         return ((ux * sc, uy * sc, uz * sc), (wx * sc, wy * sc, wz * sc))
 
@@ -281,25 +304,39 @@ class HelixField:
         A = self._amps(t)
         ux = uy = uz = ax = ay = az = 0.0
         kx, ky, kz, km = self.kx, self.ky, self.kz, self.km
-        ph, om, s = self.ph, self.om, self.s
+        ph, om, s, chi = self.ph, self.om, self.s, self.chi
         e1x, e1y, e1z = self.e1x, self.e1y, self.e1z
         e2x, e2y, e2z = self.e2x, self.e2y, self.e2z
+        beltrami = self._beltrami
         for j in range(self.N):
             phi = kx[j] * x + ky[j] * y + kz[j] * z + ph[j] + om[j] * t
             c = math.cos(phi)
             sn = math.sin(phi)
-            sj = s[j]
             aj = A[j]
-            tx = aj * (c * e1x[j] - sj * sn * e2x[j])
-            ty = aj * (c * e1y[j] - sj * sn * e2y[j])
-            tz = aj * (c * e1z[j] - sj * sn * e2z[j])
-            ux += tx
-            uy += ty
-            uz += tz
-            g = sj / km[j]
-            ax += g * tx
-            ay += g * ty
-            az += g * tz
+            if beltrami:
+                sj = s[j]
+                tx = aj * (c * e1x[j] - sj * sn * e2x[j])
+                ty = aj * (c * e1y[j] - sj * sn * e2y[j])
+                tz = aj * (c * e1z[j] - sj * sn * e2z[j])
+                ux += tx
+                uy += ty
+                uz += tz
+                g = sj / km[j]
+                ax += g * tx
+                ay += g * ty
+                az += g * tz
+            else:
+                # A_j = w_j / k^2 -- same Coulomb gauge, curl A = u for every chi.
+                xi = chi[j]
+                sx = xi * sn
+                cx = xi * c
+                ux += aj * (c * e1x[j] - sx * e2x[j])
+                uy += aj * (c * e1y[j] - sx * e2y[j])
+                uz += aj * (c * e1z[j] - sx * e2z[j])
+                ga = aj / km[j]
+                ax += ga * (cx * e1x[j] - sn * e2x[j])
+                ay += ga * (cx * e1y[j] - sn * e2y[j])
+                az += ga * (cx * e1z[j] - sn * e2z[j])
         sc = self._scale
         return ((ux * sc, uy * sc, uz * sc), (ax * sc, ay * sc, az * sc))
 
@@ -337,20 +374,27 @@ class HelixField:
         c = np.cos(phi)
         sn = np.sin(phi)
         s = self.s
+        chi = self.chi
         # t_vec components: (n, N)
-        tx = A * (c * self.e1x - s * sn * self.e2x)
-        ty = A * (c * self.e1y - s * sn * self.e2y)
-        tz = A * (c * self.e1z - s * sn * self.e2z)
+        tx = A * (c * self.e1x - chi * sn * self.e2x)
+        ty = A * (c * self.e1y - chi * sn * self.e2y)
+        tz = A * (c * self.e1z - chi * sn * self.e2z)
         sc = self._scale
         u = np.empty((pos.shape[0], 3))
         u[:, 0] = tx.sum(axis=1) * sc
         u[:, 1] = ty.sum(axis=1) * sc
         u[:, 2] = tz.sum(axis=1) * sc
-        g = s * self.km
         w = np.empty((pos.shape[0], 3))
-        w[:, 0] = (g * tx).sum(axis=1) * sc
-        w[:, 1] = (g * ty).sum(axis=1) * sc
-        w[:, 2] = (g * tz).sum(axis=1) * sc
+        if self._beltrami:
+            g = s * self.km
+            w[:, 0] = (g * tx).sum(axis=1) * sc
+            w[:, 1] = (g * ty).sum(axis=1) * sc
+            w[:, 2] = (g * tz).sum(axis=1) * sc
+        else:
+            gk = A * self.km
+            w[:, 0] = (gk * (chi * c * self.e1x - sn * self.e2x)).sum(axis=1) * sc
+            w[:, 1] = (gk * (chi * c * self.e1y - sn * self.e2y)).sum(axis=1) * sc
+            w[:, 2] = (gk * (chi * c * self.e1z - sn * self.e2z)).sum(axis=1) * sc
         return u, w
 
     def sample_many(self, pos, t=0.0):

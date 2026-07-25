@@ -20,6 +20,11 @@ export function toGLSL(f: ModeData, opts: GlslOptions = {}): string {
   const N = f.N;
   const P = name + "_";
   const decay = f.nu > 0;
+  // P_S holds chi_j (= ellipticity·s_j). When every |chi| is 1 the modes are Beltrami and the
+  // curl/potential shortcuts apply — that path emits byte-identical text to the pre-ellipticity
+  // generator. Otherwise emit the general two-term bodies.
+  let beltrami = true;
+  for (let j = 0; j < N; j++) if (Math.abs(f.chi[j]) !== 1) { beltrami = false; break; }
 
   const v3 = (cx: keyof ModeData, cy: keyof ModeData, cz: keyof ModeData): string => {
     const ax = f[cx] as Float64Array, ay = f[cy] as Float64Array, az = f[cz] as Float64Array;
@@ -44,7 +49,7 @@ export function toGLSL(f: ModeData, opts: GlslOptions = {}): string {
     `const vec3 ${P}K[${N}] = ${v3("kx", "ky", "kz")};`,
     `const vec3 ${P}E1[${N}] = ${v3("e1x", "e1y", "e1z")};`,
     `const vec3 ${P}E2[${N}] = ${v3("e2x", "e2y", "e2z")};`,
-    `const float ${P}S[${N}] = ${fa("s")};`,
+    `const float ${P}S[${N}] = ${fa("chi")};`,
     `const float ${P}A[${N}] = ${fa("a")};`,
     `const float ${P}PH[${N}] = ${fa("ph")};`,
     `const float ${P}OM[${N}] = ${fa("om")};`,
@@ -68,8 +73,17 @@ export function toGLSL(f: ModeData, opts: GlslOptions = {}): string {
       "  vec3 w = vec3(0.0);",
       `  for (int j = 0; j < ${P}N; j++) {`,
       `    float phi = dot(${P}K[j], p) + ${P}PH[j] + ${P}OM[j] * t;`,
-      `    vec3 tv = (${amp}) * (cos(phi) * ${P}E1[j] - ${P}S[j] * sin(phi) * ${P}E2[j]);`,
-      `    w += ${P}S[j] * length(${P}K[j]) * tv;`,
+      ...(beltrami
+        ? [
+            `    vec3 tv = (${amp}) * (cos(phi) * ${P}E1[j] - ${P}S[j] * sin(phi) * ${P}E2[j]);`,
+            `    w += ${P}S[j] * length(${P}K[j]) * tv;`,
+          ]
+        : [
+            // Elliptic modes: w_j = a·κ·(chi·cos φ·e1 − sin φ·e2). The Beltrami shortcut
+            // w = chi·κ·u only holds at |chi| = 1.
+            `    vec3 tw = (${amp}) * (${P}S[j] * cos(phi) * ${P}E1[j] - sin(phi) * ${P}E2[j]);`,
+            `    w += length(${P}K[j]) * tw;`,
+          ]),
       "  }",
       `  return w * ${P}SCALE;`,
       "}",
@@ -85,8 +99,16 @@ export function toGLSL(f: ModeData, opts: GlslOptions = {}): string {
       "  vec3 A = vec3(0.0);",
       `  for (int j = 0; j < ${P}N; j++) {`,
       `    float phi = dot(${P}K[j], p) + ${P}PH[j] + ${P}OM[j] * t;`,
-      `    vec3 tv = (${amp}) * (cos(phi) * ${P}E1[j] - ${P}S[j] * sin(phi) * ${P}E2[j]);`,
-      `    A += (${P}S[j] / length(${P}K[j])) * tv;`,
+      ...(beltrami
+        ? [
+            `    vec3 tv = (${amp}) * (cos(phi) * ${P}E1[j] - ${P}S[j] * sin(phi) * ${P}E2[j]);`,
+            `    A += (${P}S[j] / length(${P}K[j])) * tv;`,
+          ]
+        : [
+            // A_j = w_j/κ²: same combine as the elliptic curl, divided by |k|.
+            `    vec3 tw = (${amp}) * (${P}S[j] * cos(phi) * ${P}E1[j] - sin(phi) * ${P}E2[j]);`,
+            `    A += tw / length(${P}K[j]);`,
+          ]),
       "  }",
       `  return A * ${P}SCALE;`,
       "}",

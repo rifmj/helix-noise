@@ -641,3 +641,179 @@ test("glsl() emits the exact same formula as sample()", () => {
   assert.ok(src.includes("myField_N = 20"), "bakes the mode count");
   assert.ok(src.includes("vec3 myFieldCurl(vec3 p)"), "emits curl by default");
 });
+
+// ---------------------------------------------------------------------------
+// Ellipticity — the polarization axis (chi = ellipticity * s)
+// ---------------------------------------------------------------------------
+
+/** One tileable mode with |k| = 2 and a fixed sign, so the grid quadrature below is exact. */
+function oneMode(eps: number): HelixField {
+  return new HelixField({ modes: 1, seed: 3, tileable: true, kmin: 2, kmax: 2, helicity: 1, ellipticity: eps });
+}
+
+test("ellipticity: chi = eps * s, clamped to [0, 1], default 1 (Beltrami)", () => {
+  const f = create({ modes: 8, seed: 1 }) as unknown as HelixField;
+  for (let j = 0; j < f.N; j++) assert.equal(f.chi[j], f.s[j], "default is fully circular");
+  const g = create({ modes: 8, seed: 1, ellipticity: 0.25 }) as unknown as HelixField;
+  for (let j = 0; j < g.N; j++) assert.ok(Math.abs(g.chi[j] - 0.25 * g.s[j]) < 1e-18);
+  const hi = create({ modes: 4, seed: 1, ellipticity: 3 }) as unknown as HelixField;
+  const lo = create({ modes: 4, seed: 1, ellipticity: -1 }) as unknown as HelixField;
+  for (let j = 0; j < 4; j++) {
+    assert.equal(Math.abs(hi.chi[j]), 1, "eps > 1 clamps to circular");
+    assert.equal(lo.chi[j], 0, "eps < 0 clamps to linear");
+  }
+});
+
+test("ellipticity consumes no RNG draws: the mode arrays are bit-identical across eps", () => {
+  const a = create({ modes: 12, seed: 1, helicity: 0.3, coherence: 0.4 }) as unknown as HelixField;
+  const b = create({ modes: 12, seed: 1, helicity: 0.3, coherence: 0.4, ellipticity: 0.3 }) as unknown as HelixField;
+  const keys = ["kx", "ky", "kz", "km", "e1x", "e1y", "e1z", "e2x", "e2y", "e2z", "s", "a", "ph", "om"] as const;
+  for (const k of keys) {
+    for (let j = 0; j < a.N; j++) {
+      assert.equal(a[k][j], b[k][j], `${k}[${j}] must be bit-identical (draw sequence unchanged)`);
+    }
+  }
+});
+
+test("ellipticity: single-mode helicity density is pointwise constant (u·w = a²κχ)", () => {
+  for (const eps of [0, 0.3, 0.5, 1]) {
+    const f = oneMode(eps);
+    const vals: number[] = [];
+    for (let i = 0; i < 8; i++) vals.push(f.helicityDensity(i * 0.7, i * 1.3, i * 2.1));
+    const mx = Math.max(...vals), mn = Math.min(...vals);
+    const spread = Math.abs(mx - mn) / (Math.abs(mx) || 1);
+    assert.ok(spread < 1e-12, `eps=${eps}: u·w spread ${spread} should be machine zero`);
+  }
+});
+
+test("ellipticity: relative helicity of one mode is exactly 2χ/(1+χ²)", () => {
+  for (const eps of [0, 0.25, 0.5, 0.75, 1]) {
+    const f = oneMode(eps);
+    const chi = f.chi[0];
+    const want = (2 * chi) / (1 + chi * chi);
+    assert.ok(Math.abs(f.relativeHelicity(12) - want) < 1e-12, `eps=${eps}: rho should be ${want}`);
+  }
+  assert.ok(HelixNoise.selfTest().ellipticityRho < 1e-10, "selfTest reports the same known answer");
+});
+
+test("ellipticity: rms(w)/rms(u) stays |k| for every eps (vorticity intensity unchanged)", () => {
+  for (const eps of [0, 0.5, 1]) {
+    const f = oneMode(eps);
+    const o = [0, 0, 0, 0, 0, 0];
+    let su = 0, sw = 0;
+    for (let i = 0; i < 12; i++) for (let j = 0; j < 12; j++) for (let k = 0; k < 12; k++) {
+      f.sampleUW((i / 12) * TAU, (j / 12) * TAU, (k / 12) * TAU, o);
+      su += o[0] * o[0] + o[1] * o[1] + o[2] * o[2];
+      sw += o[3] * o[3] + o[4] * o[4] + o[5] * o[5];
+    }
+    assert.ok(Math.abs(Math.sqrt(sw / su) - f.km[0]) < 1e-12, `eps=${eps}: rms ratio must equal |k|`);
+  }
+});
+
+test("ellipticity: elliptic modes stay divergence-free and keep an exact potential", () => {
+  const r = HelixNoise.selfTest();
+  assert.ok(r.fdDivergenceRmsElliptic < 1e-4, "FD divergence at eps=0.5 is O(h²) truncation only");
+
+  const f = create({ modes: 16, seed: 9, ellipticity: 0.5, helicity: 0.4 });
+  const h = 1e-3;
+  const curlOf = (fn: (x: number, y: number, z: number) => number[], x: number, y: number, z: number): number[] => {
+    const ap = fn(x, y + h, z), am = fn(x, y - h, z);
+    const bp = fn(x, y, z + h), bm = fn(x, y, z - h);
+    const cp = fn(x + h, y, z), cm = fn(x - h, y, z);
+    return [
+      (ap[2] - am[2]) / (2 * h) - (bp[1] - bm[1]) / (2 * h),
+      (bp[0] - bm[0]) / (2 * h) - (cp[2] - cm[2]) / (2 * h),
+      (cp[1] - cm[1]) / (2 * h) - (ap[0] - am[0]) / (2 * h),
+    ];
+  };
+  let wErr = 0, uErr = 0;
+  for (const [x, y, z] of [[1, 2, 3], [0.3, 5.1, 2.2], [4.4, 0.9, 3.7]] as const) {
+    const w = f.vorticity(x, y, z), wf = curlOf((a, b, c) => f.sample(a, b, c), x, y, z);
+    const u = f.sample(x, y, z), uf = curlOf((a, b, c) => f.potential(a, b, c), x, y, z);
+    for (let i = 0; i < 3; i++) {
+      wErr = Math.max(wErr, Math.abs(w[i] - wf[i]));
+      uErr = Math.max(uErr, Math.abs(u[i] - uf[i]));
+    }
+  }
+  assert.ok(wErr < 1e-3, `analytic vorticity vs FD curl at eps=0.5: ${wErr}`);
+  assert.ok(uErr < 1e-3, `curl(A) vs u at eps=0.5: ${uErr}`);
+});
+
+test("ellipticity: batch kernels match the scalar sampler at eps ≠ 1 (wasm falls back for uw)", () => {
+  const f = create({ modes: 20, seed: 4, ellipticity: 0.4, churn: 1 });
+  const n = 300, pos = new Float64Array(3 * n);
+  for (let i = 0; i < 3 * n; i++) pos[i] = Math.sin(i * 1.7) * 3;
+  const t = 0.25;
+  const uw = f.sampleManyUW(pos, undefined, t);
+  const u3 = f.sampleMany(pos, undefined, t);
+  const o = [0, 0, 0, 0, 0, 0];
+  let e6 = 0, e3 = 0;
+  for (let i = 0; i < n; i++) {
+    f.sampleUW(pos[3 * i], pos[3 * i + 1], pos[3 * i + 2], o, t);
+    for (let c = 0; c < 6; c++) e6 = Math.max(e6, Math.abs(uw[6 * i + c] - o[c]));
+    for (let c = 0; c < 3; c++) e3 = Math.max(e3, Math.abs(u3[3 * i + c] - o[c]));
+  }
+  assert.ok(e6 < 1e-12, `sampleManyUW vs sampleUW: ${e6}`);
+  assert.ok(e3 < 1e-9, `sampleMany (wasm u-path) vs sampleUW: ${e3}`);
+
+  // The wasm backend must decline uw batches when the modes are not Beltrami.
+  const out = new Float64Array(6 * n);
+  const ok = runWasm(f as unknown as HelixField, (f as unknown as HelixField).a, pos, out, t, true, 1);
+  assert.equal(ok, false, "runWasm declines the elliptic vorticity path");
+});
+
+test("ellipticity: emitted GLSL bakes chi and switches to the general curl/potential bodies", () => {
+  const bel = create({ modes: 6, seed: 2 }).glsl({ name: "bel", potential: true });
+  assert.ok(bel.includes("bel_S[j] * length(bel_K[j]) * tv"), "eps=1 keeps the Beltrami shortcut");
+
+  const ell = create({ modes: 6, seed: 2, ellipticity: 0.5 });
+  const src = ell.glsl({ name: "ell", potential: true });
+  assert.ok(src.includes("length(ell_K[j]) * tw"), "elliptic curl uses the two-term body");
+  assert.ok(src.includes("tw / length(ell_K[j])"), "elliptic potential uses A = w/κ²");
+  assert.ok(/ell_S\[6\] = float\[6\]\(0?\.?5|ell_S\[6\] = float\[6\]\(-0/.test(src) || src.includes("0.5000000"),
+    "P_S carries chi = ±0.5, not the raw signs");
+
+  // Evaluate the emitted formula the way the shader would, and compare to the sampler.
+  const f = ell as unknown as HelixField;
+  for (const [x, y, z] of [[1, 2, 3], [0.3, 5.1, 2.2]] as const) {
+    let ux = 0, uy = 0, uz = 0, wx = 0, wy = 0, wz = 0;
+    for (let j = 0; j < f.N; j++) {
+      const phi = f.kx[j] * x + f.ky[j] * y + f.kz[j] * z + f.ph[j];
+      const c = Math.cos(phi), s = Math.sin(phi), a = f.a[j], ch = f.chi[j];
+      ux += a * (c * f.e1x[j] - ch * s * f.e2x[j]);
+      uy += a * (c * f.e1y[j] - ch * s * f.e2y[j]);
+      uz += a * (c * f.e1z[j] - ch * s * f.e2z[j]);
+      const km = f.km[j];
+      wx += km * a * (ch * c * f.e1x[j] - s * f.e2x[j]);
+      wy += km * a * (ch * c * f.e1y[j] - s * f.e2y[j]);
+      wz += km * a * (ch * c * f.e1z[j] - s * f.e2z[j]);
+    }
+    const u = f.sample(x, y, z), w = f.vorticity(x, y, z);
+    assert.ok(Math.abs(u[0] - ux * f._scale) < 1e-9 && Math.abs(u[2] - uz * f._scale) < 1e-9, "shader velocity matches");
+    assert.ok(Math.abs(w[0] - wx * f._scale) < 1e-9 && Math.abs(w[2] - wz * f._scale) < 1e-9, "shader curl matches");
+  }
+});
+
+test("ellipticity: at eps = 0 the field is achiral regardless of the helicity slider", () => {
+  for (const p of [-1, 0.5, 1]) {
+    const f = create({ modes: 40, seed: 6, helicity: p, ellipticity: 0, tileable: true });
+    assert.ok(Math.abs(f.relativeHelicity(10)) < 0.05, `eps=0, helicity=${p}: rho ≈ 0`);
+  }
+});
+
+test("wasm mode block: a smaller field after a larger one is not read at the stale stride", () => {
+  // Regression: the kernel strides mode arrays by the live N. Uploading at the reserved
+  // capacity made every batch after a bigger field read garbage (silently wrong velocities).
+  const big = create({ modes: 48, seed: 13, churn: 1.2, decay: 0.05 });
+  big.sampleMany(new Float64Array(3 * 200).map((_, i) => Math.sin(i * 3.1) * 5), undefined, 0.4);
+  const small = create({ modes: 6, seed: 4 });
+  const n = 128, pos = new Float64Array(3 * n).map((_, i) => Math.cos(i * 1.9) * 2);
+  const batch = small.sampleMany(pos, undefined, 0.3);
+  const o = [0, 0, 0, 0, 0, 0];
+  let worst = 0;
+  for (let i = 0; i < n; i++) {
+    small.sampleUW(pos[3 * i], pos[3 * i + 1], pos[3 * i + 2], o, 0.3);
+    for (let c = 0; c < 3; c++) worst = Math.max(worst, Math.abs(batch[3 * i + c] - o[c]));
+  }
+  assert.ok(worst < 1e-12, `small-after-big batch mismatch ${worst}`);
+});

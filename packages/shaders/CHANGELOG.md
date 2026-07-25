@@ -3,6 +3,13 @@
 All notable changes to this project are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.2.0]
+
+- **`ellipticity` (spec 1.1)**: per-mode chirality `chi = ellipticity * s` — `1` (default) keeps the
+  circular/Beltrami modes bit-identical, `0` gives linearly-polarized modes (sheets instead of tubes).
+  Divergence-freedom and the exact vector potential hold for every value. New `--ellipticity` CLI flag; all four targets (GLSL/HLSL/WGSL/Godot) emit the general
+  two-term curl/potential bodies when `ellipticity != 1`.
+
 ## [0.1.0] - 2026-07-07
 
 Initial release of the Helix Noise shader generator — an engine-agnostic port of the

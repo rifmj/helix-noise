@@ -26,9 +26,12 @@ Defaults (every option):
 ```
 modes=48, slope=1.6, helicity=0.0, coherence=0.0, kmin=1.0, kmax=6.2,
 centers=3, amplitude=1.0, tileable=false, seed=1, layout="fibonacci",
-churn=1.0, decay=0.0, anisotropy=0.0, axis=[0,0,1]
+churn=1.0, decay=0.0, anisotropy=0.0, axis=[0,0,1], ellipticity=1.0
 spectrum = optional callable (k:float)->float, no default
 ```
+
+**Spec version: 1.1** (adds `ellipticity`; spec-1.0 fields are the `ellipticity=1.0` special case,
+bit-identical — see the normative shortcut note in §5).
 
 ## 2. mulberry32 (VERIFIED bit-exact — do NOT change the integer ops)
 
@@ -132,7 +135,8 @@ for j in 0..N:
         km=hypot(kxc,kyc,kzc); d=(kxc,kyc,kzc)/km
     store kx[j],ky[j],kz[j]=kxc,kyc,kzc ; km[j]=km
     (e1,e2) = frame(d)
-    s[j] = (rng() < (1+helicity)/2) ? 1 : -1                 # 1 draw
+    s[j]   = (rng() < (1+helicity)/2) ? 1 : -1               # 1 draw
+    chi[j] = clamp(ellipticity, 0, 1) * s[j]                 # NO draw — deterministic post-transform
     a[j] = spectrum ? max(0, spectrum(km)) : pow(km, -slope)
     phr = TAU*rng()                                          # 1 draw
     c   = floor(rng()*nc)                                    # 1 draw ; ci[j]=c
@@ -143,13 +147,13 @@ for j in 0..N:
     ph[j] = phc + (1-lam)*phr                                # lam=0 -> uniform random ; lam=1 -> phc
 
 # --- time evolution: ALL draws happen AFTER the spatial loop above ---
-chi = max(0, churn)
-sg  = chi / sqrt(3)
+churn_rate = max(0, churn)          # NB: the symbol `chi` is reserved for chirality (above)
+sg  = churn_rate / sqrt(3)
 for m in 0..nc:   # isotropic Gaussian center velocity, Box-Muller, 4 draws each
     r1 = sqrt(-2*ln(1-rng())) ; a1 = TAU*rng()
     r2 = sqrt(-2*ln(1-rng())) ; a2 = TAU*rng()
     cvx[m] = sg*r1*cos(a1) ; cvy[m] = sg*r1*sin(a1) ; cvz[m] = sg*r2*cos(a2)
-rate0 = chi * cbrt(max(kmin, 1e-9))
+rate0 = churn_rate * cbrt(max(kmin, 1e-9))
 for j in 0..N:                # 1 draw each
     sgn = (rng() < 0.5) ? -1 : 1
     c = ci[j]
@@ -172,16 +176,27 @@ Amplitude at time t: `A[j] = a[j]` if `nu==0 or t==0`, else `a[j]*exp(-nu*km[j]^
 for each mode j:
     phi = kx[j]*x + ky[j]*y + kz[j]*z + ph[j] + om[j]*t
     c=cos(phi); sn=sin(phi)
-    t_vec = A[j] * (c*e1[j] - s[j]*sn*e2[j])     # componentwise
+    t_vec = A[j] * (c*e1[j] - chi[j]*sn*e2[j])          # velocity term (general chi)
     u += t_vec
-    w += (s[j]*km[j]) * t_vec
+    if ellipticity == 1:                                # Beltrami shortcut — REQUIRED at eps=1
+        w += (s[j]*km[j]) * t_vec
+    else:
+        w += (A[j]*km[j]) * (chi[j]*c*e1[j] - sn*e2[j]) # general two-term curl
 return u*scale, w*scale
 ```
 
 `sampleUA(x,y,z,t) -> (u[3], A_pot[3])` velocity + vector potential:
 ```
-same t_vec; u += t_vec ; A_pot += (s[j]/km[j]) * t_vec ; return u*scale, A_pot*scale
+same t_vec; u += t_vec
+if ellipticity == 1: A_pot += (s[j]/km[j]) * t_vec
+else:                A_pot += (A[j]/km[j]) * (chi[j]*c*e1[j] - sn*e2[j])   # A_j = w_j/k^2
+return u*scale, A_pot*scale
 ```
+
+**NOTE (normative):** at `ellipticity == 1` ports MUST take the shortcut branch. The general form
+is algebraically equal but rounds differently in the last ulp, and the parity fixture pins the
+shortcut's bits. The elliptic mode stays exactly divergence-free and keeps the same Coulomb-gauge
+potential (`curl A = u`, `k·A = 0`) for every `chi`, so `withBoundary` needs no change.
 
 Derived:
 ```
@@ -244,13 +259,26 @@ vec3 name(vec3 p, float t){ vec3 u=vec3(0.);
 vec3 name(vec3 p){ return name(p,0.0); }
 // optional: nameCurl (w += P_S[j]*length(P_K[j])*tv), namePot (A += (P_S[j]/length(P_K[j]))*tv)
 ```
+
+`P_S[N]` holds `chi_j = ellipticity*s_j` (continuous; equals the drawn signs when `ellipticity==1`),
+so the velocity body above is already the correct general form with no ABI change. The `nameCurl`
+and `namePot` shortcuts are Beltrami-only: emit them **iff every |chi_j| == 1** (byte-identical to
+spec 1.0 output), otherwise emit the general two-term bodies:
+
+```glsl
+// nameCurl, general chi
+vec3 tw = (amp) * (P_S[j] * cos(phi) * P_E1[j] - sin(phi) * P_E2[j]);
+w += length(P_K[j]) * tw;
+// namePot, general chi (A_j = w_j / k^2, same tw)
+A += tw / length(P_K[j]);
+```
 Float literals must always contain `.` or `e`. Prefix `P_` = `<name>_`. Sanitize name to [A-Za-z0-9_].
 
 ## 9. Parity fixture
 
-`parity_fixture.json` (in this folder) has, per config (A..E):
+`parity_fixture.json` (in this folder) has, per config (A..E, J..K):
 - `config`: the options
-- `modes`: N, kx/ky/kz/km, e1*, e2*, s, a, ph, om, scale, nu  (full arrays)
+- `modes`: N, kx/ky/kz/km, e1*, e2*, s, chi, a, ph, om, scale, nu  (full arrays)
 - `samples`: list of {x,y,z,t, u:[3], w:[3], A:[3]}
 - `relativeHelicity` (ng=8), `bake3d4_sum` (sum of all bake3D(4,0) floats)
 

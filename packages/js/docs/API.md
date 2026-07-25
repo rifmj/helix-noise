@@ -75,6 +75,15 @@ Returns a [`Field`](#field). All options are optional — sensible defaults are 
 | `slope` | `number` | `1.6` | Size of the structures. Higher = a few big soft swirls; lower = fine multi-scale grain. |
 | `helicity` | `number` | `0` | Handedness of the swirls, from `-1` (one way) through `0` (mirror-symmetric) to `+1` (the other way). |
 | `coherence` | `number` | `0` | `0` = formless noise, `1` = organized eddies — **at the same busyness**. The dial plain curl-noise doesn't have. |
+| `ellipticity` | `number` | `1` | Polarization: `1` = corkscrew **tubes** (the classic look), `0` = laminated **sheets/jets**, in between = braided. Changes the texture at a fixed spectrum and a fixed `helicity`. |
+
+> **Three independent shape dials.** `anisotropy` = *where the waves point*, `ellipticity` =
+> *how each wave polarizes*, `helicity` = *which way it winds*. They are genuinely independent —
+> no other curl-noise exposes the middle one.
+>
+> Note the interaction: at `ellipticity = 0` every wave is achiral, so the `helicity` slider has
+> no visible effect and `relativeHelicity()` reads ≈ 0. More generally a single wave's relative
+> helicity is capped at `2ε/(1+ε²)`, so `relativeHelicity()` scales down with `ellipticity`.
 
 **Structure & scale:**
 

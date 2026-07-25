@@ -106,6 +106,10 @@ pub struct HelixOptions {
     pub anisotropy: f64,
     /// Anisotropy axis.
     pub axis: [f64; 3],
+    /// Polarization ellipticity `eps` in `[0, 1]` (clamped): per-mode chirality `chi = eps*s`.
+    /// `1` (default) = circular/Beltrami modes (tubes & corkscrews), `0` = linearly polarized
+    /// modes (sheets & jets, zero helicity). Consumes no RNG draws.
+    pub ellipticity: f64,
     /// Optional spectral amplitude law. When set, overrides the default `|k|^-slope`.
     pub spectrum: Option<SpectrumFn>,
 }
@@ -128,6 +132,7 @@ impl Default for HelixOptions {
             decay: 0.0,
             anisotropy: 0.0,
             axis: [0.0, 0.0, 1.0],
+            ellipticity: 1.0,
             spectrum: None,
         }
     }
@@ -151,6 +156,7 @@ impl fmt::Debug for HelixOptions {
             .field("decay", &self.decay)
             .field("anisotropy", &self.anisotropy)
             .field("axis", &self.axis)
+            .field("ellipticity", &self.ellipticity)
             .field("spectrum", &self.spectrum.as_ref().map(|_| "<fn>"))
             .finish()
     }

@@ -54,6 +54,15 @@ export interface HelixNoiseOptions {
   anisotropy?: number;
   /** Anisotropy axis (normalized internally). Default [0, 0, 1]. */
   axis?: [number, number, number];
+  /**
+   * Polarization ellipticity ε ∈ [0, 1] (clamped): per-mode chirality χ = ε·s, where s = ±1 is the
+   * helicity-biased sign. `1` (default) = circular/Beltrami modes — tubes & corkscrews, the classic
+   * engine, bit-identical. `0` = linearly polarized modes — sheets & jets, zero helicity.
+   * Intermediate values morph the texture at fixed spectrum and fixed `helicity`. Deterministic:
+   * consumes no RNG draws, so the mode layout is untouched. Note that at ε = 0 the `helicity`
+   * slider has no visual effect (all modes achiral) and `relativeHelicity()` reads ~0.
+   */
+  ellipticity?: number;
 }
 
 export type Vec3 = [number, number, number];
@@ -249,6 +258,10 @@ export interface SelfTestReport {
   fdDivergenceRms: number;
   /** Relative helicity keyed by p ("-1", "-0.5", "0", "0.5", "1"). */
   rhoVsP: Record<string, number>;
+  /** max |ρ_measured − 2χ/(1+χ²)| over single-mode fields at ε ∈ {0, 0.5, 1} (should be ~1e-12). */
+  ellipticityRho: number;
+  /** FD-divergence rms at ε = 0.5 (pure O(h²) truncation, like {@link fdDivergenceRms}). */
+  fdDivergenceRmsElliptic: number;
 }
 
 /**
@@ -262,6 +275,8 @@ export interface ModeData {
   e1x: Float64Array; e1y: Float64Array; e1z: Float64Array;
   e2x: Float64Array; e2y: Float64Array; e2z: Float64Array;
   s: Float64Array; a: Float64Array; ph: Float64Array;
+  /** Per-mode chirality χ[j] = ellipticity · s[j] ∈ [−1, 1] (equals `s` at ellipticity = 1). */
+  chi: Float64Array;
   /** Per-mode phase rate (rad per unit time): eddy churn + coherent sweep. */
   om: Float64Array;
   /** Viscous decay rate ν (amplitudes ∝ e^(−νk²t)); 0 = none. */

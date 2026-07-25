@@ -68,8 +68,8 @@
     <h1><code>Helix&nbsp;Noise</code> — divergence-free helical flow, grid-free</h1>
   </div>
   <p class="sub">Every particle is advected by <code>field.sample(x,y,z)</code> — a live, analytic sum of Beltrami modes,
-    no grid and no simulation. Three controls: <b>spectral slope</b> (size), <b>helicity</b> (handedness), <b>phase
-    coherence</b> (noise&nbsp;→&nbsp;structure). Colour is the genuine helicity density <code>u·ω</code>. Drag to orbit,
+    no grid and no simulation. Four controls: <b>spectral slope</b> (size), <b>helicity</b> (handedness), <b>phase
+    coherence</b> (noise&nbsp;→&nbsp;structure) and <b>ellipticity</b> (tubes&nbsp;→&nbsp;sheets). Colour is the genuine helicity density <code>u·ω</code>. Drag to orbit,
     scroll to zoom.</p>
 
   <div class="stage" id="stage">
@@ -96,6 +96,11 @@
         <input type="range" id="coh" min="0" max="1" step="0.01" value="0.45">
         <div class="kpoles"><span>noise</span><span>structure</span></div>
       </div>
+      <div>
+        <div class="kh"><span class="kname star">Ellipticity — &#949;</span><span class="kval" id="v-ell">1.00</span></div>
+        <input type="range" id="ell" min="0" max="1" step="0.01" value="1">
+        <div class="kpoles"><span>sheets</span><span>tubes</span></div>
+      </div>
     </div>
     <div class="bar">
       <button id="btn-play"><span class="dot"></span><span id="play-lbl">Pause</span></button>
@@ -106,6 +111,8 @@
       <button id="p-beltrami" class="preset">◇ Beltrami</button>
       <button id="p-turb" class="preset">◇ turbulent</button>
       <button id="p-mirror" class="preset">◇ mirror</button>
+      <button id="p-sheets" class="preset">◇ sheets</button>
+      <button id="p-braid" class="preset">◇ braid</button>
     </div>
     <div class="bar" style="border-top:0;padding-top:2px;margin-top:8px">
       <div class="mini"><span>speed</span><input type="range" id="spd" min="0.2" max="3" step="0.1" value="1"><span id="v-spd" style="color:var(--teal)">1.0×</span></div>
@@ -130,9 +137,9 @@
   var TAU = 2*Math.PI;
   var $=function(id){return document.getElementById(id);};
   var cv=$("cv"), ctx=cv.getContext("2d",{alpha:false});
-  var params={heli:0.7, slope:1.6, coh:0.45, modes:48, seed:7};
+  var params={heli:0.7, slope:1.6, coh:0.45, ell:1, modes:48, seed:7};
   var SPEED=1, ZOOM=1;
-  var field = HelixNoise.create({modes:params.modes, slope:params.slope, helicity:params.heli, coherence:params.coh, seed:params.seed});
+  var field = HelixNoise.create({modes:params.modes, slope:params.slope, helicity:params.heli, coherence:params.coh, ellipticity:params.ell, seed:params.seed});
 
   // ---- particles + comet trails (domain [0,TAU)^3, periodic) ----
   var TMAX=22, TRAIL=14, NP=0, px,py,pz,life,tx,ty,tz,thead,tcnt;
@@ -211,7 +218,7 @@
   function prime(){for(var k=0;k<TRAIL;k++)advance();}
 
   var rho=0;
-  function rebuild(){ field.set({modes:params.modes, slope:params.slope, helicity:params.heli, coherence:params.coh, seed:params.seed}); rho=field.relativeHelicity(10); updateBadge(); }
+  function rebuild(){ field.set({modes:params.modes, slope:params.slope, helicity:params.heli, coherence:params.coh, ellipticity:params.ell, seed:params.seed}); rho=field.relativeHelicity(10); updateBadge(); }
   function updateBadge(){
     $("badge").textContent="Helix Noise · "+params.modes+" modes · "+(NP/1000).toFixed(1)+"k particles";
     $("ro").innerHTML="p <b style=\"color:"+(params.heli>=0?"var(--teal)":"var(--amber)")+"\">"+(params.heli>0?"+":"")+params.heli.toFixed(2)+"</b><br>coherence <b>"+Math.round(params.coh*100)+"%</b><br>&#10216;u&#183;&#969;&#10217; <b style=\"color:var(--cyan)\">"+(rho>0?"+":"")+rho.toFixed(2)+"</b>";
@@ -223,6 +230,7 @@
   bind("heli","heli",function(v){return (v>0?"+":"")+v.toFixed(2);},true);
   bind("slope","slope",function(v){return v.toFixed(1);},true);
   bind("coh","coh",function(v){return Math.round(v*100)+"%";},true);
+  bind("ell","ell",function(v){return v.toFixed(2);},true);
   $("modes").addEventListener("input",function(e){params.modes=parseInt(e.target.value,10);$("v-modes").textContent=params.modes;rebuild();});
   $("spd").addEventListener("input",function(e){SPEED=parseFloat(e.target.value);$("v-spd").textContent=SPEED.toFixed(1)+"×";});
   function setZoom(z){ZOOM=Math.max(0.6,Math.min(2.6,z));$("zm").value=ZOOM;$("v-zm").textContent=(Math.round(ZOOM*20)/20).toFixed(2).replace(/(\.\d)0$/,"$1")+"×";}
@@ -232,15 +240,18 @@
   $("btn-play").addEventListener("click",function(){playing=!playing;$("play-lbl").textContent=playing?"Pause":"Play";$("btn-play").classList.toggle("off",!playing);});
   $("btn-rot").addEventListener("click",function(){autoRot=!autoRot;$("btn-rot").classList.toggle("off",!autoRot);});
   $("btn-seed").addEventListener("click",function(){params.seed=(params.seed*1103515245+12345)>>>0;rs=(rs+0x9E3779B9)>>>0;rebuild();});
-  function preset(h,s,c){
-    params.heli=h;params.slope=s;params.coh=c;
-    $("heli").value=h;$("slope").value=s;$("coh").value=c;
-    $("v-heli").textContent=(h>0?"+":"")+h.toFixed(2);$("v-slope").textContent=s.toFixed(1);$("v-coh").textContent=Math.round(c*100)+"%";
+  function preset(h,s,c,e){
+    if(e===undefined)e=1;
+    params.heli=h;params.slope=s;params.coh=c;params.ell=e;
+    $("heli").value=h;$("slope").value=s;$("coh").value=c;$("ell").value=e;
+    $("v-heli").textContent=(h>0?"+":"")+h.toFixed(2);$("v-slope").textContent=s.toFixed(1);$("v-coh").textContent=Math.round(c*100)+"%";$("v-ell").textContent=e.toFixed(2);
     rebuild();
   }
-  $("p-beltrami").addEventListener("click",function(){preset(1.0,2.2,0.55);});
-  $("p-turb").addEventListener("click",function(){preset(0.3,1.1,0.2);});
-  $("p-mirror").addEventListener("click",function(){preset(0.0,1.7,0.4);});
+  $("p-beltrami").addEventListener("click",function(){preset(1.0,2.2,0.55,1);});
+  $("p-turb").addEventListener("click",function(){preset(0.3,1.1,0.2,1);});
+  $("p-mirror").addEventListener("click",function(){preset(0.0,1.7,0.4,1);});
+  $("p-sheets").addEventListener("click",function(){preset(0.0,1.9,0.5,0);});
+  $("p-braid").addEventListener("click",function(){preset(0.6,1.6,0.4,0.5);});
 
   var lx=0,ly=0,pinchD=0,ptrs=new Map(),stage=$("stage");
   stage.addEventListener("pointerdown",function(e){ptrs.set(e.pointerId,{x:e.clientX,y:e.clientY});stage.setPointerCapture(e.pointerId);

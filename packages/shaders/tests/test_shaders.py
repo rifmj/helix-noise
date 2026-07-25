@@ -24,6 +24,7 @@ GEN = os.path.join(ROOT, "generate.py")
 FIXTURE = os.path.join(HERE, "parity_fixture.json")
 REF_A = os.path.join(HERE, "ref_glsl_A.glsl")
 REF_D = os.path.join(HERE, "ref_glsl_D_decay.glsl")
+REF_K = os.path.join(HERE, "ref_glsl_K_elliptic.glsl")
 
 FLOAT_RE = re.compile(r"[-+]?(?:\d+\.\d*|\.\d+|\d+)(?:[eE][-+]?\d+)?")
 
@@ -62,6 +63,10 @@ def test_glsl_parity():
         (["--target", "glsl", "--modes", "8", "--seed", "1", "--potential"], REF_A, "A"),
         (["--target", "glsl", "--modes", "6", "--seed", "3", "--decay", "0.02",
           "--churn", "1.0"], REF_D, "D"),
+        # Elliptic modes (ellipticity != 1): P_S carries chi and the curl/potential bodies
+        # switch to the general two-term form.
+        (["--target", "glsl", "--modes", "6", "--seed", "5", "--ellipticity", "0.5",
+          "--helicity", "0.3", "--coherence", "0.25", "--potential"], REF_K, "K"),
     ]
     for args, ref_path, label in cases:
         gen = run_gen(args)

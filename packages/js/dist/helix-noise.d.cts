@@ -54,6 +54,15 @@ interface HelixNoiseOptions {
     anisotropy?: number;
     /** Anisotropy axis (normalized internally). Default [0, 0, 1]. */
     axis?: [number, number, number];
+    /**
+     * Polarization ellipticity ε ∈ [0, 1] (clamped): per-mode chirality χ = ε·s, where s = ±1 is the
+     * helicity-biased sign. `1` (default) = circular/Beltrami modes — tubes & corkscrews, the classic
+     * engine, bit-identical. `0` = linearly polarized modes — sheets & jets, zero helicity.
+     * Intermediate values morph the texture at fixed spectrum and fixed `helicity`. Deterministic:
+     * consumes no RNG draws, so the mode layout is untouched. Note that at ε = 0 the `helicity`
+     * slider has no visual effect (all modes achiral) and `relativeHelicity()` reads ~0.
+     */
+    ellipticity?: number;
 }
 type Vec3 = [number, number, number];
 type Out6 = number[] | Float64Array | Float32Array;
@@ -236,6 +245,10 @@ interface SelfTestReport {
     fdDivergenceRms: number;
     /** Relative helicity keyed by p ("-1", "-0.5", "0", "0.5", "1"). */
     rhoVsP: Record<string, number>;
+    /** max |ρ_measured − 2χ/(1+χ²)| over single-mode fields at ε ∈ {0, 0.5, 1} (should be ~1e-12). */
+    ellipticityRho: number;
+    /** FD-divergence rms at ε = 0.5 (pure O(h²) truncation, like {@link fdDivergenceRms}). */
+    fdDivergenceRmsElliptic: number;
 }
 /**
  * The raw baked mode data a {@link Field} exposes, consumed by the GLSL generator.
@@ -256,6 +269,8 @@ interface ModeData {
     s: Float64Array;
     a: Float64Array;
     ph: Float64Array;
+    /** Per-mode chirality χ[j] = ellipticity · s[j] ∈ [−1, 1] (equals `s` at ellipticity = 1). */
+    chi: Float64Array;
     /** Per-mode phase rate (rad per unit time): eddy churn + coherent sweep. */
     om: Float64Array;
     /** Viscous decay rate ν (amplitudes ∝ e^(−νk²t)); 0 = none. */
@@ -277,6 +292,8 @@ declare class HelixField implements Field, ModeData {
     a: Float64Array;
     s: Float64Array;
     ph: Float64Array;
+    /** Per-mode chirality χ = ellipticity·s ∈ [−1,1]: ±1 circular (Beltrami), 0 linear. */
+    chi: Float64Array;
     /** Per-mode phase rate (rad per unit time): eddy churn + coherent sweep. */
     om: Float64Array;
     e1x: Float64Array;
@@ -292,6 +309,12 @@ declare class HelixField implements Field, ModeData {
     /** Viscous decay rate ν (amplitudes ∝ e^(−νk²t)); 0 = none. */
     nu: number;
     _scale: number;
+    /**
+     * True when every mode is fully circular (ellipticity === 1). Gates the legacy Beltrami
+     * shortcut `w = (s·κ)·u_j`, which is algebraically equal to the general two-term curl but
+     * rounds differently — the parity fixture pins the shortcut's bits. @internal
+     */
+    _beltrami: boolean;
     /** Bumped on every rebuild — the wasm backend uses it to re-upload mode data. @internal */
     _buildStamp: number;
     /** Test/bench escape hatch: set true to force the JS batch kernel. @internal */
@@ -379,7 +402,7 @@ declare function create(options?: HelixNoiseOptions): Field;
 /** Create a sparse-atom field: broadband, infinite, amortized O(1), spatially-varying params. */
 declare function createAtoms(options?: HelixAtomsOptions): AtomField;
 /** Library version. */
-declare const version = "1.1.0";
+declare const version = "1.2.0";
 /** Run the built-in validation (transversality, divergence, helicity tracking). */
 declare function selfTest(): SelfTestReport;
 /** Default export: the Helix Noise namespace (`HelixNoise.create(...)`). */

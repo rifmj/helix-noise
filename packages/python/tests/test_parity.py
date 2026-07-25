@@ -30,6 +30,8 @@ MODE_CONFIGS = [
     "C_random_aniso",
     "D_decay_time",
     "E_tileable",
+    "J_elliptic_linear",
+    "K_elliptic_half",
 ]
 
 # JS-style camelCase config keys -> python snake_case create() kwargs.
@@ -55,7 +57,7 @@ def _check_modes(f, modes, label):
         "kx": f.kx, "ky": f.ky, "kz": f.kz, "km": f.km,
         "e1x": f.e1x, "e1y": f.e1y, "e1z": f.e1z,
         "e2x": f.e2x, "e2y": f.e2y, "e2z": f.e2z,
-        "s": f.s, "a": f.a, "ph": f.ph, "om": f.om,
+        "s": f.s, "chi": f.chi, "a": f.a, "ph": f.ph, "om": f.om,
     }
     for key, arr in arrays.items():
         exp = np.asarray(modes[key], dtype=np.float64)
@@ -123,8 +125,17 @@ def test_mode_configs():
 
 
 def test_boundary_F():
+    _check_boundary("boundary_F")
+
+
+def test_boundary_L_elliptic():
+    """Same wrapper on elliptic modes: the analytic potential stays exact for every chi."""
+    _check_boundary("boundary_L_elliptic")
+
+
+def _check_boundary(label):
     data = _load()
-    entry = data["boundary_F"]
+    entry = data[label]
     base = _build(entry["base_config"])
 
     def sdf(x, y, z):
@@ -139,14 +150,14 @@ def test_boundary_F():
         u, w = bf.sample_uw(x, y, z, t)
         pot = bf.potential(x, y, z, t)
         for c in range(3):
-            assert _close(u[c], s["u"][c]), "boundary_F[{}].u[{}]: {!r} != {!r}".format(
-                si, c, u[c], s["u"][c]
+            assert _close(u[c], s["u"][c]), "{}[{}].u[{}]: {!r} != {!r}".format(
+                label, si, c, u[c], s["u"][c]
             )
-            assert _close(w[c], s["w"][c]), "boundary_F[{}].w[{}]: {!r} != {!r}".format(
-                si, c, w[c], s["w"][c]
+            assert _close(w[c], s["w"][c]), "{}[{}].w[{}]: {!r} != {!r}".format(
+                label, si, c, w[c], s["w"][c]
             )
             assert _close(pot[c], s["pot"][c]), (
-                "boundary_F[{}].pot[{}]: {!r} != {!r}".format(si, c, pot[c], s["pot"][c])
+                "{}[{}].pot[{}]: {!r} != {!r}".format(label, si, c, pot[c], s["pot"][c])
             )
 
 
@@ -169,13 +180,34 @@ def test_glsl_A_numeric():
         )
 
 
+def test_glsl_K_elliptic():
+    """The general-chi curl/potential bodies (ellipticity != 1) match the JS emitter."""
+    data = _load()
+    f = _build(data["K_elliptic_half"]["config"])
+    got = f.glsl(name="helixNoise", precision=7, curl=True, potential=True)
+    with open(os.path.join(HERE, "ref_glsl_K_elliptic.glsl")) as fp:
+        ref = fp.read()
+    assert "tw / length" in got, "elliptic potential must use A = w/k^2"
+    gf = _parse_floats(got)
+    rf = _parse_floats(ref)
+    assert len(gf) == len(rf), "glsl float count {} != {}".format(len(gf), len(rf))
+    for i, (g, r) in enumerate(zip(gf, rf)):
+        assert _close(g, r, atol=1e-6, rtol=1e-6), "glsl float[{}]: {!r} != {!r}".format(
+            i, g, r
+        )
+
+
 def _run_all():
     test_mode_configs()
-    print("mode configs (A-E): modes, samples, relHelicity, bake sum, vectorized OK")
+    print("mode configs (A-E, J-K): modes, samples, relHelicity, bake sum, vectorized OK")
     test_boundary_F()
     print("boundary_F: u, w, potential OK")
+    test_boundary_L_elliptic()
+    print("boundary_L_elliptic: u, w, potential OK")
     test_glsl_A_numeric()
     print("glsl A numeric parity OK")
+    test_glsl_K_elliptic()
+    print("glsl K (elliptic) numeric parity OK")
     print("\nALL PARITY TESTS PASSED")
 
 

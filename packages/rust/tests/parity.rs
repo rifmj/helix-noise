@@ -9,6 +9,7 @@ use serde_json::Value;
 
 const FIXTURE: &str = include_str!("parity_fixture.json");
 const REF_GLSL_A: &str = include_str!("ref_glsl_A.glsl");
+const REF_GLSL_K: &str = include_str!("ref_glsl_K_elliptic.glsl");
 
 /// Absolute+relative closeness, matching the spec tolerance (abs+rel 1e-9).
 fn close(got: f64, exp: f64, atol: f64, rtol: f64) -> bool {
@@ -65,6 +66,9 @@ fn build_from_config(cfg: &Value) -> HelixField {
     if let Some(v) = m.get("seed") {
         o.seed = v.as_u64().unwrap() as u32;
     }
+    if let Some(v) = m.get("ellipticity") {
+        o.ellipticity = v.as_f64().unwrap();
+    }
     if let Some(v) = m.get("layout") {
         o.layout = Layout::from_str_opt(v.as_str().unwrap()).unwrap();
     }
@@ -96,7 +100,15 @@ fn check_mode_array(name: &str, modes: &Value, key: &str, got: &[f64]) {
 #[test]
 fn spectral_configs_match_fixture() {
     let root: Value = serde_json::from_str(FIXTURE).unwrap();
-    for name in ["A_default_small", "B_helical_coherent", "C_random_aniso", "D_decay_time", "E_tileable"] {
+    for name in [
+        "A_default_small",
+        "B_helical_coherent",
+        "C_random_aniso",
+        "D_decay_time",
+        "E_tileable",
+        "J_elliptic_linear",
+        "K_elliptic_half",
+    ] {
         let entry = &root[name];
         let f = build_from_config(&entry["config"]);
         let modes = &entry["modes"];
@@ -118,6 +130,7 @@ fn spectral_configs_match_fixture() {
         check_mode_array(name, modes, "e2y", &snap.e2y);
         check_mode_array(name, modes, "e2z", &snap.e2z);
         check_mode_array(name, modes, "s", &snap.s);
+        check_mode_array(name, modes, "chi", &snap.chi);
         check_mode_array(name, modes, "a", &snap.a);
         check_mode_array(name, modes, "ph", &snap.ph);
         check_mode_array(name, modes, "om", &snap.om);
@@ -159,8 +172,18 @@ fn spectral_configs_match_fixture() {
 
 #[test]
 fn boundary_matches_fixture() {
+    check_boundary("boundary_F");
+}
+
+/// Same wrapper on elliptic modes: the analytic potential stays exact for every chi.
+#[test]
+fn boundary_elliptic_matches_fixture() {
+    check_boundary("boundary_L_elliptic");
+}
+
+fn check_boundary(label: &str) {
     let root: Value = serde_json::from_str(FIXTURE).unwrap();
-    let entry = &root["boundary_F"];
+    let entry = &root[label];
     let base = build_from_config(&entry["base_config"]);
     let thickness = entry["thickness"].as_f64().unwrap();
     let fd_step = entry["fdStep"].as_f64().unwrap();
@@ -181,9 +204,9 @@ fn boundary_matches_fixture() {
         let ew = arr(&s["w"]);
         let ep = arr(&s["pot"]);
         for c in 0..3 {
-            assert_close(u[c], eu[c], &format!("boundary_F.sample[{si}].u[{c}]"));
-            assert_close(w[c], ew[c], &format!("boundary_F.sample[{si}].w[{c}]"));
-            assert_close(pot[c], ep[c], &format!("boundary_F.sample[{si}].pot[{c}]"));
+            assert_close(u[c], eu[c], &format!("{label}.sample[{si}].u[{c}]"));
+            assert_close(w[c], ew[c], &format!("{label}.sample[{si}].w[{c}]"));
+            assert_close(pot[c], ep[c], &format!("{label}.sample[{si}].pot[{c}]"));
         }
     }
 }
@@ -355,5 +378,20 @@ fn glsl_config_a_matches_reference() {
             close(g, e, 1e-6, 1e-6),
             "GLSL float #{i}: got {g}, expected {e}"
         );
+    }
+}
+
+/// The general-chi curl/potential bodies (ellipticity != 1) match the JS emitter.
+#[test]
+fn glsl_config_k_elliptic_matches_reference() {
+    let root: Value = serde_json::from_str(FIXTURE).unwrap();
+    let f = build_from_config(&root["K_elliptic_half"]["config"]);
+    let src = f.glsl(&GlslOptions { potential: true, ..Default::default() });
+    assert!(src.contains("tw / length"), "elliptic potential must use A = w/k^2");
+    let got = glsl_floats(&src);
+    let exp = glsl_floats(REF_GLSL_K);
+    assert_eq!(got.len(), exp.len(), "GLSL float count differs\n--- got ---\n{src}");
+    for (i, (&g, &e)) in got.iter().zip(exp.iter()).enumerate() {
+        assert!(close(g, e, 1e-6, 1e-6), "GLSL float #{i}: got {g}, expected {e}");
     }
 }

@@ -84,7 +84,7 @@ def to_glsl(f, name="helixNoise", precision=7, curl=True, potential=False):
         "const vec3 {P}K[{N}] = {v};".format(P=P, N=N, v=v3(f.kx, f.ky, f.kz)),
         "const vec3 {P}E1[{N}] = {v};".format(P=P, N=N, v=v3(f.e1x, f.e1y, f.e1z)),
         "const vec3 {P}E2[{N}] = {v};".format(P=P, N=N, v=v3(f.e2x, f.e2y, f.e2z)),
-        "const float {P}S[{N}] = {v};".format(P=P, N=N, v=fa(f.s)),
+        "const float {P}S[{N}] = {v};".format(P=P, N=N, v=fa(f.chi)),
         "const float {P}A[{N}] = {v};".format(P=P, N=N, v=fa(f.a)),
         "const float {P}PH[{N}] = {v};".format(P=P, N=N, v=fa(f.ph)),
         "const float {P}OM[{N}] = {v};".format(P=P, N=N, v=fa(f.om)),
@@ -92,6 +92,9 @@ def to_glsl(f, name="helixNoise", precision=7, curl=True, potential=False):
     ]
     if decay:
         L.append("const float {P}NU = {v};".format(P=P, v=_fl(f.nu, pr)))
+    # P_S carries chi = ellipticity*s. The curl/potential shortcuts below are Beltrami-only;
+    # emit them iff every |chi| == 1 (then the text is byte-identical to spec 1.0 output).
+    beltrami = all(abs(x) == 1.0 for x in f.chi)
     L += [
         "",
         "vec3 {name}(vec3 p, float t) {{".format(name=name),
@@ -113,10 +116,18 @@ def to_glsl(f, name="helixNoise", precision=7, curl=True, potential=False):
             "  vec3 w = vec3(0.0);",
             "  for (int j = 0; j < {P}N; j++) {{".format(P=P),
             "    float phi = dot({P}K[j], p) + {P}PH[j] + {P}OM[j] * t;".format(P=P),
+        ] + ([
             "    vec3 tv = ({amp}) * (cos(phi) * {P}E1[j] - {P}S[j] * sin(phi) * {P}E2[j]);".format(
                 amp=amp, P=P
             ),
             "    w += {P}S[j] * length({P}K[j]) * tv;".format(P=P),
+        ] if beltrami else [
+            # Elliptic modes: w_j = a*k*(chi*cos(phi)*e1 - sin(phi)*e2).
+            "    vec3 tw = ({amp}) * ({P}S[j] * cos(phi) * {P}E1[j] - sin(phi) * {P}E2[j]);".format(
+                amp=amp, P=P
+            ),
+            "    w += length({P}K[j]) * tw;".format(P=P),
+        ]) + [
             "  }",
             "  return w * {P}SCALE;".format(P=P),
             "}",
@@ -129,10 +140,18 @@ def to_glsl(f, name="helixNoise", precision=7, curl=True, potential=False):
             "  vec3 A = vec3(0.0);",
             "  for (int j = 0; j < {P}N; j++) {{".format(P=P),
             "    float phi = dot({P}K[j], p) + {P}PH[j] + {P}OM[j] * t;".format(P=P),
+        ] + ([
             "    vec3 tv = ({amp}) * (cos(phi) * {P}E1[j] - {P}S[j] * sin(phi) * {P}E2[j]);".format(
                 amp=amp, P=P
             ),
             "    A += ({P}S[j] / length({P}K[j])) * tv;".format(P=P),
+        ] if beltrami else [
+            # A_j = w_j / k^2 -- same combine as the elliptic curl, divided by |k|.
+            "    vec3 tw = ({amp}) * ({P}S[j] * cos(phi) * {P}E1[j] - sin(phi) * {P}E2[j]);".format(
+                amp=amp, P=P
+            ),
+            "    A += tw / length({P}K[j]);".format(P=P),
+        ]) + [
             "  }",
             "  return A * {P}SCALE;".format(P=P),
             "}",

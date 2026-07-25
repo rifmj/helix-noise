@@ -182,7 +182,10 @@ pub fn to_glsl(f: &HelixField, opts: &GlslOptions) -> String {
         "const vec3 {pfx}E2[{n}] = {};",
         v3(&f.e2x, &f.e2y, &f.e2z)
     ));
-    l.push(format!("const float {pfx}S[{n}] = {};", fa(&f.s)));
+    l.push(format!("const float {pfx}S[{n}] = {};", fa(&f.chi)));
+    // P_S carries chi = ellipticity*s. The curl/potential shortcuts below are Beltrami-only;
+    // emit them iff every |chi| == 1 (then the text is byte-identical to spec 1.0 output).
+    let beltrami = f.chi.iter().all(|x| x.abs() == 1.0);
     l.push(format!("const float {pfx}A[{n}] = {};", fa(&f.a)));
     l.push(format!("const float {pfx}PH[{n}] = {};", fa(&f.ph)));
     l.push(format!("const float {pfx}OM[{n}] = {};", fa(&f.om)));
@@ -213,10 +216,18 @@ pub fn to_glsl(f: &HelixField, opts: &GlslOptions) -> String {
         l.push(format!(
             "    float phi = dot({pfx}K[j], p) + {pfx}PH[j] + {pfx}OM[j] * t;"
         ));
-        l.push(format!(
-            "    vec3 tv = ({amp}) * (cos(phi) * {pfx}E1[j] - {pfx}S[j] * sin(phi) * {pfx}E2[j]);"
-        ));
-        l.push(format!("    w += {pfx}S[j] * length({pfx}K[j]) * tv;"));
+        if beltrami {
+            l.push(format!(
+                "    vec3 tv = ({amp}) * (cos(phi) * {pfx}E1[j] - {pfx}S[j] * sin(phi) * {pfx}E2[j]);"
+            ));
+            l.push(format!("    w += {pfx}S[j] * length({pfx}K[j]) * tv;"));
+        } else {
+            // Elliptic modes: w_j = a*k*(chi*cos(phi)*e1 - sin(phi)*e2).
+            l.push(format!(
+                "    vec3 tw = ({amp}) * ({pfx}S[j] * cos(phi) * {pfx}E1[j] - sin(phi) * {pfx}E2[j]);"
+            ));
+            l.push(format!("    w += length({pfx}K[j]) * tw;"));
+        }
         l.push("  }".to_string());
         l.push(format!("  return w * {pfx}SCALE;"));
         l.push("}".to_string());
@@ -232,10 +243,18 @@ pub fn to_glsl(f: &HelixField, opts: &GlslOptions) -> String {
         l.push(format!(
             "    float phi = dot({pfx}K[j], p) + {pfx}PH[j] + {pfx}OM[j] * t;"
         ));
-        l.push(format!(
-            "    vec3 tv = ({amp}) * (cos(phi) * {pfx}E1[j] - {pfx}S[j] * sin(phi) * {pfx}E2[j]);"
-        ));
-        l.push(format!("    A += ({pfx}S[j] / length({pfx}K[j])) * tv;"));
+        if beltrami {
+            l.push(format!(
+                "    vec3 tv = ({amp}) * (cos(phi) * {pfx}E1[j] - {pfx}S[j] * sin(phi) * {pfx}E2[j]);"
+            ));
+            l.push(format!("    A += ({pfx}S[j] / length({pfx}K[j])) * tv;"));
+        } else {
+            // A_j = w_j / k^2 -- same combine as the elliptic curl, divided by |k|.
+            l.push(format!(
+                "    vec3 tw = ({amp}) * ({pfx}S[j] * cos(phi) * {pfx}E1[j] - sin(phi) * {pfx}E2[j]);"
+            ));
+            l.push(format!("    A += tw / length({pfx}K[j]);"));
+        }
         l.push("  }".to_string());
         l.push(format!("  return A * {pfx}SCALE;"));
         l.push("}".to_string());

@@ -74,6 +74,8 @@ pub struct ModeSnapshot {
     pub km: Vec<f64>,
     pub a: Vec<f64>,
     pub s: Vec<f64>,
+    /// Per-mode chirality `chi = ellipticity * s` (equals `s` at `ellipticity = 1`).
+    pub chi: Vec<f64>,
     pub ph: Vec<f64>,
     pub om: Vec<f64>,
     pub e1x: Vec<f64>,
@@ -97,6 +99,8 @@ pub struct HelixField {
     pub(crate) km: Vec<f64>,
     pub(crate) a: Vec<f64>,
     pub(crate) s: Vec<f64>,
+    /// Per-mode chirality `chi = ellipticity * s`: +-1 circular (Beltrami), 0 linear.
+    pub(crate) chi: Vec<f64>,
     pub(crate) ph: Vec<f64>,
     /// Per-mode phase rate (rad per unit time): eddy churn + coherent sweep.
     pub(crate) om: Vec<f64>,
@@ -109,6 +113,9 @@ pub struct HelixField {
     /// Viscous decay rate `nu` (amplitudes ~ `e^(-nu k^2 t)`); 0 = none.
     pub(crate) nu: f64,
     pub(crate) scale: f64,
+    /// True when every mode is fully circular (`ellipticity == 1`): gates the legacy Beltrami
+    /// shortcut, whose exact rounding the parity fixture pins.
+    pub(crate) beltrami: bool,
     opts: HelixOptions,
 }
 
@@ -124,6 +131,7 @@ impl HelixField {
             km: vec![0.0; n],
             a: vec![0.0; n],
             s: vec![0.0; n],
+            chi: vec![0.0; n],
             ph: vec![0.0; n],
             om: vec![0.0; n],
             e1x: vec![0.0; n],
@@ -134,6 +142,7 @@ impl HelixField {
             e2z: vec![0.0; n],
             nu: 0.0,
             scale: 1.0,
+            beltrami: true,
             opts,
         };
         f.build();
@@ -162,6 +171,7 @@ impl HelixField {
             km: self.km.clone(),
             a: self.a.clone(),
             s: self.s.clone(),
+            chi: self.chi.clone(),
             ph: self.ph.clone(),
             om: self.om.clone(),
             e1x: self.e1x.clone(),
@@ -199,6 +209,10 @@ impl HelixField {
         let fib = p.layout != Layout::Random;
         let mut ci = vec![0usize; n];
         let gam = p.anisotropy.clamp(-0.99, 9.0);
+        // Polarization ellipticity: chi_j = eps*s_j. Draw-free, so the RNG sequence is identical
+        // for every eps; eps == 1 keeps the legacy Beltrami path the parity fixture pins.
+        let eps = p.ellipticity.clamp(0.0, 1.0);
+        self.beltrami = eps == 1.0;
         let mut an = hypot3(p.axis[0], p.axis[1], p.axis[2]);
         if an == 0.0 {
             an = 1.0;
@@ -296,6 +310,7 @@ impl HelixField {
             } else {
                 -1.0
             };
+            self.chi[j] = eps * self.s[j];
             self.a[j] = match &p.spectrum {
                 Some(sp) => sp(km).max(0.0),
                 None => km.powf(-p.slope),
@@ -315,11 +330,11 @@ impl HelixField {
 
         // Time evolution — all draws happen AFTER the spatial loop, so the t = 0 field is
         // unchanged by the time knobs.
-        let chi = p.churn.max(0.0);
+        let churn_rate = p.churn.max(0.0); // `chi` is reserved for chirality
         let mut cvx = vec![0.0f64; nc];
         let mut cvy = vec![0.0f64; nc];
         let mut cvz = vec![0.0f64; nc];
-        let sg = chi / 3.0_f64.sqrt();
+        let sg = churn_rate / 3.0_f64.sqrt();
         for m in 0..nc {
             let r1 = (-2.0 * (1.0 - rng.next_f64()).ln()).sqrt();
             let a1 = TAU * rng.next_f64();
@@ -329,7 +344,7 @@ impl HelixField {
             cvy[m] = sg * r1 * a1.sin();
             cvz[m] = sg * r2 * a2.cos();
         }
-        let rate0 = chi * p.kmin.max(1e-9).cbrt();
+        let rate0 = churn_rate * p.kmin.max(1e-9).cbrt();
         for j in 0..n {
             let sgn = if rng.next_f64() < 0.5 { -1.0 } else { 1.0 };
             let c = ci[j];
@@ -364,18 +379,32 @@ impl HelixField {
             let phi = self.kx[j] * x + self.ky[j] * y + self.kz[j] * z + self.ph[j] + self.om[j] * t;
             let c = phi.cos();
             let sn = phi.sin();
-            let s = self.s[j];
             let a = self.amp_at(j, t);
-            let tx = a * (c * self.e1x[j] - s * sn * self.e2x[j]);
-            let ty = a * (c * self.e1y[j] - s * sn * self.e2y[j]);
-            let tz = a * (c * self.e1z[j] - s * sn * self.e2z[j]);
-            ux += tx;
-            uy += ty;
-            uz += tz;
-            let g = s * self.km[j];
-            wx += g * tx;
-            wy += g * ty;
-            wz += g * tz;
+            if self.beltrami {
+                // Legacy Beltrami path: bit-compatible with spec 1.0 (w = s*k * u).
+                let s = self.s[j];
+                let tx = a * (c * self.e1x[j] - s * sn * self.e2x[j]);
+                let ty = a * (c * self.e1y[j] - s * sn * self.e2y[j]);
+                let tz = a * (c * self.e1z[j] - s * sn * self.e2z[j]);
+                ux += tx;
+                uy += ty;
+                uz += tz;
+                let g = s * self.km[j];
+                wx += g * tx;
+                wy += g * ty;
+                wz += g * tz;
+            } else {
+                // Elliptic modes: w_j = a*k*(chi*cos(phi)*e1 - sin(phi)*e2).
+                let xi = self.chi[j];
+                let (cx, sx) = (xi * c, xi * sn);
+                ux += a * (c * self.e1x[j] - sx * self.e2x[j]);
+                uy += a * (c * self.e1y[j] - sx * self.e2y[j]);
+                uz += a * (c * self.e1z[j] - sx * self.e2z[j]);
+                let gk = a * self.km[j];
+                wx += gk * (cx * self.e1x[j] - sn * self.e2x[j]);
+                wy += gk * (cx * self.e1y[j] - sn * self.e2y[j]);
+                wz += gk * (cx * self.e1z[j] - sn * self.e2z[j]);
+            }
         }
         ([ux * sc, uy * sc, uz * sc], [wx * sc, wy * sc, wz * sc])
     }
@@ -389,18 +418,31 @@ impl HelixField {
             let phi = self.kx[j] * x + self.ky[j] * y + self.kz[j] * z + self.ph[j] + self.om[j] * t;
             let c = phi.cos();
             let sn = phi.sin();
-            let s = self.s[j];
             let a = self.amp_at(j, t);
-            let tx = a * (c * self.e1x[j] - s * sn * self.e2x[j]);
-            let ty = a * (c * self.e1y[j] - s * sn * self.e2y[j]);
-            let tz = a * (c * self.e1z[j] - s * sn * self.e2z[j]);
-            ux += tx;
-            uy += ty;
-            uz += tz;
-            let g = s / self.km[j];
-            ax += g * tx;
-            ay += g * ty;
-            az += g * tz;
+            if self.beltrami {
+                let s = self.s[j];
+                let tx = a * (c * self.e1x[j] - s * sn * self.e2x[j]);
+                let ty = a * (c * self.e1y[j] - s * sn * self.e2y[j]);
+                let tz = a * (c * self.e1z[j] - s * sn * self.e2z[j]);
+                ux += tx;
+                uy += ty;
+                uz += tz;
+                let g = s / self.km[j];
+                ax += g * tx;
+                ay += g * ty;
+                az += g * tz;
+            } else {
+                // A_j = w_j / k^2 -- same Coulomb gauge, curl A = u for every chi.
+                let xi = self.chi[j];
+                let (cx, sx) = (xi * c, xi * sn);
+                ux += a * (c * self.e1x[j] - sx * self.e2x[j]);
+                uy += a * (c * self.e1y[j] - sx * self.e2y[j]);
+                uz += a * (c * self.e1z[j] - sx * self.e2z[j]);
+                let ga = a / self.km[j];
+                ax += ga * (cx * self.e1x[j] - sn * self.e2x[j]);
+                ay += ga * (cx * self.e1y[j] - sn * self.e2y[j]);
+                az += ga * (cx * self.e1z[j] - sn * self.e2z[j]);
+            }
         }
         ([ux * sc, uy * sc, uz * sc], [ax * sc, ay * sc, az * sc])
     }

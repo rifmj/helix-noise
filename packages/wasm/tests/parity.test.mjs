@@ -41,7 +41,7 @@ function checkSamples(label, field, samples) {
 }
 
 // Spectral engine.
-for (const name of ["A_default_small", "B_helical_coherent", "C_random_aniso", "D_decay_time", "E_tileable"]) {
+for (const name of ["A_default_small", "B_helical_coherent", "C_random_aniso", "D_decay_time", "E_tileable", "J_elliptic_linear", "K_elliptic_half"]) {
   const entry = fixture[name];
   const f = new wasm.Field(entry.config);
   assert.equal(f.modes(), entry.modes.N, `${name}.modes`);

@@ -76,6 +76,8 @@ export class HelixField implements Field, ModeData {
   N!: number;
   kx!: Float64Array; ky!: Float64Array; kz!: Float64Array;
   km!: Float64Array; a!: Float64Array; s!: Float64Array; ph!: Float64Array;
+  /** Per-mode chirality χ = ellipticity·s ∈ [−1,1]: ±1 circular (Beltrami), 0 linear. */
+  chi!: Float64Array;
   /** Per-mode phase rate (rad per unit time): eddy churn + coherent sweep. */
   om!: Float64Array;
   e1x!: Float64Array; e1y!: Float64Array; e1z!: Float64Array;
@@ -85,6 +87,12 @@ export class HelixField implements Field, ModeData {
   /** Viscous decay rate ν (amplitudes ∝ e^(−νk²t)); 0 = none. */
   nu = 0;
   _scale = 1;
+  /**
+   * True when every mode is fully circular (ellipticity === 1). Gates the legacy Beltrami
+   * shortcut `w = (s·κ)·u_j`, which is algebraically equal to the general two-term curl but
+   * rounds differently — the parity fixture pins the shortcut's bits. @internal
+   */
+  _beltrami = true;
   /** Bumped on every rebuild — the wasm backend uses it to re-upload mode data. @internal */
   _buildStamp = 0;
   /** Test/bench escape hatch: set true to force the JS batch kernel. @internal */
@@ -110,6 +118,7 @@ export class HelixField implements Field, ModeData {
     this.N = N;
     this.kx = new Float64Array(N); this.ky = new Float64Array(N); this.kz = new Float64Array(N);
     this.km = new Float64Array(N); this.a = new Float64Array(N); this.s = new Float64Array(N);
+    this.chi = new Float64Array(N);
     this.ph = new Float64Array(N); this.om = new Float64Array(N);
     this.e1x = new Float64Array(N); this.e1y = new Float64Array(N); this.e1z = new Float64Array(N);
     this.e2x = new Float64Array(N); this.e2y = new Float64Array(N); this.e2z = new Float64Array(N);
@@ -127,6 +136,10 @@ export class HelixField implements Field, ModeData {
     const fib = p.layout !== "random";
     const ci = new Int32Array(N);
     const gam = Math.min(9, Math.max(-0.99, p.anisotropy));
+    // Polarization ellipticity: chi_j = eps*s_j. Draw-free (a post-transform of the sign), so the
+    // whole RNG sequence is identical for every eps; eps = 1 keeps the legacy Beltrami code path.
+    const eps = Math.min(1, Math.max(0, p.ellipticity));
+    this._beltrami = eps === 1;
     const an = Math.hypot(p.axis[0], p.axis[1], p.axis[2]) || 1;
     const anx = p.axis[0] / an, any = p.axis[1] / an, anz = p.axis[2] / an;
 
@@ -182,6 +195,7 @@ export class HelixField implements Field, ModeData {
       this.e1x[j] = fr[0]; this.e1y[j] = fr[1]; this.e1z[j] = fr[2];
       this.e2x[j] = fr[3]; this.e2y[j] = fr[4]; this.e2z[j] = fr[5];
       this.s[j] = rng() < (1 + p.helicity) / 2 ? 1 : -1;
+      this.chi[j] = eps * this.s[j];
       this.a[j] = p.spectrum ? Math.max(0, p.spectrum(km)) : Math.pow(km, -p.slope);
       const phr = TAU * rng();
       const c = (rng() * nc) | 0;
@@ -200,9 +214,9 @@ export class HelixField implements Field, ModeData {
     // time knobs). Incoherent part: Kolmogorov eddy-turnover churn ω(k) = ±χ·kmin^⅓·k^⅔ (small
     // scales flicker faster). Coherent part: each mode sweeps with its center's velocity, so at
     // high λ organized structures translate rigidly instead of dissolving.
-    const chi = Math.max(0, p.churn);
+    const churnRate = Math.max(0, p.churn);
     this.cvx = new Float64Array(nc); this.cvy = new Float64Array(nc); this.cvz = new Float64Array(nc);
-    const sg = chi / Math.sqrt(3); // per-component σ, so E|V|² = χ²
+    const sg = churnRate / Math.sqrt(3); // per-component σ, so E|V|² = churnRate²
     for (let m = 0; m < nc; m++) { // isotropic Gaussian center velocity (Box–Muller)
       const r1 = Math.sqrt(-2 * Math.log(1 - rng())), a1 = TAU * rng();
       const r2 = Math.sqrt(-2 * Math.log(1 - rng())), a2 = TAU * rng();
@@ -210,7 +224,7 @@ export class HelixField implements Field, ModeData {
       this.cvy[m] = sg * r1 * Math.sin(a1);
       this.cvz[m] = sg * r2 * Math.cos(a2);
     }
-    const rate0 = chi * Math.cbrt(Math.max(p.kmin, 1e-9));
+    const rate0 = churnRate * Math.cbrt(Math.max(p.kmin, 1e-9));
     for (let j = 0; j < N; j++) {
       const sgn = rng() < 0.5 ? -1 : 1;
       const c = ci[j];
@@ -241,15 +255,30 @@ export class HelixField implements Field, ModeData {
   sampleUW<T extends Out6>(x: number, y: number, z: number, out6: T, t = 0): T {
     const N = this.N, sc = this._scale, A = this._amps(t);
     let ux = 0, uy = 0, uz = 0, wx = 0, wy = 0, wz = 0;
-    for (let j = 0; j < N; j++) {
-      const phi = this.kx[j] * x + this.ky[j] * y + this.kz[j] * z + this.ph[j] + this.om[j] * t;
-      const c = Math.cos(phi), sn = Math.sin(phi), s = this.s[j], a = A[j];
-      const tx = a * (c * this.e1x[j] - s * sn * this.e2x[j]);
-      const ty = a * (c * this.e1y[j] - s * sn * this.e2y[j]);
-      const tz = a * (c * this.e1z[j] - s * sn * this.e2z[j]);
-      ux += tx; uy += ty; uz += tz;
-      const g = s * this.km[j];
-      wx += g * tx; wy += g * ty; wz += g * tz;
+    if (this._beltrami) {
+      for (let j = 0; j < N; j++) {
+        const phi = this.kx[j] * x + this.ky[j] * y + this.kz[j] * z + this.ph[j] + this.om[j] * t;
+        const c = Math.cos(phi), sn = Math.sin(phi), s = this.s[j], a = A[j];
+        const tx = a * (c * this.e1x[j] - s * sn * this.e2x[j]);
+        const ty = a * (c * this.e1y[j] - s * sn * this.e2y[j]);
+        const tz = a * (c * this.e1z[j] - s * sn * this.e2z[j]);
+        ux += tx; uy += ty; uz += tz;
+        const g = s * this.km[j];
+        wx += g * tx; wy += g * ty; wz += g * tz;
+      }
+    } else {
+      // Elliptic modes: u_j = a(c·e1 − χ·sn·e2), w_j = aκ(χ·c·e1 − sn·e2) — the general two-term
+      // curl (the Beltrami shortcut w = sκ·u is only valid at |χ| = 1). Same cos/sin, one extra combine.
+      for (let j = 0; j < N; j++) {
+        const phi = this.kx[j] * x + this.ky[j] * y + this.kz[j] * z + this.ph[j] + this.om[j] * t;
+        const c = Math.cos(phi), sn = Math.sin(phi), xi = this.chi[j], a = A[j];
+        const e1x = this.e1x[j], e1y = this.e1y[j], e1z = this.e1z[j];
+        const e2x = this.e2x[j], e2y = this.e2y[j], e2z = this.e2z[j];
+        const cx = xi * c, sx = xi * sn;
+        ux += a * (c * e1x - sx * e2x); uy += a * (c * e1y - sx * e2y); uz += a * (c * e1z - sx * e2z);
+        const gk = a * this.km[j];
+        wx += gk * (cx * e1x - sn * e2x); wy += gk * (cx * e1y - sn * e2y); wz += gk * (cx * e1z - sn * e2z);
+      }
     }
     out6[0] = ux * sc; out6[1] = uy * sc; out6[2] = uz * sc;
     out6[3] = wx * sc; out6[4] = wy * sc; out6[5] = wz * sc;
@@ -259,15 +288,29 @@ export class HelixField implements Field, ModeData {
   sampleUA<T extends Out6>(x: number, y: number, z: number, out6: T, t = 0): T {
     const N = this.N, sc = this._scale, A = this._amps(t);
     let ux = 0, uy = 0, uz = 0, ax = 0, ay = 0, az = 0;
-    for (let j = 0; j < N; j++) {
-      const phi = this.kx[j] * x + this.ky[j] * y + this.kz[j] * z + this.ph[j] + this.om[j] * t;
-      const c = Math.cos(phi), sn = Math.sin(phi), s = this.s[j], a = A[j];
-      const tx = a * (c * this.e1x[j] - s * sn * this.e2x[j]);
-      const ty = a * (c * this.e1y[j] - s * sn * this.e2y[j]);
-      const tz = a * (c * this.e1z[j] - s * sn * this.e2z[j]);
-      ux += tx; uy += ty; uz += tz;
-      const g = s / this.km[j]; // A_j = u_j / (s·k) = (s/k)·u_j — exact vector potential per mode
-      ax += g * tx; ay += g * ty; az += g * tz;
+    if (this._beltrami) {
+      for (let j = 0; j < N; j++) {
+        const phi = this.kx[j] * x + this.ky[j] * y + this.kz[j] * z + this.ph[j] + this.om[j] * t;
+        const c = Math.cos(phi), sn = Math.sin(phi), s = this.s[j], a = A[j];
+        const tx = a * (c * this.e1x[j] - s * sn * this.e2x[j]);
+        const ty = a * (c * this.e1y[j] - s * sn * this.e2y[j]);
+        const tz = a * (c * this.e1z[j] - s * sn * this.e2z[j]);
+        ux += tx; uy += ty; uz += tz;
+        const g = s / this.km[j]; // A_j = u_j / (s·k) = (s/k)·u_j — exact vector potential per mode
+        ax += g * tx; ay += g * ty; az += g * tz;
+      }
+    } else {
+      // A_j = w_j/κ² = (a/κ)(χ·c·e1 − sn·e2) — same Coulomb gauge, ∇×A_j = u_j for every χ.
+      for (let j = 0; j < N; j++) {
+        const phi = this.kx[j] * x + this.ky[j] * y + this.kz[j] * z + this.ph[j] + this.om[j] * t;
+        const c = Math.cos(phi), sn = Math.sin(phi), xi = this.chi[j], a = A[j];
+        const e1x = this.e1x[j], e1y = this.e1y[j], e1z = this.e1z[j];
+        const e2x = this.e2x[j], e2y = this.e2y[j], e2z = this.e2z[j];
+        const cx = xi * c, sx = xi * sn;
+        ux += a * (c * e1x - sx * e2x); uy += a * (c * e1y - sx * e2y); uz += a * (c * e1z - sx * e2z);
+        const ga = a / this.km[j];
+        ax += ga * (cx * e1x - sn * e2x); ay += ga * (cx * e1y - sn * e2y); az += ga * (cx * e1z - sn * e2z);
+      }
     }
     out6[0] = ux * sc; out6[1] = uy * sc; out6[2] = uz * sc;
     out6[3] = ax * sc; out6[4] = ay * sc; out6[5] = az * sc;
@@ -322,6 +365,7 @@ export class HelixField implements Field, ModeData {
     if (!this._noWasm && n >= 64 && runWasm(this, A, pos, out, t, uw, sc)) return;
     if (!this._tile) this._tile = new Float64Array(TILE * 6);
     const acc = this._tile;
+    const bel = this._beltrami;
     for (let i0 = 0; i0 < n; i0 += TILE) {
       const m = Math.min(TILE, n - i0);
       acc.fill(0, 0, st * m);
@@ -330,11 +374,16 @@ export class HelixField implements Field, ModeData {
         // Keep the exact + association of the scalar path (… + ph, then + om·t), so batch
         // phases are bit-identical to sampleUW even when |k·x| is large.
         const ph = this.ph[j], omt = this.om[j] * t, s = this.s[j], a = A[j];
-        // Fold amplitude and helicity sign into the mode's frame once per (mode, tile).
+        // Fold amplitude and chirality into the mode's frame once per (mode, tile). At ε = 1
+        // (χ = s) this reproduces the legacy fold exactly.
         const b1x = a * this.e1x[j], b1y = a * this.e1y[j], b1z = a * this.e1z[j];
-        const as = a * s;
+        const as = bel ? a * s : a * this.chi[j];
         const b2x = as * this.e2x[j], b2y = as * this.e2y[j], b2z = as * this.e2z[j];
         const g = s * this.km[j];
+        // General-χ vorticity fold: w_j = c·(aκχ)·e1 − sn·(aκ)·e2 (unused on the Beltrami path).
+        const ak = a * this.km[j], akx = ak * this.chi[j];
+        const c1x = akx * this.e1x[j], c1y = akx * this.e1y[j], c1z = akx * this.e1z[j];
+        const c2x = ak * this.e2x[j], c2y = ak * this.e2y[j], c2z = ak * this.e2z[j];
         for (let i = 0; i < m; i++) {
           const q = 3 * (i0 + i);
           const phi = kx * pos[q] + ky * pos[q + 1] + kz * pos[q + 2] + ph + omt;
@@ -356,7 +405,14 @@ export class HelixField implements Field, ModeData {
           const tz = c * b1z - sn * b2z;
           const w = st * i;
           acc[w] += tx; acc[w + 1] += ty; acc[w + 2] += tz;
-          if (uw) { acc[w + 3] += g * tx; acc[w + 4] += g * ty; acc[w + 5] += g * tz; }
+          if (uw) {
+            if (bel) { acc[w + 3] += g * tx; acc[w + 4] += g * ty; acc[w + 5] += g * tz; }
+            else {
+              acc[w + 3] += c * c1x - sn * c2x;
+              acc[w + 4] += c * c1y - sn * c2y;
+              acc[w + 5] += c * c1z - sn * c2z;
+            }
+          }
         }
       }
       for (let i = 0; i < m; i++) {

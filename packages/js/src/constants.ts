@@ -2,7 +2,7 @@ import type { HelixNoiseOptions } from "./types";
 
 export const TAU = 2 * Math.PI;
 
-export const VERSION = "1.1.0";
+export const VERSION = "1.2.0";
 
 /** Default options, filled in for every field (`spectrum` stays optional — no default law object). */
 export const DEFAULTS: Required<Omit<HelixNoiseOptions, "spectrum">> & Pick<HelixNoiseOptions, "spectrum"> = {
@@ -21,4 +21,5 @@ export const DEFAULTS: Required<Omit<HelixNoiseOptions, "spectrum">> & Pick<Heli
   decay: 0.0, // viscosity nu >= 0: mode amplitudes decay as e^(-nu k^2 t)
   anisotropy: 0.0, // direction stretch along `axis`: < 0 streaks along it, > 0 layers across it
   axis: [0, 0, 1], // anisotropy axis
+  ellipticity: 1.0, // eps in [0, 1]: per-mode chirality chi = eps*s — 1 = circular (tubes), 0 = linear (sheets)
 };

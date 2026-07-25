@@ -50,7 +50,10 @@ function kernel(): Kernel | null {
   return kernelState;
 }
 
-const ARRS = ["kx", "ky", "kz", "ph", "om", "s", "a", "km", "e1x", "e1y", "e1z", "e2x", "e2y", "e2z"] as const;
+// The "s" slot carries chi (= ellipticity·s, equal to s at ε = 1): the kernel folds it into the
+// velocity combine `b2 = a·χ·e2`, which is the correct general form. Its vorticity fold
+// `gv = s·κ` is Beltrami-only, so uw batches at ε ≠ 1 fall back to the JS kernel (see runWasm).
+const ARRS = ["kx", "ky", "kz", "ph", "om", "chi", "a", "km", "e1x", "e1y", "e1z", "e2x", "e2y", "e2z"] as const;
 const PHI_MAX = 1e6; // beyond this the JS kernel's exact-reduction guard applies — stay on JS
 
 // Layout state for the single shared instance (mode block re-uploaded when the owner changes).
@@ -88,7 +91,7 @@ function ensure(k: Kernel, N: number, nPts: number): void {
  * JS kernel handles those.
  */
 export function runWasm(
-  field: ModeData & { _buildStamp: number },
+  field: ModeData & { _buildStamp: number; _beltrami: boolean },
   amps: Float64Array,
   pos: ArrayLike<number>,
   out: Out6,
@@ -98,21 +101,24 @@ export function runWasm(
 ): boolean {
   const k = kernel();
   if (!k) return false;
+  if (uw && !field._beltrami) return false; // elliptic vorticity needs the two-term curl — JS kernel
   const N = field.N;
   const n = (pos.length / 3) | 0;
   const n2 = n + (n & 1); // wasm processes pairs; pad odd counts
   ensure(k, N, n2);
   const m = f64!;
 
-  // mode block (14 arrays); `a` slot gets the (possibly decayed) amplitudes for this t
+  // Mode block (14 arrays); `a` slot gets the (possibly decayed) amplitudes for this t.
+  // The kernel strides mode arrays by the *live* N (not the reserved capacity), so upload with
+  // the same stride — otherwise a field with fewer modes than a previous one reads stale data.
   if (owner !== field || ownerStamp !== field._buildStamp) {
     for (let ai = 0; ai < ARRS.length; ai++) {
       const src = ARRS[ai] === "a" ? amps : (field[ARRS[ai]] as Float64Array);
-      m.set(src, (mdO >> 3) + ai * capN);
+      m.set(src, (mdO >> 3) + ai * N);
     }
     owner = field; ownerStamp = field._buildStamp;
   } else if (amps !== field.a) {
-    m.set(amps, (mdO >> 3) + 6 * capN); // decay active: refresh amplitudes only
+    m.set(amps, (mdO >> 3) + 6 * N); // decay active: refresh amplitudes only
   }
 
   // transpose positions to SoA, tracking the phase bound

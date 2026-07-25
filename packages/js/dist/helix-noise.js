@@ -1,6 +1,6 @@
 // src/constants.ts
 var TAU = 2 * Math.PI;
-var VERSION = "1.1.0";
+var VERSION = "1.2.0";
 var DEFAULTS = {
   modes: 48,
   // number of helical modes (cost of one sample is O(modes))
@@ -29,8 +29,10 @@ var DEFAULTS = {
   // viscosity nu >= 0: mode amplitudes decay as e^(-nu k^2 t)
   anisotropy: 0,
   // direction stretch along `axis`: < 0 streaks along it, > 0 layers across it
-  axis: [0, 0, 1]
+  axis: [0, 0, 1],
   // anisotropy axis
+  ellipticity: 1
+  // eps in [0, 1]: per-mode chirality chi = eps*s — 1 = circular (tubes), 0 = linear (sheets)
 };
 
 // src/rng.ts
@@ -57,6 +59,11 @@ function toGLSL(f, opts = {}) {
   const N = f.N;
   const P = name + "_";
   const decay = f.nu > 0;
+  let beltrami = true;
+  for (let j = 0; j < N; j++) if (Math.abs(f.chi[j]) !== 1) {
+    beltrami = false;
+    break;
+  }
   const v3 = (cx, cy, cz) => {
     const ax = f[cx], ay = f[cy], az = f[cz];
     const parts = [];
@@ -77,7 +84,7 @@ function toGLSL(f, opts = {}) {
     `const vec3 ${P}K[${N}] = ${v3("kx", "ky", "kz")};`,
     `const vec3 ${P}E1[${N}] = ${v3("e1x", "e1y", "e1z")};`,
     `const vec3 ${P}E2[${N}] = ${v3("e2x", "e2y", "e2z")};`,
-    `const float ${P}S[${N}] = ${fa("s")};`,
+    `const float ${P}S[${N}] = ${fa("chi")};`,
     `const float ${P}A[${N}] = ${fa("a")};`,
     `const float ${P}PH[${N}] = ${fa("ph")};`,
     `const float ${P}OM[${N}] = ${fa("om")};`,
@@ -101,8 +108,15 @@ function toGLSL(f, opts = {}) {
       "  vec3 w = vec3(0.0);",
       `  for (int j = 0; j < ${P}N; j++) {`,
       `    float phi = dot(${P}K[j], p) + ${P}PH[j] + ${P}OM[j] * t;`,
-      `    vec3 tv = (${amp}) * (cos(phi) * ${P}E1[j] - ${P}S[j] * sin(phi) * ${P}E2[j]);`,
-      `    w += ${P}S[j] * length(${P}K[j]) * tv;`,
+      ...beltrami ? [
+        `    vec3 tv = (${amp}) * (cos(phi) * ${P}E1[j] - ${P}S[j] * sin(phi) * ${P}E2[j]);`,
+        `    w += ${P}S[j] * length(${P}K[j]) * tv;`
+      ] : [
+        // Elliptic modes: w_j = a·κ·(chi·cos φ·e1 − sin φ·e2). The Beltrami shortcut
+        // w = chi·κ·u only holds at |chi| = 1.
+        `    vec3 tw = (${amp}) * (${P}S[j] * cos(phi) * ${P}E1[j] - sin(phi) * ${P}E2[j]);`,
+        `    w += length(${P}K[j]) * tw;`
+      ],
       "  }",
       `  return w * ${P}SCALE;`,
       "}",
@@ -116,8 +130,14 @@ function toGLSL(f, opts = {}) {
       "  vec3 A = vec3(0.0);",
       `  for (int j = 0; j < ${P}N; j++) {`,
       `    float phi = dot(${P}K[j], p) + ${P}PH[j] + ${P}OM[j] * t;`,
-      `    vec3 tv = (${amp}) * (cos(phi) * ${P}E1[j] - ${P}S[j] * sin(phi) * ${P}E2[j]);`,
-      `    A += (${P}S[j] / length(${P}K[j])) * tv;`,
+      ...beltrami ? [
+        `    vec3 tv = (${amp}) * (cos(phi) * ${P}E1[j] - ${P}S[j] * sin(phi) * ${P}E2[j]);`,
+        `    A += (${P}S[j] / length(${P}K[j])) * tv;`
+      ] : [
+        // A_j = w_j/κ²: same combine as the elliptic curl, divided by |k|.
+        `    vec3 tw = (${amp}) * (${P}S[j] * cos(phi) * ${P}E1[j] - sin(phi) * ${P}E2[j]);`,
+        `    A += tw / length(${P}K[j]);`
+      ],
       "  }",
       `  return A * ${P}SCALE;`,
       "}",
@@ -291,7 +311,7 @@ function kernel() {
   }
   return kernelState;
 }
-var ARRS = ["kx", "ky", "kz", "ph", "om", "s", "a", "km", "e1x", "e1y", "e1z", "e2x", "e2y", "e2z"];
+var ARRS = ["kx", "ky", "kz", "ph", "om", "chi", "a", "km", "e1x", "e1y", "e1z", "e2x", "e2y", "e2z"];
 var PHI_MAX = 1e6;
 var owner = null;
 var ownerStamp = -1;
@@ -332,6 +352,7 @@ function ensure(k, N, nPts) {
 function runWasm(field, amps, pos, out, t, uw, sc) {
   const k = kernel();
   if (!k) return false;
+  if (uw && !field._beltrami) return false;
   const N = field.N;
   const n = pos.length / 3 | 0;
   const n2 = n + (n & 1);
@@ -340,12 +361,12 @@ function runWasm(field, amps, pos, out, t, uw, sc) {
   if (owner !== field || ownerStamp !== field._buildStamp) {
     for (let ai = 0; ai < ARRS.length; ai++) {
       const src = ARRS[ai] === "a" ? amps : field[ARRS[ai]];
-      m.set(src, (mdO >> 3) + ai * capN);
+      m.set(src, (mdO >> 3) + ai * N);
     }
     owner = field;
     ownerStamp = field._buildStamp;
   } else if (amps !== field.a) {
-    m.set(amps, (mdO >> 3) + 6 * capN);
+    m.set(amps, (mdO >> 3) + 6 * N);
   }
   const xb = pxO >> 3, yb = pyO >> 3, zb = pzO >> 3;
   let mx = 0;
@@ -468,6 +489,12 @@ var HelixField = class {
     /** Viscous decay rate ν (amplitudes ∝ e^(−νk²t)); 0 = none. */
     this.nu = 0;
     this._scale = 1;
+    /**
+     * True when every mode is fully circular (ellipticity === 1). Gates the legacy Beltrami
+     * shortcut `w = (s·κ)·u_j`, which is algebraically equal to the general two-term curl but
+     * rounds differently — the parity fixture pins the shortcut's bits. @internal
+     */
+    this._beltrami = true;
     /** Bumped on every rebuild — the wasm backend uses it to re-upload mode data. @internal */
     this._buildStamp = 0;
     /** Test/bench escape hatch: set true to force the JS batch kernel. @internal */
@@ -495,6 +522,7 @@ var HelixField = class {
     this.km = new Float64Array(N);
     this.a = new Float64Array(N);
     this.s = new Float64Array(N);
+    this.chi = new Float64Array(N);
     this.ph = new Float64Array(N);
     this.om = new Float64Array(N);
     this.e1x = new Float64Array(N);
@@ -520,6 +548,8 @@ var HelixField = class {
     const fib = p.layout !== "random";
     const ci = new Int32Array(N);
     const gam = Math.min(9, Math.max(-0.99, p.anisotropy));
+    const eps = Math.min(1, Math.max(0, p.ellipticity));
+    this._beltrami = eps === 1;
     const an = Math.hypot(p.axis[0], p.axis[1], p.axis[2]) || 1;
     const anx = p.axis[0] / an, any = p.axis[1] / an, anz = p.axis[2] / an;
     let rot = null;
@@ -588,6 +618,7 @@ var HelixField = class {
       this.e2y[j] = fr[4];
       this.e2z[j] = fr[5];
       this.s[j] = rng() < (1 + p.helicity) / 2 ? 1 : -1;
+      this.chi[j] = eps * this.s[j];
       this.a[j] = p.spectrum ? Math.max(0, p.spectrum(km)) : Math.pow(km, -p.slope);
       const phr = TAU * rng();
       const c = rng() * nc | 0;
@@ -595,11 +626,11 @@ var HelixField = class {
       const phc = -(kxc * cx[c] + kyc * cy[c] + kzc * cz[c]);
       this.ph[j] = phc + (1 - lam) * phr;
     }
-    const chi = Math.max(0, p.churn);
+    const churnRate = Math.max(0, p.churn);
     this.cvx = new Float64Array(nc);
     this.cvy = new Float64Array(nc);
     this.cvz = new Float64Array(nc);
-    const sg = chi / Math.sqrt(3);
+    const sg = churnRate / Math.sqrt(3);
     for (let m = 0; m < nc; m++) {
       const r1 = Math.sqrt(-2 * Math.log(1 - rng())), a1 = TAU * rng();
       const r2 = Math.sqrt(-2 * Math.log(1 - rng())), a2 = TAU * rng();
@@ -607,7 +638,7 @@ var HelixField = class {
       this.cvy[m] = sg * r1 * Math.sin(a1);
       this.cvz[m] = sg * r2 * Math.cos(a2);
     }
-    const rate0 = chi * Math.cbrt(Math.max(p.kmin, 1e-9));
+    const rate0 = churnRate * Math.cbrt(Math.max(p.kmin, 1e-9));
     for (let j = 0; j < N; j++) {
       const sgn = rng() < 0.5 ? -1 : 1;
       const c = ci[j];
@@ -633,19 +664,36 @@ var HelixField = class {
   sampleUW(x, y, z, out6, t = 0) {
     const N = this.N, sc = this._scale, A = this._amps(t);
     let ux = 0, uy = 0, uz = 0, wx = 0, wy = 0, wz = 0;
-    for (let j = 0; j < N; j++) {
-      const phi = this.kx[j] * x + this.ky[j] * y + this.kz[j] * z + this.ph[j] + this.om[j] * t;
-      const c = Math.cos(phi), sn = Math.sin(phi), s = this.s[j], a = A[j];
-      const tx = a * (c * this.e1x[j] - s * sn * this.e2x[j]);
-      const ty = a * (c * this.e1y[j] - s * sn * this.e2y[j]);
-      const tz = a * (c * this.e1z[j] - s * sn * this.e2z[j]);
-      ux += tx;
-      uy += ty;
-      uz += tz;
-      const g = s * this.km[j];
-      wx += g * tx;
-      wy += g * ty;
-      wz += g * tz;
+    if (this._beltrami) {
+      for (let j = 0; j < N; j++) {
+        const phi = this.kx[j] * x + this.ky[j] * y + this.kz[j] * z + this.ph[j] + this.om[j] * t;
+        const c = Math.cos(phi), sn = Math.sin(phi), s = this.s[j], a = A[j];
+        const tx = a * (c * this.e1x[j] - s * sn * this.e2x[j]);
+        const ty = a * (c * this.e1y[j] - s * sn * this.e2y[j]);
+        const tz = a * (c * this.e1z[j] - s * sn * this.e2z[j]);
+        ux += tx;
+        uy += ty;
+        uz += tz;
+        const g = s * this.km[j];
+        wx += g * tx;
+        wy += g * ty;
+        wz += g * tz;
+      }
+    } else {
+      for (let j = 0; j < N; j++) {
+        const phi = this.kx[j] * x + this.ky[j] * y + this.kz[j] * z + this.ph[j] + this.om[j] * t;
+        const c = Math.cos(phi), sn = Math.sin(phi), xi = this.chi[j], a = A[j];
+        const e1x = this.e1x[j], e1y = this.e1y[j], e1z = this.e1z[j];
+        const e2x = this.e2x[j], e2y = this.e2y[j], e2z = this.e2z[j];
+        const cx = xi * c, sx = xi * sn;
+        ux += a * (c * e1x - sx * e2x);
+        uy += a * (c * e1y - sx * e2y);
+        uz += a * (c * e1z - sx * e2z);
+        const gk = a * this.km[j];
+        wx += gk * (cx * e1x - sn * e2x);
+        wy += gk * (cx * e1y - sn * e2y);
+        wz += gk * (cx * e1z - sn * e2z);
+      }
     }
     out6[0] = ux * sc;
     out6[1] = uy * sc;
@@ -658,19 +706,36 @@ var HelixField = class {
   sampleUA(x, y, z, out6, t = 0) {
     const N = this.N, sc = this._scale, A = this._amps(t);
     let ux = 0, uy = 0, uz = 0, ax = 0, ay = 0, az = 0;
-    for (let j = 0; j < N; j++) {
-      const phi = this.kx[j] * x + this.ky[j] * y + this.kz[j] * z + this.ph[j] + this.om[j] * t;
-      const c = Math.cos(phi), sn = Math.sin(phi), s = this.s[j], a = A[j];
-      const tx = a * (c * this.e1x[j] - s * sn * this.e2x[j]);
-      const ty = a * (c * this.e1y[j] - s * sn * this.e2y[j]);
-      const tz = a * (c * this.e1z[j] - s * sn * this.e2z[j]);
-      ux += tx;
-      uy += ty;
-      uz += tz;
-      const g = s / this.km[j];
-      ax += g * tx;
-      ay += g * ty;
-      az += g * tz;
+    if (this._beltrami) {
+      for (let j = 0; j < N; j++) {
+        const phi = this.kx[j] * x + this.ky[j] * y + this.kz[j] * z + this.ph[j] + this.om[j] * t;
+        const c = Math.cos(phi), sn = Math.sin(phi), s = this.s[j], a = A[j];
+        const tx = a * (c * this.e1x[j] - s * sn * this.e2x[j]);
+        const ty = a * (c * this.e1y[j] - s * sn * this.e2y[j]);
+        const tz = a * (c * this.e1z[j] - s * sn * this.e2z[j]);
+        ux += tx;
+        uy += ty;
+        uz += tz;
+        const g = s / this.km[j];
+        ax += g * tx;
+        ay += g * ty;
+        az += g * tz;
+      }
+    } else {
+      for (let j = 0; j < N; j++) {
+        const phi = this.kx[j] * x + this.ky[j] * y + this.kz[j] * z + this.ph[j] + this.om[j] * t;
+        const c = Math.cos(phi), sn = Math.sin(phi), xi = this.chi[j], a = A[j];
+        const e1x = this.e1x[j], e1y = this.e1y[j], e1z = this.e1z[j];
+        const e2x = this.e2x[j], e2y = this.e2y[j], e2z = this.e2z[j];
+        const cx = xi * c, sx = xi * sn;
+        ux += a * (c * e1x - sx * e2x);
+        uy += a * (c * e1y - sx * e2y);
+        uz += a * (c * e1z - sx * e2z);
+        const ga = a / this.km[j];
+        ax += ga * (cx * e1x - sn * e2x);
+        ay += ga * (cx * e1y - sn * e2y);
+        az += ga * (cx * e1z - sn * e2z);
+      }
     }
     out6[0] = ux * sc;
     out6[1] = uy * sc;
@@ -721,6 +786,7 @@ var HelixField = class {
     if (!this._noWasm && n >= 64 && runWasm(this, A, pos, out, t, uw, sc)) return;
     if (!this._tile) this._tile = new Float64Array(TILE * 6);
     const acc = this._tile;
+    const bel = this._beltrami;
     for (let i0 = 0; i0 < n; i0 += TILE) {
       const m = Math.min(TILE, n - i0);
       acc.fill(0, 0, st * m);
@@ -728,9 +794,12 @@ var HelixField = class {
         const kx = this.kx[j], ky = this.ky[j], kz = this.kz[j];
         const ph = this.ph[j], omt = this.om[j] * t, s = this.s[j], a = A[j];
         const b1x = a * this.e1x[j], b1y = a * this.e1y[j], b1z = a * this.e1z[j];
-        const as = a * s;
+        const as = bel ? a * s : a * this.chi[j];
         const b2x = as * this.e2x[j], b2y = as * this.e2y[j], b2z = as * this.e2z[j];
         const g = s * this.km[j];
+        const ak = a * this.km[j], akx = ak * this.chi[j];
+        const c1x = akx * this.e1x[j], c1y = akx * this.e1y[j], c1z = akx * this.e1z[j];
+        const c2x = ak * this.e2x[j], c2y = ak * this.e2y[j], c2z = ak * this.e2z[j];
         for (let i = 0; i < m; i++) {
           const q = 3 * (i0 + i);
           const phi = kx * pos[q] + ky * pos[q + 1] + kz * pos[q + 2] + ph + omt;
@@ -756,9 +825,15 @@ var HelixField = class {
           acc[w + 1] += ty;
           acc[w + 2] += tz;
           if (uw) {
-            acc[w + 3] += g * tx;
-            acc[w + 4] += g * ty;
-            acc[w + 5] += g * tz;
+            if (bel) {
+              acc[w + 3] += g * tx;
+              acc[w + 4] += g * ty;
+              acc[w + 5] += g * tz;
+            } else {
+              acc[w + 3] += c * c1x - sn * c2x;
+              acc[w + 4] += c * c1y - sn * c2y;
+              acc[w + 5] += c * c1z - sn * c2z;
+            }
           }
         }
       }
@@ -1317,29 +1392,43 @@ function selfTest() {
     const a2 = Math.abs(f.kx[j] * f.e2x[j] + f.ky[j] * f.e2y[j] + f.kz[j] * f.e2z[j]);
     tmax = Math.max(tmax, a1, a2);
   }
-  const h = 2e-3, M = 500, rng = mulberry32(7);
-  let div2 = 0;
+  const h = 2e-3, M = 500;
   const oa = [0, 0, 0, 0, 0, 0], ob = [0, 0, 0, 0, 0, 0];
-  for (let m = 0; m < M; m++) {
-    const x = rng() * TAU, y = rng() * TAU, z = rng() * TAU;
-    let d = 0;
-    f.sampleUW(x + h, y, z, oa);
-    f.sampleUW(x - h, y, z, ob);
-    d += (oa[0] - ob[0]) / (2 * h);
-    f.sampleUW(x, y + h, z, oa);
-    f.sampleUW(x, y - h, z, ob);
-    d += (oa[1] - ob[1]) / (2 * h);
-    f.sampleUW(x, y, z + h, oa);
-    f.sampleUW(x, y, z - h, ob);
-    d += (oa[2] - ob[2]) / (2 * h);
-    div2 += d * d;
+  const divRms = (g, seed) => {
+    const rng = mulberry32(seed);
+    let div2 = 0;
+    for (let m = 0; m < M; m++) {
+      const x = rng() * TAU, y = rng() * TAU, z = rng() * TAU;
+      let d = 0;
+      g.sampleUW(x + h, y, z, oa);
+      g.sampleUW(x - h, y, z, ob);
+      d += (oa[0] - ob[0]) / (2 * h);
+      g.sampleUW(x, y + h, z, oa);
+      g.sampleUW(x, y - h, z, ob);
+      d += (oa[1] - ob[1]) / (2 * h);
+      g.sampleUW(x, y, z + h, oa);
+      g.sampleUW(x, y, z - h, ob);
+      d += (oa[2] - ob[2]) / (2 * h);
+      div2 += d * d;
+    }
+    return Math.sqrt(div2 / M);
+  };
+  const fdDivergenceRms = divRms(f, 7);
+  const fdDivergenceRmsElliptic = divRms(
+    new HelixField({ modes: 40, helicity: 0.5, slope: 1, coherence: 0, seed: 1, ellipticity: 0.5 }),
+    7
+  );
+  let ellipticityRho = 0;
+  for (const eps of [0, 0.5, 1]) {
+    const g = new HelixField({ modes: 1, seed: 3, tileable: true, kmin: 2, kmax: 2, helicity: 1, ellipticity: eps });
+    const chi = g.chi[0];
+    ellipticityRho = Math.max(ellipticityRho, Math.abs(g.relativeHelicity(12) - 2 * chi / (1 + chi * chi)));
   }
-  const fdDivergenceRms = Math.sqrt(div2 / M);
   const rhoVsP = {};
   for (const p of [-1, -0.5, 0, 0.5, 1]) {
     rhoVsP[String(p)] = new HelixField({ modes: 60, helicity: p, slope: 1, seed: 100 + (10 * p | 0) }).relativeHelicity(12);
   }
-  return { transversality: tmax, fdDivergenceRms, rhoVsP };
+  return { transversality: tmax, fdDivergenceRms, rhoVsP, ellipticityRho, fdDivergenceRmsElliptic };
 }
 var HelixNoise = { create, createAtoms, selfTest, version };
 var src_default = HelixNoise;
