@@ -3,6 +3,26 @@
 All notable changes to this project are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [1.7.0]
+
+### Added
+
+- **Structure diagnostics for colouring.** `qCriterion`, `lambda2` and `stretching` — the standard
+  ways to say *this is a vortex core*, *this is a shear layer*, *this vortex is being spun up* —
+  plus `sampleGrad(x, y, z, out9, t)`, the analytic velocity gradient they are built from. No
+  finite differences and no grid: the gradient is one closed-form term per wave.
+- `glsl({ gradient: true })` emits `mat3 <name>Grad(vec3 p)` and `float <name>Q(vec3 p)` so the
+  same colouring works on the GPU.
+- Sandbox demo: a colour toggle between helicity density and the Q-criterion.
+
+### Notes
+
+- The gradient is exact for every mode type — circular, elliptic and grain-axis — and the tests
+  pin it three ways: against finite differences, by its trace being machine-zero (that *is* the
+  divergence), and by its antisymmetric part reproducing the analytic vorticity to 1e-12.
+- Two known answers worth knowing: a single Beltrami wave has `Q = 0` exactly (its rotation and
+  strain balance) and zero stretching.
+
 ## [1.6.0]
 
 ### Added

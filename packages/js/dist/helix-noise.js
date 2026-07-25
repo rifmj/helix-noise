@@ -2,7 +2,7 @@
 var TAU = 2 * Math.PI;
 var POLAR_SALT = 2654435769;
 var POLAR_DEG_MAX = 0.97;
-var VERSION = "1.6.0";
+var VERSION = "1.7.0";
 var DEFAULTS = {
   modes: 48,
   // number of helical modes (cost of one sample is O(modes))
@@ -134,6 +134,31 @@ function toGLSL(f, opts = {}) {
       `  return w * ${P}SCALE;`,
       "}",
       `vec3 ${name}Curl(vec3 p) { return ${name}Curl(p, 0.0); }`
+    );
+  }
+  if (opts.gradient === true) {
+    const e2c = beltrami ? `${P}S[j] * ${P}E2[j]` : general ? `${P}E2[j]` : `${P}S[j] * ${P}E2[j]`;
+    L.push(
+      "",
+      `mat3 ${name}Grad(vec3 p, float t) {`,
+      "  mat3 G = mat3(0.0);",
+      `  for (int j = 0; j < ${P}N; j++) {`,
+      `    float phi = dot(${P}K[j], p) + ${P}PH[j] + ${P}OM[j] * t;`,
+      `    vec3 b = -(${amp}) * (sin(phi) * ${P}E1[j] + cos(phi) * (${e2c}));`,
+      `    G[0] += ${P}K[j].x * b; G[1] += ${P}K[j].y * b; G[2] += ${P}K[j].z * b;`,
+      "  }",
+      `  return G * ${P}SCALE;`,
+      "}",
+      `mat3 ${name}Grad(vec3 p) { return ${name}Grad(p, 0.0); }`,
+      "",
+      "// Q-criterion: positive inside vortex cores. Colour particles by it.",
+      `float ${name}Q(vec3 p, float t) {`,
+      `  mat3 G = ${name}Grad(p, t);`,
+      "  float tr2 = 0.0;",
+      "  for (int m = 0; m < 3; m++) for (int n = 0; n < 3; n++) tr2 += G[m][n] * G[n][m];",
+      "  return -0.5 * tr2;",
+      "}",
+      `float ${name}Q(vec3 p) { return ${name}Q(p, 0.0); }`
     );
   }
   if (pot) {
@@ -437,6 +462,25 @@ function runWasm(field, amps, pos, out, t, uw, sc) {
 
 // src/field.ts
 var _tmp6 = [0, 0, 0, 0, 0, 0];
+var _tmp9 = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+function eigMid3(m) {
+  const p1 = m[1] * m[1] + m[2] * m[2] + m[5] * m[5];
+  const q = (m[0] + m[4] + m[8]) / 3;
+  if (p1 <= 1e-300) {
+    const d = [m[0], m[4], m[8]].sort((a, b2) => a - b2);
+    return d[1];
+  }
+  const d0 = m[0] - q, d4 = m[4] - q, d8 = m[8] - q;
+  const p2 = d0 * d0 + d4 * d4 + d8 * d8 + 2 * p1;
+  const p = Math.sqrt(p2 / 6);
+  const b = [d0 / p, m[1] / p, m[2] / p, m[1] / p, d4 / p, m[5] / p, m[2] / p, m[5] / p, d8 / p];
+  const det = b[0] * (b[4] * b[8] - b[5] * b[7]) - b[1] * (b[3] * b[8] - b[5] * b[6]) + b[2] * (b[3] * b[7] - b[4] * b[6]);
+  const r = Math.min(1, Math.max(-1, det / 2));
+  const phi = Math.acos(r) / 3;
+  const e1 = q + 2 * p * Math.cos(phi);
+  const e3 = q + 2 * p * Math.cos(phi + 2 * Math.PI / 3);
+  return 3 * q - e1 - e3;
+}
 var GA = Math.PI * (3 - Math.sqrt(5));
 var TILE = 256;
 var TWO_OVER_PI = 0.6366197723675814;
@@ -1089,6 +1133,88 @@ var HelixField = class {
    * cross-mode terms a finite grid fails to cancel. For a single mode it is exactly `2χ/(1+χ²)`,
    * and under viscous decay it is constant in time when all modes share one `|k|`.
    */
+  /**
+   * Velocity gradient `∂u_n/∂x_m`, analytically — no finite differences. Written row-major into
+   * `out9` as `[∂u/∂x, ∂v/∂x, ∂w/∂x, ∂u/∂y, …]`, i.e. `out9[3m + n] = ∂u_n/∂x_m`.
+   *
+   * This is what the rendering diagnostics are built from: {@link qCriterion} finds vortex cores,
+   * {@link lambda2} finds them the other standard way, and {@link stretching} says whether a
+   * vortex is being spun up or torn apart. Colour particles by any of them.
+   */
+  sampleGrad(x, y, z, out9, t = 0) {
+    if (out9.length < 9) throw new Error("helix-noise: sampleGrad needs 9 floats");
+    const N = this.N, sc = this._scale, A = this._amps(t);
+    for (let i = 0; i < 9; i++) out9[i] = 0;
+    const gen = this._general;
+    for (let j = 0; j < N; j++) {
+      const kx = this.kx[j], ky = this.ky[j], kz = this.kz[j];
+      const phi = kx * x + ky * y + kz * z + this.ph[j] + this.om[j] * t;
+      const c = Math.cos(phi), sn = Math.sin(phi), a = A[j];
+      const chi = gen ? 1 : this.chi[j];
+      const bx = -a * (sn * this.e1x[j] + c * chi * this.e2x[j]);
+      const by = -a * (sn * this.e1y[j] + c * chi * this.e2y[j]);
+      const bz = -a * (sn * this.e1z[j] + c * chi * this.e2z[j]);
+      out9[0] += kx * bx;
+      out9[1] += kx * by;
+      out9[2] += kx * bz;
+      out9[3] += ky * bx;
+      out9[4] += ky * by;
+      out9[5] += ky * bz;
+      out9[6] += kz * bx;
+      out9[7] += kz * by;
+      out9[8] += kz * bz;
+    }
+    for (let i = 0; i < 9; i++) out9[i] *= sc;
+    return out9;
+  }
+  /**
+   * The **Q-criterion**: `Q = ½(|Ω|² − |S|²)`, rotation minus strain. Positive inside vortex
+   * cores, negative in shear layers — the standard way to pick filaments out of a flow, and the
+   * cheapest good thing to colour particles by.
+   */
+  qCriterion(x, y, z, t = 0) {
+    const g = this.sampleGrad(x, y, z, _tmp9, t);
+    let tr2 = 0;
+    for (let m = 0; m < 3; m++) for (let n = 0; n < 3; n++) tr2 += g[3 * m + n] * g[3 * n + m];
+    return -0.5 * tr2;
+  }
+  /**
+   * The **λ₂ criterion**: the middle eigenvalue of `S² + Ω²`. Negative inside a vortex core.
+   * Stricter than {@link qCriterion} — it ignores swirl that is really just shear.
+   */
+  lambda2(x, y, z, t = 0) {
+    const g = this.sampleGrad(x, y, z, _tmp9, t);
+    const s = [], o = [];
+    for (let m = 0; m < 3; m++) for (let n = 0; n < 3; n++) {
+      s[3 * m + n] = 0.5 * (g[3 * m + n] + g[3 * n + m]);
+      o[3 * m + n] = 0.5 * (g[3 * m + n] - g[3 * n + m]);
+    }
+    const M = [];
+    for (let m = 0; m < 3; m++) for (let n = 0; n < 3; n++) {
+      let v = 0;
+      for (let k = 0; k < 3; k++) v += s[3 * m + k] * s[3 * k + n] + o[3 * m + k] * o[3 * k + n];
+      M[3 * m + n] = v;
+    }
+    return eigMid3(M);
+  }
+  /**
+   * Vortex **stretching** `ξ̂·S·ξ̂`: the strain felt along the local vorticity direction.
+   * Positive means the vortex is being spun up (stretched), negative means it is being squashed.
+   * Zero where there is no vorticity to speak of.
+   */
+  stretching(x, y, z, t = 0) {
+    this.sampleUW(x, y, z, _tmp6, t);
+    const wm = Math.hypot(_tmp6[3], _tmp6[4], _tmp6[5]);
+    if (wm < 1e-300) return 0;
+    const ex = _tmp6[3] / wm, ey = _tmp6[4] / wm, ez = _tmp6[5] / wm;
+    const g = this.sampleGrad(x, y, z, _tmp9, t);
+    const e = [ex, ey, ez];
+    let v = 0;
+    for (let m = 0; m < 3; m++) for (let n = 0; n < 3; n++) {
+      v += e[m] * 0.5 * (g[3 * m + n] + g[3 * n + m]) * e[n];
+    }
+    return v;
+  }
   relativeHelicitySpectral(t = 0) {
     let H = 0, E = 0, Z = 0;
     const gen = this._general;

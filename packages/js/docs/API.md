@@ -182,6 +182,26 @@ const detail = create({ spectrum: shellPeak(kD), kmin: kD - 3, kmax: kD + 3,
 const storm = twoScale(abc(3, 3, 3), detail);
 ```
 
+### Colouring by structure
+
+Particles look far better coloured by what the flow is *doing* than by speed. These read the
+analytic velocity gradient — no finite differences, no grid:
+
+| Method | Returns | Use it for |
+|---|---|---|
+| `qCriterion(x, y, z, t?)` | `number` | Positive inside vortex cores, negative in shear layers. The cheapest good thing to colour by. |
+| `lambda2(x, y, z, t?)` | `number` | Negative inside a vortex core. Stricter than Q — it ignores swirl that is really shear. |
+| `stretching(x, y, z, t?)` | `number` | Positive where a vortex is being spun up, negative where it is being squashed. |
+| `sampleGrad(x, y, z, out9, t?)` | `out9` | The gradient itself, row-major `out9[3m + n] = ∂uₙ/∂xₘ`. |
+
+```js
+const q = field.qCriterion(x, y, z, t);
+particle.color = q > 0 ? coreColour : shearColour;
+```
+
+On the GPU, `glsl({ gradient: true })` emits `mat3 <name>Grad(vec3 p)` and `float <name>Q(vec3 p)`
+alongside the velocity, so the same colouring works in a shader.
+
 ### Structure primitives
 
 Besides the noise field there is a second genre: **localized closed-form structures**, with no

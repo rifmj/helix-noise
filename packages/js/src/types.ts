@@ -195,6 +195,14 @@ export interface Field extends FlowField {
   relativeHelicity(ng?: number): number;
   /** Relative helicity straight from the mode arrays — the exact, grid-free value at time t. */
   relativeHelicitySpectral(t?: number): number;
+  /** Analytic velocity gradient, row-major `out9[3m + n] = ∂u_n/∂x_m` (9 floats). */
+  sampleGrad<T extends Out6>(x: number, y: number, z: number, out9: T, t?: number): T;
+  /** Q-criterion `½(|Ω|² − |S|²)` — positive inside vortex cores. */
+  qCriterion(x: number, y: number, z: number, t?: number): number;
+  /** λ₂ criterion — the middle eigenvalue of `S² + Ω²`; negative inside a vortex core. */
+  lambda2(x: number, y: number, z: number, t?: number): number;
+  /** Vortex stretching `ξ̂·S·ξ̂` — positive where the vorticity is being spun up. */
+  stretching(x: number, y: number, z: number, t?: number): number;
   /** Emit self-contained GLSL (WebGL2) defining `vec3 <name>(vec3 p)` + `(vec3 p, float t)` (+ curl). */
   glsl(opts?: GlslOptions): string;
 }
@@ -284,6 +292,11 @@ export interface GlslOptions {
   curl?: boolean;
   /** Also emit the vector potential `<name>Pot(vec3 p)` — for in-shader SDF boundaries. Default false. */
   potential?: boolean;
+  /**
+   * Also emit `mat3 <name>Grad(vec3 p)` (the analytic velocity gradient) and `float <name>Q(vec3 p)`
+   * (the Q-criterion) — for colouring particles by vortex structure on the GPU. Default false.
+   */
+  gradient?: boolean;
 }
 
 export interface SelfTestReport {

@@ -99,6 +99,33 @@ export function toGLSL(f: ModeData, opts: GlslOptions = {}): string {
       `vec3 ${name}Curl(vec3 p) { return ${name}Curl(p, 0.0); }`
     );
   }
+  if (opts.gradient === true) {
+    // ∂_m u_n = a·k_m·(−sin φ·e1_n − cos φ·e2'_n). GLSL mat3 columns are indexed [m][n], which is
+    // exactly this layout, so `G[m][n]` reads as ∂u_n/∂x_m.
+    const e2c = beltrami ? `${P}S[j] * ${P}E2[j]` : general ? `${P}E2[j]` : `${P}S[j] * ${P}E2[j]`;
+    L.push(
+      "",
+      `mat3 ${name}Grad(vec3 p, float t) {`,
+      "  mat3 G = mat3(0.0);",
+      `  for (int j = 0; j < ${P}N; j++) {`,
+      `    float phi = dot(${P}K[j], p) + ${P}PH[j] + ${P}OM[j] * t;`,
+      `    vec3 b = -(${amp}) * (sin(phi) * ${P}E1[j] + cos(phi) * (${e2c}));`,
+      `    G[0] += ${P}K[j].x * b; G[1] += ${P}K[j].y * b; G[2] += ${P}K[j].z * b;`,
+      "  }",
+      `  return G * ${P}SCALE;`,
+      "}",
+      `mat3 ${name}Grad(vec3 p) { return ${name}Grad(p, 0.0); }`,
+      "",
+      "// Q-criterion: positive inside vortex cores. Colour particles by it.",
+      `float ${name}Q(vec3 p, float t) {`,
+      `  mat3 G = ${name}Grad(p, t);`,
+      "  float tr2 = 0.0;",
+      "  for (int m = 0; m < 3; m++) for (int n = 0; n < 3; n++) tr2 += G[m][n] * G[n][m];",
+      "  return -0.5 * tr2;",
+      "}",
+      `float ${name}Q(vec3 p) { return ${name}Q(p, 0.0); }`
+    );
+  }
   if (pot) {
     // Vector potential: A_j = (s_j/|k_j|)·u_j, so curl(<name>Pot) == <name> exactly. Ramp it by
     // your SDF and take an in-shader curl for obstacle-aware, divergence-free flow.

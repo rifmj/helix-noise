@@ -188,6 +188,14 @@ interface Field extends FlowField {
     relativeHelicity(ng?: number): number;
     /** Relative helicity straight from the mode arrays — the exact, grid-free value at time t. */
     relativeHelicitySpectral(t?: number): number;
+    /** Analytic velocity gradient, row-major `out9[3m + n] = ∂u_n/∂x_m` (9 floats). */
+    sampleGrad<T extends Out6>(x: number, y: number, z: number, out9: T, t?: number): T;
+    /** Q-criterion `½(|Ω|² − |S|²)` — positive inside vortex cores. */
+    qCriterion(x: number, y: number, z: number, t?: number): number;
+    /** λ₂ criterion — the middle eigenvalue of `S² + Ω²`; negative inside a vortex core. */
+    lambda2(x: number, y: number, z: number, t?: number): number;
+    /** Vortex stretching `ξ̂·S·ξ̂` — positive where the vorticity is being spun up. */
+    stretching(x: number, y: number, z: number, t?: number): number;
     /** Emit self-contained GLSL (WebGL2) defining `vec3 <name>(vec3 p)` + `(vec3 p, float t)` (+ curl). */
     glsl(opts?: GlslOptions): string;
 }
@@ -271,6 +279,11 @@ interface GlslOptions {
     curl?: boolean;
     /** Also emit the vector potential `<name>Pot(vec3 p)` — for in-shader SDF boundaries. Default false. */
     potential?: boolean;
+    /**
+     * Also emit `mat3 <name>Grad(vec3 p)` (the analytic velocity gradient) and `float <name>Q(vec3 p)`
+     * (the Q-criterion) — for colouring particles by vortex structure on the GPU. Default false.
+     */
+    gradient?: boolean;
 }
 interface SelfTestReport {
     /** max |k·e|, exact transversality (should be ~1e-16). */
@@ -434,6 +447,32 @@ declare class HelixField implements Field, ModeData {
      * cross-mode terms a finite grid fails to cancel. For a single mode it is exactly `2χ/(1+χ²)`,
      * and under viscous decay it is constant in time when all modes share one `|k|`.
      */
+    /**
+     * Velocity gradient `∂u_n/∂x_m`, analytically — no finite differences. Written row-major into
+     * `out9` as `[∂u/∂x, ∂v/∂x, ∂w/∂x, ∂u/∂y, …]`, i.e. `out9[3m + n] = ∂u_n/∂x_m`.
+     *
+     * This is what the rendering diagnostics are built from: {@link qCriterion} finds vortex cores,
+     * {@link lambda2} finds them the other standard way, and {@link stretching} says whether a
+     * vortex is being spun up or torn apart. Colour particles by any of them.
+     */
+    sampleGrad<T extends Out6>(x: number, y: number, z: number, out9: T, t?: number): T;
+    /**
+     * The **Q-criterion**: `Q = ½(|Ω|² − |S|²)`, rotation minus strain. Positive inside vortex
+     * cores, negative in shear layers — the standard way to pick filaments out of a flow, and the
+     * cheapest good thing to colour particles by.
+     */
+    qCriterion(x: number, y: number, z: number, t?: number): number;
+    /**
+     * The **λ₂ criterion**: the middle eigenvalue of `S² + Ω²`. Negative inside a vortex core.
+     * Stricter than {@link qCriterion} — it ignores swirl that is really just shear.
+     */
+    lambda2(x: number, y: number, z: number, t?: number): number;
+    /**
+     * Vortex **stretching** `ξ̂·S·ξ̂`: the strain felt along the local vorticity direction.
+     * Positive means the vortex is being spun up (stretched), negative means it is being squashed.
+     * Zero where there is no vorticity to speak of.
+     */
+    stretching(x: number, y: number, z: number, t?: number): number;
     relativeHelicitySpectral(t?: number): number;
     bake3D(n: number, t?: number): Bake3DResult;
     bakePotential3D(n: number, t?: number): Bake3DResult;
@@ -677,7 +716,7 @@ declare function create(options?: HelixNoiseOptions): Field;
 /** Create a sparse-atom field: broadband, infinite, amortized O(1), spatially-varying params. */
 declare function createAtoms(options?: HelixAtomsOptions): AtomField;
 /** Library version. */
-declare const version = "1.6.0";
+declare const version = "1.7.0";
 /** Run the built-in validation (transversality, divergence, helicity tracking). */
 declare function selfTest(): SelfTestReport;
 /** Default export: the Helix Noise namespace (`HelixNoise.create(...)`). */

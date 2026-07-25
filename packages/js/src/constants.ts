@@ -7,7 +7,7 @@ export const POLAR_SALT = 0x9e3779b9;
 /** Polarization-degree ball radius: sqrt(d^2 + chi^2) is clamped to this (PSD of the 2x2 covariance). */
 export const POLAR_DEG_MAX = 0.97;
 
-export const VERSION = "1.6.0";
+export const VERSION = "1.7.0";
 
 /** Default options, filled in for every field (`spectrum` stays optional — no default law object). */
 export const DEFAULTS: Required<Omit<HelixNoiseOptions, "spectrum">> & Pick<HelixNoiseOptions, "spectrum"> = {

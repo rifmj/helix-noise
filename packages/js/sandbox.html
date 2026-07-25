@@ -121,6 +121,7 @@
       <button id="p-braid" class="preset">◇ braid</button>
       <button id="p-rollers" class="preset">◇ rollers</button>
       <button id="p-band" class="preset">◇ band</button>
+      <button id="p-colour" class="preset">◇ colour: u·&#969;</button>
     </div>
     <div class="bar" style="border-top:0;padding-top:2px;margin-top:8px">
       <div class="mini"><span>speed</span><input type="range" id="spd" min="0.2" max="3" step="0.1" value="1"><span id="v-spd" style="color:var(--teal)">1.0×</span></div>
@@ -131,8 +132,7 @@
   </div>
 
   <div class="foot">
-    <span class="key"><span class="sw" style="background:var(--teal)"></span>right-handed (u·ω &gt; 0)</span>
-    <span class="key"><span class="sw" style="background:var(--amber)"></span>left-handed (u·ω &lt; 0)</span>
+    <span id="foot-key"><span class="key"><span class="sw" style="background:var(--teal)"></span>right-handed (u·ω &gt; 0)</span> <span class="key"><span class="sw" style="background:var(--amber)"></span>left-handed (u·ω &lt; 0)</span></span>
     <br><br>
     Powered by <code>Helix Noise</code> — the whole field is <code>HelixNoise.create({modes,slope,helicity,coherence,seed})</code>
     and one <code>.sample()</code> call per particle. See <a href="README.md">README.md</a> for the API and how to embed it.
@@ -204,7 +204,8 @@
       }
       var db=(((hd+1.4)/2.8)*3)|0; if(db<0)db=0; if(db>2)db=2; db=2-db;
       field.sampleUW(px[i],py[i],pz[i],uw,ft);
-      var h=uw[0]*uw[3]+uw[1]*uw[4]+uw[2]*uw[5];
+      var h = colourByQ ? field.qCriterion(px[i],py[i],pz[i],ft)
+                        : uw[0]*uw[3]+uw[1]*uw[4]+uw[2]*uw[5];
       var gp=(h>=0?gt:ga)[db], hp=(h>=0?headT:headA)[db];
       for(var j2=1;j2<m;j2++){ if(!prOK[j2])continue; gp.moveTo(prX[j2],prY[j2]); gp.lineTo(prX[j2-1],prY[j2-1]); }
       var hn=Math.min(m,4);
@@ -228,6 +229,8 @@
   var rho=0;
   // Scale-dependent dials (helix-noise presets): when set, they override the plain sliders.
   var scaleMode = null; // null | "rollers" | "band"
+  // Particle colour: helicity density u·ω (handedness) or the Q-criterion (vortex cores).
+  var colourByQ = false;
   function dials(){
     var o = {modes:params.modes, slope:params.slope, helicity:params.heli,
              coherence:params.coh, ellipticity:params.ell, seed:params.seed,
@@ -275,6 +278,13 @@
   $("p-braid").addEventListener("click",function(){preset(0.6,1.6,0.4,0.5);});
   $("p-rollers").addEventListener("click",function(){scaleMode = scaleMode==="rollers"?null:"rollers"; rebuild();});
   $("p-band").addEventListener("click",function(){scaleMode = scaleMode==="band"?null:"band"; rebuild();});
+  $("p-colour").addEventListener("click",function(){
+    colourByQ = !colourByQ;
+    $("p-colour").innerHTML = colourByQ ? "\u25c7 colour: Q" : "\u25c7 colour: u\u00b7\u03c9";
+    $("foot-key").innerHTML = colourByQ
+      ? '<span class="key"><span class="sw" style="background:var(--teal)"></span>vortex core (Q &gt; 0)</span><span class="key"><span class="sw" style="background:var(--amber)"></span>shear layer (Q &lt; 0)</span>'
+      : '<span class="key"><span class="sw" style="background:var(--teal)"></span>right-handed (u&#183;&#969; &gt; 0)</span><span class="key"><span class="sw" style="background:var(--amber)"></span>left-handed (u&#183;&#969; &lt; 0)</span>';
+  });
 
   var lx=0,ly=0,pinchD=0,ptrs=new Map(),stage=$("stage");
   stage.addEventListener("pointerdown",function(e){ptrs.set(e.pointerId,{x:e.clientX,y:e.clientY});stage.setPointerCapture(e.pointerId);

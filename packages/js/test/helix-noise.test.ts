@@ -1274,3 +1274,89 @@ test("compose: rings and a spectral field sum into one divergence-free flow", ()
   const p = rings.sample(1.2, 0, 0.8), m = rings.sample(1.2, 0, -0.8);
   assert.ok(Math.abs(p[2] + m[2]) < 1e-12, "axial flow is antisymmetric about the collision plane");
 });
+
+// ---------------------------------------------------------------------------
+// Velocity gradient and the structure diagnostics built on it
+// ---------------------------------------------------------------------------
+
+test("sampleGrad is the analytic velocity gradient, for every mode type", () => {
+  for (const cfg of [
+    { modes: 16, seed: 3 },
+    { modes: 16, seed: 3, ellipticity: 0.5, helicity: 0.4 },
+    { modes: 16, seed: 3, ellipticity: 0.4, polarizationAxis: [0, 1, 0] as Vec3, polarizationBias: 0.6 },
+  ]) {
+    const f = create(cfg) as unknown as HelixField;
+    const h = 1e-4, g = new Float64Array(9);
+    let gErr = 0, trace = 0, wErr = 0;
+    for (let i = 0; i < 12; i++) {
+      const x = i * 0.61, y = i * 1.13, z = i * 0.37;
+      f.sampleGrad(x, y, z, g);
+      for (let m = 0; m < 3; m++) {
+        const p = [x, y, z], q = [x, y, z];
+        p[m] += h; q[m] -= h;
+        const up = f.sample(p[0], p[1], p[2]), um = f.sample(q[0], q[1], q[2]);
+        for (let n = 0; n < 3; n++) gErr = Math.max(gErr, Math.abs(g[3 * m + n] - (up[n] - um[n]) / (2 * h)));
+      }
+      trace = Math.max(trace, Math.abs(g[0] + g[4] + g[8]));
+      // the antisymmetric part must reproduce the analytic vorticity exactly
+      const w = [g[5] - g[7], g[6] - g[2], g[1] - g[3]];
+      const wa = f.vorticity(x, y, z);
+      for (let c = 0; c < 3; c++) wErr = Math.max(wErr, Math.abs(w[c] - wa[c]));
+    }
+    const label = JSON.stringify(cfg);
+    assert.ok(gErr < 1e-6, `${label}: gradient vs finite differences ${gErr}`);
+    assert.ok(trace < 1e-12, `${label}: trace (= divergence) must be machine zero, got ${trace}`);
+    assert.ok(wErr < 1e-12, `${label}: curl of the gradient must equal the analytic vorticity, off by ${wErr}`);
+  }
+  assert.throws(() => create({ modes: 2 }).sampleGrad(0, 0, 0, [0, 0, 0]), /needs 9 floats/);
+});
+
+test("Q, λ₂ and stretching: known answers and sane behaviour", () => {
+  // A single Beltrami wave balances rotation against strain exactly, and stretches nothing.
+  const one = create({ modes: 1, seed: 3, tileable: true, kmin: 2, kmax: 2, helicity: 1 });
+  assert.ok(Math.abs(one.qCriterion(1, 2, 3)) < 1e-12, "single Beltrami mode has Q = 0");
+  assert.ok(Math.abs(one.stretching(1, 2, 3)) < 1e-12, "and no vortex stretching");
+
+  const f = create({ modes: 40, seed: 7, coherence: 0.6 });
+  let qPos = 0, l2Neg = 0, agree = 0;
+  const n = 2000;
+  for (let i = 0; i < n; i++) {
+    const x = i * 0.13, y = i * 0.29, z = i * 0.07;
+    const q = f.qCriterion(x, y, z), l = f.lambda2(x, y, z);
+    assert.ok(Number.isFinite(q) && Number.isFinite(l), "both are finite everywhere");
+    if (q > 0) qPos++;
+    if (l < 0) l2Neg++;
+    if (q > 0 === l < 0) agree++;
+  }
+  // The two criteria are different measures, but they are measuring the same thing: they should
+  // pick out a substantial fraction of space and mostly agree with each other.
+  assert.ok(qPos / n > 0.2 && qPos / n < 0.8, `Q > 0 fraction ${qPos / n}`);
+  assert.ok(l2Neg / n > 0.2 && l2Neg / n < 0.8, `λ₂ < 0 fraction ${l2Neg / n}`);
+  assert.ok(agree / n > 0.75, `the two criteria should mostly agree (${agree / n})`);
+});
+
+test("glsl({ gradient: true }) emits a gradient matrix matching sampleGrad", () => {
+  const f = create({ modes: 6, seed: 5, ellipticity: 0.5 }) as unknown as HelixField;
+  const src = f.glsl({ name: "gf", gradient: true });
+  assert.ok(src.includes("mat3 gfGrad(vec3 p, float t)"), "emits the gradient");
+  assert.ok(src.includes("float gfQ(vec3 p)"), "and the Q-criterion helper");
+
+  // Evaluate the emitted body the way the shader would.
+  const g = new Float64Array(9);
+  for (const [x, y, z] of [[1, 2, 3], [0.3, 5.1, 2.2]] as const) {
+    f.sampleGrad(x, y, z, g);
+    const G = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+    for (let j = 0; j < f.N; j++) {
+      const phi = f.kx[j] * x + f.ky[j] * y + f.kz[j] * z + f.ph[j];
+      const a = f.a[j], sn = Math.sin(phi), c = Math.cos(phi), chi = f.chi[j];
+      const b = [
+        -a * (sn * f.e1x[j] + c * chi * f.e2x[j]),
+        -a * (sn * f.e1y[j] + c * chi * f.e2y[j]),
+        -a * (sn * f.e1z[j] + c * chi * f.e2z[j]),
+      ];
+      const k = [f.kx[j], f.ky[j], f.kz[j]];
+      for (let m = 0; m < 3; m++) for (let n = 0; n < 3; n++) G[3 * m + n] += k[m] * b[n];
+    }
+    for (let i = 0; i < 9; i++) assert.ok(Math.abs(G[i] * f._scale - g[i]) < 1e-12, `shader gradient entry ${i}`);
+  }
+});

@@ -18,6 +18,34 @@ import type {
 } from "./types";
 
 const _tmp6: number[] = [0, 0, 0, 0, 0, 0];
+const _tmp9: number[] = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+
+/**
+ * Middle eigenvalue of a symmetric 3×3 matrix (row-major), by the closed-form trigonometric
+ * solution of its characteristic cubic — no iteration, no allocation.
+ */
+function eigMid3(m: number[]): number {
+  const p1 = m[1] * m[1] + m[2] * m[2] + m[5] * m[5];
+  const q = (m[0] + m[4] + m[8]) / 3;
+  if (p1 <= 1e-300) { // already diagonal
+    const d = [m[0], m[4], m[8]].sort((a, b) => a - b);
+    return d[1];
+  }
+  const d0 = m[0] - q, d4 = m[4] - q, d8 = m[8] - q;
+  const p2 = d0 * d0 + d4 * d4 + d8 * d8 + 2 * p1;
+  const p = Math.sqrt(p2 / 6);
+  // det((M − qI)/p) / 2, clamped: rounding can push it a hair outside [−1, 1].
+  const b = [d0 / p, m[1] / p, m[2] / p, m[1] / p, d4 / p, m[5] / p, m[2] / p, m[5] / p, d8 / p];
+  const det =
+    b[0] * (b[4] * b[8] - b[5] * b[7]) -
+    b[1] * (b[3] * b[8] - b[5] * b[6]) +
+    b[2] * (b[3] * b[7] - b[4] * b[6]);
+  const r = Math.min(1, Math.max(-1, det / 2));
+  const phi = Math.acos(r) / 3;
+  const e1 = q + 2 * p * Math.cos(phi);            // largest
+  const e3 = q + 2 * p * Math.cos(phi + (2 * Math.PI) / 3); // smallest
+  return 3 * q - e1 - e3;                           // trace − largest − smallest
+}
 
 /**
  * An explicit, RNG-free mode table for closed-form preset fields (e.g. `abc()`).
@@ -666,6 +694,89 @@ export class HelixField implements Field, ModeData {
    * cross-mode terms a finite grid fails to cancel. For a single mode it is exactly `2χ/(1+χ²)`,
    * and under viscous decay it is constant in time when all modes share one `|k|`.
    */
+  /**
+   * Velocity gradient `∂u_n/∂x_m`, analytically — no finite differences. Written row-major into
+   * `out9` as `[∂u/∂x, ∂v/∂x, ∂w/∂x, ∂u/∂y, …]`, i.e. `out9[3m + n] = ∂u_n/∂x_m`.
+   *
+   * This is what the rendering diagnostics are built from: {@link qCriterion} finds vortex cores,
+   * {@link lambda2} finds them the other standard way, and {@link stretching} says whether a
+   * vortex is being spun up or torn apart. Colour particles by any of them.
+   */
+  sampleGrad<T extends Out6>(x: number, y: number, z: number, out9: T, t = 0): T {
+    if (out9.length < 9) throw new Error("helix-noise: sampleGrad needs 9 floats");
+    const N = this.N, sc = this._scale, A = this._amps(t);
+    for (let i = 0; i < 9; i++) out9[i] = 0;
+    const gen = this._general;
+    for (let j = 0; j < N; j++) {
+      const kx = this.kx[j], ky = this.ky[j], kz = this.kz[j];
+      const phi = kx * x + ky * y + kz * z + this.ph[j] + this.om[j] * t;
+      const c = Math.cos(phi), sn = Math.sin(phi), a = A[j];
+      // ∂_m u_n = a·k_m·(−sin φ·e1'_n − cos φ·e2'_n), with e2' = χ·e2 for circular/elliptic modes.
+      const chi = gen ? 1 : this.chi[j];
+      const bx = -a * (sn * this.e1x[j] + c * chi * this.e2x[j]);
+      const by = -a * (sn * this.e1y[j] + c * chi * this.e2y[j]);
+      const bz = -a * (sn * this.e1z[j] + c * chi * this.e2z[j]);
+      out9[0] += kx * bx; out9[1] += kx * by; out9[2] += kx * bz;
+      out9[3] += ky * bx; out9[4] += ky * by; out9[5] += ky * bz;
+      out9[6] += kz * bx; out9[7] += kz * by; out9[8] += kz * bz;
+    }
+    for (let i = 0; i < 9; i++) out9[i] *= sc;
+    return out9;
+  }
+
+  /**
+   * The **Q-criterion**: `Q = ½(|Ω|² − |S|²)`, rotation minus strain. Positive inside vortex
+   * cores, negative in shear layers — the standard way to pick filaments out of a flow, and the
+   * cheapest good thing to colour particles by.
+   */
+  qCriterion(x: number, y: number, z: number, t = 0): number {
+    const g = this.sampleGrad(x, y, z, _tmp9, t);
+    // Q = −½ tr(G²) for divergence-free flow.
+    let tr2 = 0;
+    for (let m = 0; m < 3; m++) for (let n = 0; n < 3; n++) tr2 += g[3 * m + n] * g[3 * n + m];
+    return -0.5 * tr2;
+  }
+
+  /**
+   * The **λ₂ criterion**: the middle eigenvalue of `S² + Ω²`. Negative inside a vortex core.
+   * Stricter than {@link qCriterion} — it ignores swirl that is really just shear.
+   */
+  lambda2(x: number, y: number, z: number, t = 0): number {
+    const g = this.sampleGrad(x, y, z, _tmp9, t);
+    // M = S² + Ω², symmetric; take its middle eigenvalue.
+    const s: number[] = [], o: number[] = [];
+    for (let m = 0; m < 3; m++) for (let n = 0; n < 3; n++) {
+      s[3 * m + n] = 0.5 * (g[3 * m + n] + g[3 * n + m]);
+      o[3 * m + n] = 0.5 * (g[3 * m + n] - g[3 * n + m]);
+    }
+    const M: number[] = [];
+    for (let m = 0; m < 3; m++) for (let n = 0; n < 3; n++) {
+      let v = 0;
+      for (let k = 0; k < 3; k++) v += s[3 * m + k] * s[3 * k + n] + o[3 * m + k] * o[3 * k + n];
+      M[3 * m + n] = v;
+    }
+    return eigMid3(M);
+  }
+
+  /**
+   * Vortex **stretching** `ξ̂·S·ξ̂`: the strain felt along the local vorticity direction.
+   * Positive means the vortex is being spun up (stretched), negative means it is being squashed.
+   * Zero where there is no vorticity to speak of.
+   */
+  stretching(x: number, y: number, z: number, t = 0): number {
+    this.sampleUW(x, y, z, _tmp6, t);
+    const wm = Math.hypot(_tmp6[3], _tmp6[4], _tmp6[5]);
+    if (wm < 1e-300) return 0;
+    const ex = _tmp6[3] / wm, ey = _tmp6[4] / wm, ez = _tmp6[5] / wm;
+    const g = this.sampleGrad(x, y, z, _tmp9, t);
+    const e = [ex, ey, ez];
+    let v = 0;
+    for (let m = 0; m < 3; m++) for (let n = 0; n < 3; n++) {
+      v += e[m] * 0.5 * (g[3 * m + n] + g[3 * n + m]) * e[n];
+    }
+    return v;
+  }
+
   relativeHelicitySpectral(t = 0): number {
     let H = 0, E = 0, Z = 0;
     const gen = this._general;
