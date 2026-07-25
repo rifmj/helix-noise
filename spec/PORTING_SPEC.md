@@ -19,7 +19,7 @@ JS reference to ~1e-12 relative, NOT bit-for-bit. Parity tests must use a tolera
 ```
 TAU  = 2*pi
 GA   = pi * (3 - sqrt(5))     # golden angle (Fibonacci sphere azimuth step)
-VERSION = "1.4.0"
+VERSION = "1.8.0"
 ```
 
 Defaults (every option):
@@ -28,14 +28,16 @@ modes=48, slope=1.6, helicity=0.0, coherence=0.0, kmin=1.0, kmax=6.2,   # helici
                                                                        #   number OR pure (k)->value
 centers=3, amplitude=1.0, tileable=false, seed=1, layout="fibonacci",
 churn=1.0, decay=0.0, anisotropy=0.0, axis=[0,0,1], ellipticity=1.0,
-polarizationAxis=null, polarizationBias=0.0                            # spec 1.2
+polarizationAxis=null, polarizationBias=0.0,                           # spec 1.2
+flutter=0.0                                                            # spec 1.3
 spectrum = optional callable (k:float)->float, no default
 
+PHI           = (1+sqrt(5))/2   # flutter rate multiplier (irrational => never resynchronizes)
 POLAR_SALT    = 0x9E3779B9   # second-stream seed salt (32-bit wrapping add)
 POLAR_DEG_MAX = 0.97         # polarization-degree ball radius (PSD of the 2x2 covariance)
 ```
 
-**Spec version: 1.2** (1.1 adds `ellipticity` and the §10 presets, 1.2 the §4b grain-axis channel; spec-1.0 fields are the `ellipticity=1.0` special case,
+**Spec version: 1.3** (1.1 adds `ellipticity` and the §10 presets, 1.2 the §4b grain-axis channel, 1.3 the §4c flutter harmonic; spec-1.0 fields are the `ellipticity=1.0` special case,
 bit-identical — see the normative shortcut note in §5).
 
 ## 2. mulberry32 (VERIFIED bit-exact — do NOT change the integer ops)
@@ -231,6 +233,24 @@ The folded `e1`/`e2` are no longer orthonormal — that is the point: they carry
 amplitude. Divergence-freedom is untouched (`k . e1 = k . e2 = 0` still holds), so `withBoundary`
 and the potential bakes need no change.
 
+## 4c. Flutter (spec 1.3) — fast temporal decorrelation
+
+A deterministic second harmonic on each mode's phase. No draws, and no effect at `t = 0`.
+
+```
+flutter >= 0                            # radians of phase wobble; 0 = off (skip entirely)
+base    = PHI * rate0 * pow(max(kmax, kmin), 2/3)     # rate0 from §4's time block
+omf[j]  = base * (1 + 0.25*cos(ph[j]))                # per-mode spread, deterministic
+
+# the phase used by EVERY sampler and emitter becomes
+ph_eff[j](t) = ph[j] + flutter * (sin(omf[j]*t + ph[j]) - sin(ph[j]))
+```
+
+The `- sin(ph[j])` term is normative: it makes the harmonic vanish exactly at `t = 0`, so the
+static field is bit-identical to a `flutter = 0` build. The rate is the *finest* scale's eddy rate
+times PHI, so the wobble is faster than any mode's own drift and never resynchronizes with it.
+When `churn = 0`, `rate0 = 0` and flutter is inert — a frozen field stays frozen.
+
 ## 5. Sampling (all take optional time t, default 0)
 
 Amplitude at time t: `A[j] = a[j]` if `nu==0 or t==0`, else `a[j]*exp(-nu*km[j]^2*t)`.
@@ -238,7 +258,7 @@ Amplitude at time t: `A[j] = a[j]` if `nu==0 or t==0`, else `a[j]*exp(-nu*km[j]^
 `sampleUW(x,y,z,t) -> (u[3], w[3])` velocity + vorticity:
 ```
 for each mode j:
-    phi = kx[j]*x + ky[j]*y + kz[j]*z + ph[j] + om[j]*t
+    phi = kx[j]*x + ky[j]*y + kz[j]*z + ph_eff[j](t) + om[j]*t     # ph_eff = ph unless flutter (§4c)
     c=cos(phi); sn=sin(phi)
     t_vec = A[j] * (c*e1[j] - chi[j]*sn*e2[j])          # velocity term (general chi)
     u += t_vec
@@ -332,6 +352,9 @@ vec3 name(vec3 p, float t){ vec3 u=vec3(0.);
 vec3 name(vec3 p){ return name(p,0.0); }
 // optional: nameCurl (w += P_S[j]*length(P_K[j])*tv), namePot (A += (P_S[j]/length(P_K[j]))*tv)
 ```
+
+When `flutter > 0` the emitter also bakes `P_FL` (the amplitude) and `P_OMF[N]` (the rates), and
+every `phi` line gains `+ P_FL * (sin(P_OMF[j]*t + P_PH[j]) - sin(P_PH[j]))`.
 
 `P_S[N]` holds `chi_j = ellipticity*s_j` (continuous; equals the drawn signs when `ellipticity==1`),
 so the velocity body above is already the correct general form with no ABI change. The `nameCurl`

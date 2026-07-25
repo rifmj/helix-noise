@@ -8,7 +8,7 @@ import math
 
 import numpy as np
 
-from ._constants import DEFAULTS, GA, POLAR_DEG_MAX, POLAR_SALT, TAU
+from ._constants import DEFAULTS, GA, PHI, POLAR_DEG_MAX, POLAR_SALT, TAU
 from ._rng import mulberry32
 from .glsl import to_glsl
 
@@ -60,6 +60,10 @@ class HelixField:
 
     #: Set when the grain-axis channel folded a general transverse amplitude into the frame.
     _general = False
+
+    #: Flutter amplitude (radians of phase wobble); 0 = off.
+    _flutter = 0.0
+    omf = None
 
     #: Set when the modes come from a closed-form preset instead of the RNG;
     #: ``set()`` then refuses to regenerate the field.
@@ -299,6 +303,15 @@ class HelixField:
         self.cvx = np.array(cvx)
         self.cvy = np.array(cvy)
         self.cvz = np.array(cvz)
+        # Flutter: a fast second harmonic on each phase, at the finest scale's eddy rate times
+        # the golden ratio -- faster than any mode's own drift and incommensurate with it.
+        self._flutter = max(0.0, p["flutter"])
+        if self._flutter > 0.0:
+            base = PHI * rate0 * math.pow(max(p["kmax"], p["kmin"]), 2.0 / 3.0)
+            self.omf = np.array([base * (1.0 + 0.25 * math.cos(ph[j])) for j in range(N)])
+        else:
+            self.omf = None
+
         self.nu = max(0.0, p["decay"])
         self._polarize()
 
@@ -389,6 +402,15 @@ class HelixField:
 
     # ------------------------------------------------------------ amplitudes
 
+    def _phases(self, t):
+        """Per-mode phases at time t: ``ph`` plus the flutter harmonic.
+
+        Written as ``sin(omf t + ph) - sin(ph)`` so it is exactly zero at ``t = 0``.
+        """
+        if not (self._flutter > 0.0) or t == 0.0:
+            return self.ph
+        return self.ph + self._flutter * (np.sin(self.omf * t + self.ph) - np.sin(self.ph))
+
     def _amps(self, t):
         if not (self.nu > 0) or t == 0:
             return self.a
@@ -401,7 +423,7 @@ class HelixField:
         A = self._amps(t)
         ux = uy = uz = wx = wy = wz = 0.0
         kx, ky, kz, km = self.kx, self.ky, self.kz, self.km
-        ph, om, s, chi = self.ph, self.om, self.s, self.chi
+        ph, om, s, chi = self._phases(t), self.om, self.s, self.chi
         e1x, e1y, e1z = self.e1x, self.e1y, self.e1z
         e2x, e2y, e2z = self.e2x, self.e2y, self.e2z
         beltrami = self._beltrami
@@ -451,7 +473,7 @@ class HelixField:
         A = self._amps(t)
         ux = uy = uz = ax = ay = az = 0.0
         kx, ky, kz, km = self.kx, self.ky, self.kz, self.km
-        ph, om, s, chi = self.ph, self.om, self.s, self.chi
+        ph, om, s, chi = self._phases(t), self.om, self.s, self.chi
         e1x, e1y, e1z = self.e1x, self.e1y, self.e1z
         e2x, e2y, e2z = self.e2x, self.e2y, self.e2z
         beltrami = self._beltrami
@@ -524,7 +546,7 @@ class HelixField:
             pos[:, 0:1] * self.kx
             + pos[:, 1:2] * self.ky
             + pos[:, 2:3] * self.kz
-            + self.ph
+            + self._phases(t)
             + self.om * t
         )
         c = np.cos(phi)

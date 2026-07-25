@@ -3,6 +3,14 @@
 All notable changes to this project are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.5.0]
+
+- **Flutter (spec 1.3)**: `flutter` adds a fast, deterministic second harmonic to each mode's phase
+  — `ph_eff = ph + flutter*(sin(omf*t + ph) - sin(ph))`, which vanishes exactly at `t = 0` and
+  consumes no RNG draws. Rate is the finest scale's eddy rate times PHI, so it never
+  resynchronizes with the churn drift. New `--flutter` CLI flag; all four targets
+  bake `_FL` / `_OMF[]`.
+
 ## [0.4.0]
 
 - **Grain axis (spec 1.2)**: `polarizationAxis` / `polarizationBias` add world-anchored linear

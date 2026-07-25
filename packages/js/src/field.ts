@@ -1,4 +1,4 @@
-import { DEFAULTS, POLAR_DEG_MAX, POLAR_SALT, TAU } from "./constants";
+import { DEFAULTS, PHI, POLAR_DEG_MAX, POLAR_SALT, TAU } from "./constants";
 import { mulberry32 } from "./rng";
 import { toGLSL } from "./glsl";
 import { BoundedFieldImpl } from "./boundary";
@@ -138,6 +138,12 @@ export class HelixField implements Field, ModeData {
   /** Curl frame for general modes: w = A·(cos φ·w1 − sin φ·w2). Allocated only when needed. */
   w1x?: Float64Array; w1y?: Float64Array; w1z?: Float64Array;
   w2x?: Float64Array; w2y?: Float64Array; w2z?: Float64Array;
+  /** Flutter amplitude (radians of phase wobble); 0 = off. @internal */
+  _flutter = 0;
+  /** Per-mode flutter rate — an irrational multiple of the churn rate. @internal */
+  _omf?: Float64Array;
+  private _phT: Float64Array | null = null; // flutter-shifted phase cache, valid at time _tPh
+  private _tPh = NaN;
   /** Bumped on every rebuild — the wasm backend uses it to re-upload mode data. @internal */
   _buildStamp = 0;
   /** Test/bench escape hatch: set true to force the JS batch kernel. @internal */
@@ -328,6 +334,17 @@ export class HelixField implements Field, ModeData {
         lamJ * (this.kx[j] * this.cvx[c] + this.ky[j] * this.cvy[c] + this.kz[j] * this.cvz[c]);
     }
 
+    // Flutter: a fast second harmonic on each phase. Its rate is the finest scale's eddy rate
+    // times the golden ratio, so it is both faster than any mode's own drift and incommensurate
+    // with it — the wobble never collapses into a global pulse.
+    this._flutter = Math.max(0, p.flutter);
+    if (this._flutter > 0) {
+      if (!this._omf || this._omf.length !== N) this._omf = new Float64Array(N);
+      const base = PHI * rate0 * Math.pow(Math.max(p.kmax, p.kmin), 2 / 3);
+      for (let j = 0; j < N; j++) this._omf[j] = base * (1 + 0.25 * Math.cos(this.ph[j]));
+    }
+    this._tPh = NaN;
+
     this.nu = Math.max(0, p.decay);
     this._polarize(); // grain-axis channel (no-op unless polarizationAxis is set)
     this._tAmp = NaN; // invalidate the decayed-amplitude cache
@@ -441,12 +458,31 @@ export class HelixField implements Field, ModeData {
     return this._aT;
   }
 
+  /**
+   * Per-mode phases at time t: `ph` plus the flutter harmonic, which is written as
+   * `sin(ω_f t + ph) − sin(ph)` so it is exactly zero at `t = 0`. Cached per t, like the
+   * decayed amplitudes — recomputed once a frame, not once a sample.
+   */
+  private _phases(t: number): Float64Array {
+    if (!(this._flutter > 0) || t === 0) return this.ph;
+    if (t !== this._tPh || !this._phT || this._phT.length !== this.N) {
+      if (!this._phT || this._phT.length !== this.N) this._phT = new Float64Array(this.N);
+      const f = this._flutter, omf = this._omf!;
+      for (let j = 0; j < this.N; j++) {
+        const p0 = this.ph[j];
+        this._phT[j] = p0 + f * (Math.sin(omf[j] * t + p0) - Math.sin(p0));
+      }
+      this._tPh = t;
+    }
+    return this._phT;
+  }
+
   sampleUW<T extends Out6>(x: number, y: number, z: number, out6: T, t = 0): T {
-    const N = this.N, sc = this._scale, A = this._amps(t);
+    const N = this.N, sc = this._scale, A = this._amps(t), PH = this._phases(t);
     let ux = 0, uy = 0, uz = 0, wx = 0, wy = 0, wz = 0;
     if (this._beltrami) {
       for (let j = 0; j < N; j++) {
-        const phi = this.kx[j] * x + this.ky[j] * y + this.kz[j] * z + this.ph[j] + this.om[j] * t;
+        const phi = this.kx[j] * x + this.ky[j] * y + this.kz[j] * z + PH[j] + this.om[j] * t;
         const c = Math.cos(phi), sn = Math.sin(phi), s = this.s[j], a = A[j];
         const tx = a * (c * this.e1x[j] - s * sn * this.e2x[j]);
         const ty = a * (c * this.e1y[j] - s * sn * this.e2y[j]);
@@ -461,7 +497,7 @@ export class HelixField implements Field, ModeData {
       const w1x = this.w1x!, w1y = this.w1y!, w1z = this.w1z!;
       const w2x = this.w2x!, w2y = this.w2y!, w2z = this.w2z!;
       for (let j = 0; j < N; j++) {
-        const phi = this.kx[j] * x + this.ky[j] * y + this.kz[j] * z + this.ph[j] + this.om[j] * t;
+        const phi = this.kx[j] * x + this.ky[j] * y + this.kz[j] * z + PH[j] + this.om[j] * t;
         const c = Math.cos(phi), sn = Math.sin(phi), a = A[j];
         ux += a * (c * this.e1x[j] - sn * this.e2x[j]);
         uy += a * (c * this.e1y[j] - sn * this.e2y[j]);
@@ -474,7 +510,7 @@ export class HelixField implements Field, ModeData {
       // Elliptic modes: u_j = a(c·e1 − χ·sn·e2), w_j = aκ(χ·c·e1 − sn·e2) — the general two-term
       // curl (the Beltrami shortcut w = sκ·u is only valid at |χ| = 1). Same cos/sin, one extra combine.
       for (let j = 0; j < N; j++) {
-        const phi = this.kx[j] * x + this.ky[j] * y + this.kz[j] * z + this.ph[j] + this.om[j] * t;
+        const phi = this.kx[j] * x + this.ky[j] * y + this.kz[j] * z + PH[j] + this.om[j] * t;
         const c = Math.cos(phi), sn = Math.sin(phi), xi = this.chi[j], a = A[j];
         const e1x = this.e1x[j], e1y = this.e1y[j], e1z = this.e1z[j];
         const e2x = this.e2x[j], e2y = this.e2y[j], e2z = this.e2z[j];
@@ -490,11 +526,11 @@ export class HelixField implements Field, ModeData {
   }
 
   sampleUA<T extends Out6>(x: number, y: number, z: number, out6: T, t = 0): T {
-    const N = this.N, sc = this._scale, A = this._amps(t);
+    const N = this.N, sc = this._scale, A = this._amps(t), PH = this._phases(t);
     let ux = 0, uy = 0, uz = 0, ax = 0, ay = 0, az = 0;
     if (this._beltrami) {
       for (let j = 0; j < N; j++) {
-        const phi = this.kx[j] * x + this.ky[j] * y + this.kz[j] * z + this.ph[j] + this.om[j] * t;
+        const phi = this.kx[j] * x + this.ky[j] * y + this.kz[j] * z + PH[j] + this.om[j] * t;
         const c = Math.cos(phi), sn = Math.sin(phi), s = this.s[j], a = A[j];
         const tx = a * (c * this.e1x[j] - s * sn * this.e2x[j]);
         const ty = a * (c * this.e1y[j] - s * sn * this.e2y[j]);
@@ -508,7 +544,7 @@ export class HelixField implements Field, ModeData {
       const w1x = this.w1x!, w1y = this.w1y!, w1z = this.w1z!;
       const w2x = this.w2x!, w2y = this.w2y!, w2z = this.w2z!;
       for (let j = 0; j < N; j++) {
-        const phi = this.kx[j] * x + this.ky[j] * y + this.kz[j] * z + this.ph[j] + this.om[j] * t;
+        const phi = this.kx[j] * x + this.ky[j] * y + this.kz[j] * z + PH[j] + this.om[j] * t;
         const c = Math.cos(phi), sn = Math.sin(phi), a = A[j];
         ux += a * (c * this.e1x[j] - sn * this.e2x[j]);
         uy += a * (c * this.e1y[j] - sn * this.e2y[j]);
@@ -521,7 +557,7 @@ export class HelixField implements Field, ModeData {
     } else {
       // A_j = w_j/κ² = (a/κ)(χ·c·e1 − sn·e2) — same Coulomb gauge, ∇×A_j = u_j for every χ.
       for (let j = 0; j < N; j++) {
-        const phi = this.kx[j] * x + this.ky[j] * y + this.kz[j] * z + this.ph[j] + this.om[j] * t;
+        const phi = this.kx[j] * x + this.ky[j] * y + this.kz[j] * z + PH[j] + this.om[j] * t;
         const c = Math.cos(phi), sn = Math.sin(phi), xi = this.chi[j], a = A[j];
         const e1x = this.e1x[j], e1y = this.e1y[j], e1z = this.e1z[j];
         const e2x = this.e2x[j], e2y = this.e2y[j], e2z = this.e2z[j];
@@ -580,8 +616,8 @@ export class HelixField implements Field, ModeData {
     const n = (pos.length / 3) | 0;
     const st = uw ? 6 : 3;
     if (out.length < st * n) throw new Error(`helix-noise: out needs ${st * n} floats, got ${out.length}`);
-    const N = this.N, sc = this._scale, A = this._amps(t);
-    if (!this._noWasm && n >= 64 && runWasm(this, A, pos, out, t, uw, sc)) return;
+    const N = this.N, sc = this._scale, A = this._amps(t), PHA = this._phases(t);
+    if (!this._noWasm && n >= 64 && runWasm(this, A, PHA, pos, out, t, uw, sc)) return;
     if (!this._tile) this._tile = new Float64Array(TILE * 6);
     const acc = this._tile;
     const bel = this._beltrami;
@@ -592,7 +628,7 @@ export class HelixField implements Field, ModeData {
         const kx = this.kx[j], ky = this.ky[j], kz = this.kz[j];
         // Keep the exact + association of the scalar path (… + ph, then + om·t), so batch
         // phases are bit-identical to sampleUW even when |k·x| is large.
-        const ph = this.ph[j], omt = this.om[j] * t, s = this.s[j], a = A[j];
+        const ph = PHA[j], omt = this.om[j] * t, s = this.s[j], a = A[j];
         // Fold amplitude and chirality into the mode's frame once per (mode, tile). At ε = 1
         // (χ = s) this reproduces the legacy fold exactly.
         const b1x = a * this.e1x[j], b1y = a * this.e1y[j], b1z = a * this.e1z[j];
@@ -704,12 +740,12 @@ export class HelixField implements Field, ModeData {
    */
   sampleGrad<T extends Out6>(x: number, y: number, z: number, out9: T, t = 0): T {
     if (out9.length < 9) throw new Error("helix-noise: sampleGrad needs 9 floats");
-    const N = this.N, sc = this._scale, A = this._amps(t);
+    const N = this.N, sc = this._scale, A = this._amps(t), PH = this._phases(t);
     for (let i = 0; i < 9; i++) out9[i] = 0;
     const gen = this._general;
     for (let j = 0; j < N; j++) {
       const kx = this.kx[j], ky = this.ky[j], kz = this.kz[j];
-      const phi = kx * x + ky * y + kz * z + this.ph[j] + this.om[j] * t;
+      const phi = kx * x + ky * y + kz * z + PH[j] + this.om[j] * t;
       const c = Math.cos(phi), sn = Math.sin(phi), a = A[j];
       // ∂_m u_n = a·k_m·(−sin φ·e1'_n − cos φ·e2'_n), with e2' = χ·e2 for circular/elliptic modes.
       const chi = gen ? 1 : this.chi[j];

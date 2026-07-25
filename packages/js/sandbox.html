@@ -103,6 +103,11 @@
         <div class="kpoles"><span>sheets</span><span>tubes</span></div>
       </div>
       <div>
+        <div class="kh"><span class="kname">Flutter</span><span class="kval" id="v-flut">0.00</span></div>
+        <input type="range" id="flut" min="0" max="1.2" step="0.02" value="0">
+        <div class="kpoles"><span>smooth drift</span><span>shimmer</span></div>
+      </div>
+      <div>
         <div class="kh"><span class="kname">Grain along y — d</span><span class="kval" id="v-grain">0.00</span></div>
         <input type="range" id="grain" min="0" max="0.95" step="0.01" value="0">
         <div class="kpoles"><span>no grain</span><span>combed</span></div>
@@ -145,7 +150,7 @@
   var TAU = 2*Math.PI;
   var $=function(id){return document.getElementById(id);};
   var cv=$("cv"), ctx=cv.getContext("2d",{alpha:false});
-  var params={heli:0.7, slope:1.6, coh:0.45, ell:1, grain:0, modes:48, seed:7};
+  var params={heli:0.7, slope:1.6, coh:0.45, ell:1, grain:0, flut:0, modes:48, seed:7};
   var SPEED=1, ZOOM=1;
   var field = HelixNoise.create({modes:params.modes, slope:params.slope, helicity:params.heli, coherence:params.coh, ellipticity:params.ell, seed:params.seed});
 
@@ -235,7 +240,8 @@
     var o = {modes:params.modes, slope:params.slope, helicity:params.heli,
              coherence:params.coh, ellipticity:params.ell, seed:params.seed,
              spectrum:null, kmin:1, kmax:6.2,
-             polarizationAxis: params.grain>0 ? [0,1,0] : null, polarizationBias: params.grain};
+             polarizationAxis: params.grain>0 ? [0,1,0] : null, polarizationBias: params.grain,
+             flutter: params.flut};
     if(scaleMode==="rollers"){ o.coherence = HelixNoise.rolloff(4); o.kmax = 10; }
     if(scaleMode==="band"){ o.spectrum = HelixNoise.shellPeak(3.2); o.kmin = 1; o.kmax = 6.2; }
     return o;
@@ -254,6 +260,7 @@
   bind("coh","coh",function(v){return Math.round(v*100)+"%";},true);
   bind("ell","ell",function(v){return v.toFixed(2);},true);
   bind("grain","grain",function(v){return v.toFixed(2);},true);
+  bind("flut","flut",function(v){return v.toFixed(2);},true);
   $("modes").addEventListener("input",function(e){params.modes=parseInt(e.target.value,10);$("v-modes").textContent=params.modes;rebuild();});
   $("spd").addEventListener("input",function(e){SPEED=parseFloat(e.target.value);$("v-spd").textContent=SPEED.toFixed(1)+"×";});
   function setZoom(z){ZOOM=Math.max(0.6,Math.min(2.6,z));$("zm").value=ZOOM;$("v-zm").textContent=(Math.round(ZOOM*20)/20).toFixed(2).replace(/(\.\d)0$/,"$1")+"×";}
@@ -266,7 +273,7 @@
   function preset(h,s,c,e){
     if(e===undefined)e=1;
     scaleMode = null;
-    params.heli=h;params.slope=s;params.coh=c;params.ell=e;params.grain=0;$("grain").value=0;$("v-grain").textContent="0.00";
+    params.heli=h;params.slope=s;params.coh=c;params.ell=e;params.grain=0;$("grain").value=0;$("v-grain").textContent="0.00";params.flut=0;$("flut").value=0;$("v-flut").textContent="0.00";
     $("heli").value=h;$("slope").value=s;$("coh").value=c;$("ell").value=e;
     $("v-heli").textContent=(h>0?"+":"")+h.toFixed(2);$("v-slope").textContent=s.toFixed(1);$("v-coh").textContent=Math.round(c*100)+"%";$("v-ell").textContent=e.toFixed(2);
     rebuild();

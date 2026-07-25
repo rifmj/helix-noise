@@ -3,6 +3,13 @@
 All notable changes to this project are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.7.0]
+
+- **Flutter (spec 1.3)**: `flutter` adds a fast, deterministic second harmonic to each mode's phase
+  — `ph_eff = ph + flutter*(sin(omf*t + ph) - sin(ph))`, which vanishes exactly at `t = 0` and
+  consumes no RNG draws. Rate is the finest scale's eddy rate times PHI, so it never
+  resynchronizes with the churn drift. Fixture gains `R_flutter`.
+
 ## [0.6.0]
 
 - **Preset bundles**: `exact_ns` (single-shell Beltrami + exact Stokes decay — a true Navier-Stokes

@@ -101,6 +101,7 @@ Returns a [`Field`](#field). All options are optional — sensible defaults are 
 | Option | Type | Default | What it does |
 |---|---|---|---|
 | `churn` | `number` | `1` | How fast the field evolves over time. `0` freezes it. Fine detail flickers faster than big structures. Has no effect at `t = 0`. |
+| `flutter` | `number` | `0` | Fast **shimmer** on top of the smooth drift: real flow does not just advect, a good part of the local strain fluctuates far faster than an eddy turns over. In radians of phase — `0.3` flickers, `1` is agitated. No effect at `t = 0`, and `churn: 0` still freezes everything. |
 | `decay` | `number` | `0` | Optional viscosity: the field gently fades over time as if it were a real, slowly-dissipating fluid. `0` = never fades. |
 
 **Advanced shaping:**

@@ -103,6 +103,9 @@ fn build_from_config(cfg: &Value) -> HelixField {
     if let Some(v) = m.get("polarizationBias") {
         o.polarization_bias = v.as_f64().unwrap();
     }
+    if let Some(v) = m.get("flutter") {
+        o.flutter = v.as_f64().unwrap();
+    }
     if let Some(v) = m.get("ellipticity") {
         o.ellipticity = v.as_f64().unwrap();
     }
@@ -149,6 +152,7 @@ fn spectral_configs_match_fixture() {
         "N_helicity_k",
         "O_shellpeak",
         "Q_grain",
+        "R_flutter",
     ] {
         let entry = &root[name];
         let f = build_from_config(&entry["config"]);

@@ -185,12 +185,23 @@ pub fn to_glsl(f: &HelixField, opts: &GlslOptions) -> String {
     l.push(format!("const float {pfx}S[{n}] = {};", fa(&f.chi)));
     // P_S carries chi = ellipticity*s. The curl/potential shortcuts below are Beltrami-only;
     // emit them iff every |chi| == 1 (then the text is byte-identical to spec 1.0 output).
+    let flut = f.flutter > 0.0;
+    let phase = format!("dot({pfx}K[j], p) + {pfx}PH[j] + {pfx}OM[j] * t")
+        + &(if flut {
+            format!(" + {pfx}FL * (sin({pfx}OMF[j] * t + {pfx}PH[j]) - sin({pfx}PH[j]))")
+        } else {
+            String::new()
+        });
     let general = f.general;
     let beltrami = !general && f.chi.iter().all(|x| x.abs() == 1.0);
     l.push(format!("const float {pfx}A[{n}] = {};", fa(&f.a)));
     l.push(format!("const float {pfx}PH[{n}] = {};", fa(&f.ph)));
     l.push(format!("const float {pfx}OM[{n}] = {};", fa(&f.om)));
     l.push(format!("const float {pfx}SCALE = {};", fl(f.scale, pr)));
+    if flut {
+        l.push(format!("const float {pfx}FL = {};", fl(f.flutter, pr)));
+        l.push(format!("const float {pfx}OMF[{n}] = {};", fa(&f.omf)));
+    }
     if decay {
         l.push(format!("const float {pfx}NU = {};", fl(f.nu, pr)));
     }
@@ -199,7 +210,7 @@ pub fn to_glsl(f: &HelixField, opts: &GlslOptions) -> String {
     l.push("  vec3 u = vec3(0.0);".to_string());
     l.push(format!("  for (int j = 0; j < {pfx}N; j++) {{"));
     l.push(format!(
-        "    float phi = dot({pfx}K[j], p) + {pfx}PH[j] + {pfx}OM[j] * t;"
+        "    float phi = {phase};"
     ));
     l.push(format!(
         "    u += ({amp}) * (cos(phi) * {pfx}E1[j] - {pfx}S[j] * sin(phi) * {pfx}E2[j]);"
@@ -215,7 +226,7 @@ pub fn to_glsl(f: &HelixField, opts: &GlslOptions) -> String {
         l.push("  vec3 w = vec3(0.0);".to_string());
         l.push(format!("  for (int j = 0; j < {pfx}N; j++) {{"));
         l.push(format!(
-            "    float phi = dot({pfx}K[j], p) + {pfx}PH[j] + {pfx}OM[j] * t;"
+            "    float phi = {phase};"
         ));
         if beltrami {
             l.push(format!(
@@ -248,7 +259,7 @@ pub fn to_glsl(f: &HelixField, opts: &GlslOptions) -> String {
         l.push("  vec3 A = vec3(0.0);".to_string());
         l.push(format!("  for (int j = 0; j < {pfx}N; j++) {{"));
         l.push(format!(
-            "    float phi = dot({pfx}K[j], p) + {pfx}PH[j] + {pfx}OM[j] * t;"
+            "    float phi = {phase};"
         ));
         if beltrami {
             l.push(format!(

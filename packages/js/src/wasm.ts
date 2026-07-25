@@ -93,6 +93,7 @@ function ensure(k: Kernel, N: number, nPts: number): void {
 export function runWasm(
   field: ModeData & { _buildStamp: number; _beltrami: boolean },
   amps: Float64Array,
+  phases: Float64Array,
   pos: ArrayLike<number>,
   out: Out6,
   t: number,
@@ -113,12 +114,15 @@ export function runWasm(
   // the same stride — otherwise a field with fewer modes than a previous one reads stale data.
   if (owner !== field || ownerStamp !== field._buildStamp) {
     for (let ai = 0; ai < ARRS.length; ai++) {
-      const src = ARRS[ai] === "a" ? amps : (field[ARRS[ai]] as Float64Array);
+      const src =
+        ARRS[ai] === "a" ? amps : ARRS[ai] === "ph" ? phases : (field[ARRS[ai]] as Float64Array);
       m.set(src, (mdO >> 3) + ai * N);
     }
     owner = field; ownerStamp = field._buildStamp;
-  } else if (amps !== field.a) {
-    m.set(amps, (mdO >> 3) + 6 * N); // decay active: refresh amplitudes only
+  } else {
+    // Decay and flutter both make a slot time-dependent; refresh just those.
+    if (amps !== field.a) m.set(amps, (mdO >> 3) + 6 * N);
+    if (phases !== field.ph) m.set(phases, (mdO >> 3) + 3 * N);
   }
 
   // transpose positions to SoA, tracking the phase bound

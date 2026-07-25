@@ -27,10 +27,11 @@ from decimal import Decimal, ROUND_HALF_UP
 
 TAU = 2.0 * math.pi
 GA = math.pi * (3.0 - math.sqrt(5.0))  # golden angle
+PHI = (1.0 + math.sqrt(5.0)) / 2.0
 POLAR_SALT = 0x9E3779B9
 POLAR_DEG_MAX = 0.97
 
-VERSION = "1.4.0"
+VERSION = "1.8.0"
 
 
 # ---------------------------------------------------------------------------
@@ -146,6 +147,7 @@ DEFAULTS = {
     "axis": (0.0, 0.0, 1.0),
     "polarizationAxis": None,
     "polarizationBias": 0.0,
+    "flutter": 0.0,
     "ellipticity": 1.0,
     "spectrum": None,
 }
@@ -315,6 +317,14 @@ class HelixField:
         self.chi = chi
         self.e1x, self.e1y, self.e1z = e1x, e1y, e1z
         self.e2x, self.e2y, self.e2z = e2x, e2y, e2z
+        # Flutter: a fast second harmonic on each phase (spec 4c).
+        self._flutter = max(0.0, p["flutter"])
+        if self._flutter > 0.0:
+            base = PHI * rate0 * math.pow(max(p["kmax"], p["kmin"]), 2.0 / 3.0)
+            self.omf = [base * (1.0 + 0.25 * math.cos(ph[j])) for j in range(N)]
+        else:
+            self.omf = None
+
         self.nu = max(0.0, p["decay"])
         self._polarize()
         self._scale = 1.0
@@ -401,10 +411,17 @@ class HelixField:
             return self.a[j]
         return self.a[j] * math.exp(-self.nu * self.km[j] * self.km[j] * t)
 
+    def _phase(self, j, t):
+        """Phase of mode j at time t: baked phase + churn drift + flutter (zero at t = 0)."""
+        p0 = self.ph[j]
+        if getattr(self, "_flutter", 0.0) > 0.0 and t != 0.0:
+            return p0 + self._flutter * (math.sin(self.omf[j] * t + p0) - math.sin(p0))
+        return p0
+
     def sample_uw(self, x, y, z, t=0.0):
         ux = uy = uz = wx = wy = wz = 0.0
         for j in range(self.N):
-            phi = self.kx[j] * x + self.ky[j] * y + self.kz[j] * z + self.ph[j] + self.om[j] * t
+            phi = self.kx[j] * x + self.ky[j] * y + self.kz[j] * z + self._phase(j, t) + self.om[j] * t
             c = math.cos(phi)
             sn = math.sin(phi)
             a = self._amp(j, t)
@@ -524,6 +541,9 @@ def emit_glsl(f, name="helixNoise", pr=7, curl=True, pot=False):
         return "float[%d](%s)" % (N, ",".join(col))
 
     amp = ("%sA[j] * exp(-%sNU * dot(%sK[j], %sK[j]) * t)" % (P, P, P, P)) if decay else "%sA[j]" % P
+    flut = getattr(f, "_flutter", 0.0) > 0.0
+    ph_expr = ("dot(%sK[j], p) + %sPH[j] + %sOM[j] * t" % (P, P, P)) + (
+        " + %sFL * (sin(%sOMF[j] * t + %sPH[j]) - sin(%sPH[j]))" % (P, P, P, P) if flut else "")
 
     L = [
         "// Helix Noise — generated GLSL (GLSL ES 3.00 / WebGL2). Divergence-free velocity field.",
@@ -538,6 +558,8 @@ def emit_glsl(f, name="helixNoise", pr=7, curl=True, pot=False):
         "const float %sPH[%d] = %s;" % (P, N, fa(PH)),
         "const float %sOM[%d] = %s;" % (P, N, fa(OM)),
         "const float %sSCALE = %s;" % (P, fl(f._scale, pr)),
+        *( ["const float %sFL = %s;" % (P, fl(f._flutter, pr)),
+            "const float %sOMF[%d] = %s;" % (P, N, fa([fl(v, pr) for v in f.omf]))] if flut else [] ),
     ]
     if decay:
         L.append("const float %sNU = %s;" % (P, fl(f.nu, pr)))
@@ -546,7 +568,7 @@ def emit_glsl(f, name="helixNoise", pr=7, curl=True, pot=False):
         "vec3 %s(vec3 p, float t) {" % name,
         "  vec3 u = vec3(0.0);",
         "  for (int j = 0; j < %sN; j++) {" % P,
-        "    float phi = dot(%sK[j], p) + %sPH[j] + %sOM[j] * t;" % (P, P, P),
+        "    float phi = %s;" % ph_expr,
         "    u += (%s) * (cos(phi) * %sE1[j] - %sS[j] * sin(phi) * %sE2[j]);" % (amp, P, P, P),
         "  }",
         "  return u * %sSCALE;" % P,
@@ -559,7 +581,7 @@ def emit_glsl(f, name="helixNoise", pr=7, curl=True, pot=False):
             "vec3 %sCurl(vec3 p, float t) {" % name,
             "  vec3 w = vec3(0.0);",
             "  for (int j = 0; j < %sN; j++) {" % P,
-            "    float phi = dot(%sK[j], p) + %sPH[j] + %sOM[j] * t;" % (P, P, P),
+            "    float phi = %s;" % ph_expr,
             *(["    vec3 tv = (%s) * (cos(phi) * %sE1[j] - %sS[j] * sin(phi) * %sE2[j]);" % (amp, P, P, P),
                "    w += %sS[j] * length(%sK[j]) * tv;" % (P, P)] if f._beltrami else
               ["    vec3 tv2 = (%s) * (-sin(phi) * %sE1[j] - cos(phi) * %sE2[j]);" % (amp, P, P),
@@ -577,7 +599,7 @@ def emit_glsl(f, name="helixNoise", pr=7, curl=True, pot=False):
             "vec3 %sPot(vec3 p, float t) {" % name,
             "  vec3 A = vec3(0.0);",
             "  for (int j = 0; j < %sN; j++) {" % P,
-            "    float phi = dot(%sK[j], p) + %sPH[j] + %sOM[j] * t;" % (P, P, P),
+            "    float phi = %s;" % ph_expr,
             *(["    vec3 tv = (%s) * (cos(phi) * %sE1[j] - %sS[j] * sin(phi) * %sE2[j]);" % (amp, P, P, P),
                "    A += (%sS[j] / length(%sK[j])) * tv;" % (P, P)] if f._beltrami else
               ["    vec3 tv2 = (%s) * (-sin(phi) * %sE1[j] - cos(phi) * %sE2[j]);" % (amp, P, P),
@@ -606,6 +628,9 @@ def emit_hlsl(f, name="helixNoise", pr=7, curl=True, pot=False):
         return "{ %s }" % (", ".join(col))
 
     amp = ("%sA[j] * exp(-%sNU * dot(%sK[j], %sK[j]) * t)" % (P, P, P, P)) if decay else "%sA[j]" % P
+    flut = getattr(f, "_flutter", 0.0) > 0.0
+    ph_expr = ("dot(%sK[j], p) + %sPH[j] + %sOM[j] * t" % (P, P, P)) + (
+        " + %sFL * (sin(%sOMF[j] * t + %sPH[j]) - sin(%sPH[j]))" % (P, P, P, P) if flut else "")
 
     L = [
         "// Helix Noise — generated HLSL (Unity / Unreal). Divergence-free velocity field.",
@@ -627,7 +652,7 @@ def emit_hlsl(f, name="helixNoise", pr=7, curl=True, pot=False):
         "float3 %s(float3 p, float t) {" % name,
         "  float3 u = float3(0.0, 0.0, 0.0);",
         "  [loop] for (int j = 0; j < %sN; j++) {" % P,
-        "    float phi = dot(%sK[j], p) + %sPH[j] + %sOM[j] * t;" % (P, P, P),
+        "    float phi = %s;" % ph_expr,
         "    u += (%s) * (cos(phi) * %sE1[j] - %sS[j] * sin(phi) * %sE2[j]);" % (amp, P, P, P),
         "  }",
         "  return u * %sSCALE;" % P,
@@ -640,7 +665,7 @@ def emit_hlsl(f, name="helixNoise", pr=7, curl=True, pot=False):
             "float3 %sCurl(float3 p, float t) {" % name,
             "  float3 w = float3(0.0, 0.0, 0.0);",
             "  [loop] for (int j = 0; j < %sN; j++) {" % P,
-            "    float phi = dot(%sK[j], p) + %sPH[j] + %sOM[j] * t;" % (P, P, P),
+            "    float phi = %s;" % ph_expr,
             *(["    float3 tv = (%s) * (cos(phi) * %sE1[j] - %sS[j] * sin(phi) * %sE2[j]);" % (amp, P, P, P),
                "    w += %sS[j] * length(%sK[j]) * tv;" % (P, P)] if f._beltrami else
               ["    float3 tv2 = (%s) * (-sin(phi) * %sE1[j] - cos(phi) * %sE2[j]);" % (amp, P, P),
@@ -658,7 +683,7 @@ def emit_hlsl(f, name="helixNoise", pr=7, curl=True, pot=False):
             "float3 %sPot(float3 p, float t) {" % name,
             "  float3 A = float3(0.0, 0.0, 0.0);",
             "  [loop] for (int j = 0; j < %sN; j++) {" % P,
-            "    float phi = dot(%sK[j], p) + %sPH[j] + %sOM[j] * t;" % (P, P, P),
+            "    float phi = %s;" % ph_expr,
             *(["    float3 tv = (%s) * (cos(phi) * %sE1[j] - %sS[j] * sin(phi) * %sE2[j]);" % (amp, P, P, P),
                "    A += (%sS[j] / length(%sK[j])) * tv;" % (P, P)] if f._beltrami else
               ["    float3 tv2 = (%s) * (-sin(phi) * %sE1[j] - cos(phi) * %sE2[j]);" % (amp, P, P),
@@ -687,6 +712,9 @@ def emit_wgsl(f, name="helixNoise", pr=7, curl=True, pot=False):
         return "array<f32, %d>(%s)" % (N, ", ".join(col))
 
     amp = ("%sA[j] * exp(-%sNU * dot(%sK[j], %sK[j]) * t)" % (P, P, P, P)) if decay else "%sA[j]" % P
+    flut = getattr(f, "_flutter", 0.0) > 0.0
+    ph_expr = ("dot(%sK[j], p) + %sPH[j] + %sOM[j] * t" % (P, P, P)) + (
+        " + %sFL * (sin(%sOMF[j] * t + %sPH[j]) - sin(%sPH[j]))" % (P, P, P, P) if flut else "")
 
     L = [
         "// Helix Noise — generated WGSL (WebGPU). Divergence-free velocity field.",
@@ -708,7 +736,7 @@ def emit_wgsl(f, name="helixNoise", pr=7, curl=True, pot=False):
         "fn %s(p: vec3f, t: f32) -> vec3f {" % name,
         "  var u = vec3f(0.0);",
         "  for (var j: i32 = 0; j < %sN; j = j + 1) {" % P,
-        "    let phi = dot(%sK[j], p) + %sPH[j] + %sOM[j] * t;" % (P, P, P),
+        "    let phi = %s;" % ph_expr,
         "    u = u + (%s) * (cos(phi) * %sE1[j] - %sS[j] * sin(phi) * %sE2[j]);" % (amp, P, P, P),
         "  }",
         "  return u * %sSCALE;" % P,
@@ -721,7 +749,7 @@ def emit_wgsl(f, name="helixNoise", pr=7, curl=True, pot=False):
             "fn %sCurl(p: vec3f, t: f32) -> vec3f {" % name,
             "  var w = vec3f(0.0);",
             "  for (var j: i32 = 0; j < %sN; j = j + 1) {" % P,
-            "    let phi = dot(%sK[j], p) + %sPH[j] + %sOM[j] * t;" % (P, P, P),
+            "    let phi = %s;" % ph_expr,
             *(["    let tv = (%s) * (cos(phi) * %sE1[j] - %sS[j] * sin(phi) * %sE2[j]);" % (amp, P, P, P),
                "    w = w + %sS[j] * length(%sK[j]) * tv;" % (P, P)] if f._beltrami else
               ["    let tv2 = (%s) * (-sin(phi) * %sE1[j] - cos(phi) * %sE2[j]);" % (amp, P, P),
@@ -739,7 +767,7 @@ def emit_wgsl(f, name="helixNoise", pr=7, curl=True, pot=False):
             "fn %sPot(p: vec3f, t: f32) -> vec3f {" % name,
             "  var a = vec3f(0.0);",
             "  for (var j: i32 = 0; j < %sN; j = j + 1) {" % P,
-            "    let phi = dot(%sK[j], p) + %sPH[j] + %sOM[j] * t;" % (P, P, P),
+            "    let phi = %s;" % ph_expr,
             *(["    let tv = (%s) * (cos(phi) * %sE1[j] - %sS[j] * sin(phi) * %sE2[j]);" % (amp, P, P, P),
                "    a = a + (%sS[j] / length(%sK[j])) * tv;" % (P, P)] if f._beltrami else
               ["    let tv2 = (%s) * (-sin(phi) * %sE1[j] - cos(phi) * %sE2[j]);" % (amp, P, P),
@@ -768,6 +796,9 @@ def emit_godot(f, name="helixNoise", pr=7, curl=True, pot=False):
         return "const float[%d] %s = {%s};" % (N, "%s", ", ".join(col))
 
     amp = ("%sA[j] * exp(-%sNU * dot(%sK[j], %sK[j]) * t)" % (P, P, P, P)) if decay else "%sA[j]" % P
+    flut = getattr(f, "_flutter", 0.0) > 0.0
+    ph_expr = ("dot(%sK[j], p) + %sPH[j] + %sOM[j] * t" % (P, P, P)) + (
+        " + %sFL * (sin(%sOMF[j] * t + %sPH[j]) - sin(%sPH[j]))" % (P, P, P, P) if flut else "")
 
     L = [
         "// Helix Noise — generated Godot shader include (.gdshader). Divergence-free velocity field.",
@@ -781,6 +812,8 @@ def emit_godot(f, name="helixNoise", pr=7, curl=True, pot=False):
         fa(PH) % ("%sPH" % P),
         fa(OM) % ("%sOM" % P),
         "const float %sSCALE = %s;" % (P, fl(f._scale, pr)),
+        *( ["const float %sFL = %s;" % (P, fl(f._flutter, pr)),
+            "const float %sOMF[%d] = %s;" % (P, N, fa([fl(v, pr) for v in f.omf]))] if flut else [] ),
     ]
     if decay:
         L.append("const float %sNU = %s;" % (P, fl(f.nu, pr)))
@@ -789,7 +822,7 @@ def emit_godot(f, name="helixNoise", pr=7, curl=True, pot=False):
         "vec3 %s(vec3 p, float t) {" % name,
         "  vec3 u = vec3(0.0);",
         "  for (int j = 0; j < %sN; j++) {" % P,
-        "    float phi = dot(%sK[j], p) + %sPH[j] + %sOM[j] * t;" % (P, P, P),
+        "    float phi = %s;" % ph_expr,
         "    u += (%s) * (cos(phi) * %sE1[j] - %sS[j] * sin(phi) * %sE2[j]);" % (amp, P, P, P),
         "  }",
         "  return u * %sSCALE;" % P,
@@ -802,7 +835,7 @@ def emit_godot(f, name="helixNoise", pr=7, curl=True, pot=False):
             "vec3 %sCurl(vec3 p, float t) {" % name,
             "  vec3 w = vec3(0.0);",
             "  for (int j = 0; j < %sN; j++) {" % P,
-            "    float phi = dot(%sK[j], p) + %sPH[j] + %sOM[j] * t;" % (P, P, P),
+            "    float phi = %s;" % ph_expr,
             *(["    vec3 tv = (%s) * (cos(phi) * %sE1[j] - %sS[j] * sin(phi) * %sE2[j]);" % (amp, P, P, P),
                "    w += %sS[j] * length(%sK[j]) * tv;" % (P, P)] if f._beltrami else
               ["    vec3 tv2 = (%s) * (-sin(phi) * %sE1[j] - cos(phi) * %sE2[j]);" % (amp, P, P),
@@ -820,7 +853,7 @@ def emit_godot(f, name="helixNoise", pr=7, curl=True, pot=False):
             "vec3 %sPot(vec3 p, float t) {" % name,
             "  vec3 A = vec3(0.0);",
             "  for (int j = 0; j < %sN; j++) {" % P,
-            "    float phi = dot(%sK[j], p) + %sPH[j] + %sOM[j] * t;" % (P, P, P),
+            "    float phi = %s;" % ph_expr,
             *(["    vec3 tv = (%s) * (cos(phi) * %sE1[j] - %sS[j] * sin(phi) * %sE2[j]);" % (amp, P, P, P),
                "    A += (%sS[j] / length(%sK[j])) * tv;" % (P, P)] if f._beltrami else
               ["    vec3 tv2 = (%s) * (-sin(phi) * %sE1[j] - cos(phi) * %sE2[j]);" % (amp, P, P),
@@ -883,6 +916,7 @@ def build_field_from_args(args):
         slope=args.slope,
         helicity=parse_preset(args.helicity_preset) or args.helicity,
         ellipticity=args.ellipticity,
+        flutter=args.flutter,
         coherence=parse_preset(args.coherence_preset) or args.coherence,
         kmin=args.kmin,
         kmax=args.kmax,
@@ -930,6 +964,8 @@ def make_parser():
                     help="named coherence preset, e.g. rolloff:4")
     ap.add_argument("--helicity-preset", default=None, metavar="NAME:ARGS",
                     help="named helicity preset, e.g. condensate:3,1,-1")
+    ap.add_argument("--flutter", type=float, default=0.0,
+                    help="fast deterministic phase wobble on top of the churn drift (default: 0)")
     ap.add_argument("--polarization-axis", default=None, metavar="X,Y,Z",
                     help="world grain axis for linear polarization, e.g. 0,1,0 (off by default)")
     ap.add_argument("--polarization-bias", type=float, default=0.0,

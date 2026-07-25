@@ -25,6 +25,8 @@ const CONFIGS = {
   // Grain axis (spec 1.2): the second RNG stream folds a general transverse amplitude into the
   // frame, so this config also pins the cross-product curl/potential path.
   Q_grain: { modes: 6, seed: 9, ellipticity: 0.4, polarizationAxis: [0, 1, 0], polarizationBias: 0.6 },
+  // Flutter (spec 1.3): a second phase harmonic that vanishes at t = 0 — the t = 0.5 samples pin it.
+  R_flutter: { modes: 6, seed: 4, flutter: 0.5, churn: 1 },
 };
 
 const POINTS = [

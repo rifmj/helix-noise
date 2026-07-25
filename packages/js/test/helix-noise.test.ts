@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert";
 import HelixNoise, { create, createAtoms, HelixField, abc, twoScale, shellPeak, rolloff, condensate, C_TWO_SCALE, exactNS, nsDeveloped, nsForced, NS_TARGETS, createRing, collidingRings, compose, ringSpeed } from "../src/index";
-import type { Vec3, FlowField } from "../src/types";
+import type { Vec3, FlowField, Field } from "../src/types";
 import { runWasm } from "../src/wasm";
 
 const TAU = 2 * Math.PI;
@@ -212,7 +212,7 @@ test("wasm SIMD kernel equals the JS batch kernel (forced side-by-side)", () => 
   const t = 0.8;
   const amps = (f as unknown as { _amps(t: number): Float64Array })._amps(t);
   const viaWasm = new Float64Array(6 * n);
-  const ran = runWasm(f, amps, pos, viaWasm, t, true, f._scale);
+  const ran = runWasm(f, amps, f.ph, pos, viaWasm, t, true, f._scale);
   assert.ok(ran, "wasm kernel should be available on Node 20+ (SIMD)");
   const viaJS = new Float64Array(6 * n);
   f._noWasm = true;
@@ -759,7 +759,7 @@ test("ellipticity: batch kernels match the scalar sampler at eps ≠ 1 (wasm fal
 
   // The wasm backend must decline uw batches when the modes are not Beltrami.
   const out = new Float64Array(6 * n);
-  const ok = runWasm(f as unknown as HelixField, (f as unknown as HelixField).a, pos, out, t, true, 1);
+  const ok = runWasm(f as unknown as HelixField, (f as unknown as HelixField).a, (f as unknown as HelixField).ph, pos, out, t, true, 1);
   assert.equal(ok, false, "runWasm declines the elliptic vorticity path");
 });
 
@@ -1358,5 +1358,78 @@ test("glsl({ gradient: true }) emits a gradient matrix matching sampleGrad", () 
       for (let m = 0; m < 3; m++) for (let n = 0; n < 3; n++) G[3 * m + n] += k[m] * b[n];
     }
     for (let i = 0; i < 9; i++) assert.ok(Math.abs(G[i] * f._scale - g[i]) < 1e-12, `shader gradient entry ${i}`);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Flutter — fast temporal decorrelation on top of the smooth churn
+// ---------------------------------------------------------------------------
+
+test("flutter: t = 0 is untouched, and no RNG draws are consumed", () => {
+  const a = create({ modes: 16, seed: 5 }) as unknown as HelixField;
+  const b = create({ modes: 16, seed: 5, flutter: 0.8 }) as unknown as HelixField;
+  for (const k of ["kx", "ky", "kz", "km", "s", "chi", "a", "ph", "om"] as const) {
+    for (let j = 0; j < 16; j++) assert.equal(a[k][j], b[k][j], `${k}[${j}]: the layout must not move`);
+  }
+  assert.equal(a._scale, b._scale, "and neither must the normalization");
+  for (let i = 0; i < 12; i++) {
+    const x = i * 0.7, y = i * 1.3, z = i * 0.4;
+    const u = a.sample(x, y, z), v = b.sample(x, y, z);
+    for (let c = 0; c < 3; c++) assert.equal(u[c], v[c], "the static field is bit-identical");
+  }
+});
+
+test("flutter: the field decorrelates faster than churn alone", () => {
+  const corr = (f: Field, dt: number): number => {
+    let num = 0, na = 0, nb = 0;
+    for (let i = 0; i < 300; i++) {
+      const x = i * 0.31, y = i * 0.57, z = i * 0.13;
+      const u = f.sample(x, y, z, 0), v = f.sample(x, y, z, dt);
+      for (let c = 0; c < 3; c++) { num += u[c] * v[c]; na += u[c] * u[c]; nb += v[c] * v[c]; }
+    }
+    return num / Math.sqrt(na * nb);
+  };
+  const base = create({ modes: 48, seed: 3 });
+  const flut = create({ modes: 48, seed: 3, flutter: 0.6 });
+  for (const dt of [0.05, 0.1]) {
+    assert.ok(corr(flut, dt) < corr(base, dt), `dt=${dt}: flutter must decorrelate faster`);
+  }
+  // churn = 0 freezes the field completely — flutter rides the churn rate, so it stops too.
+  const frozen = create({ modes: 12, seed: 3, churn: 0, flutter: 1 });
+  const p0 = frozen.sample(1, 2, 3, 0), p9 = frozen.sample(1, 2, 3, 9);
+  for (let c = 0; c < 3; c++) assert.equal(p0[c], p9[c], "churn 0 still freezes everything");
+});
+
+test("flutter: batch kernels and the emitted GLSL carry the same phase", () => {
+  const f = create({ modes: 32, seed: 9, flutter: 0.5 }) as unknown as HelixField;
+  const n = 300, pos = new Float64Array(3 * n).map((_, i) => Math.sin(i * 1.7) * 3);
+  const t = 0.4;
+  const many = f.sampleMany(pos, undefined, t), o = [0, 0, 0, 0, 0, 0];
+  let e = 0;
+  for (let i = 0; i < n; i++) {
+    f.sampleUW(pos[3 * i], pos[3 * i + 1], pos[3 * i + 2], o, t);
+    for (let c = 0; c < 3; c++) e = Math.max(e, Math.abs(many[3 * i + c] - o[c]));
+  }
+  assert.ok(e < 1e-12, `batch vs scalar with flutter: ${e}`);
+
+  const g = create({ modes: 6, seed: 4, flutter: 0.5 }) as unknown as HelixField;
+  const src = g.glsl({ name: "fl" });
+  assert.ok(src.includes("fl_FL"), "bakes the flutter amplitude");
+  assert.ok(src.includes("fl_OMF["), "bakes the per-mode flutter rates");
+  for (const tt of [0, 0.4]) {
+    for (const [x, y, z] of [[1, 2, 3], [0.3, 5.1, 2.2]] as const) {
+      const u = [0, 0, 0];
+      for (let j = 0; j < g.N; j++) {
+        const p0 = g.ph[j];
+        const phi = g.kx[j] * x + g.ky[j] * y + g.kz[j] * z + p0 + g.om[j] * tt +
+          (g._flutter as number) * (Math.sin((g._omf as Float64Array)[j] * tt + p0) - Math.sin(p0));
+        const c = Math.cos(phi), s = Math.sin(phi), a = g.a[j], ch = g.chi[j];
+        u[0] += a * (c * g.e1x[j] - ch * s * g.e2x[j]);
+        u[1] += a * (c * g.e1y[j] - ch * s * g.e2y[j]);
+        u[2] += a * (c * g.e1z[j] - ch * s * g.e2z[j]);
+      }
+      const U = g.sample(x, y, z, tt);
+      for (let i = 0; i < 3; i++) assert.ok(Math.abs(u[i] * g._scale - U[i]) < 1e-12, `shader phase at t=${tt}`);
+    }
   }
 });

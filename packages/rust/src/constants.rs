@@ -16,6 +16,9 @@ pub fn ga() -> f64 {
 
 /// Library version string, mirroring the reference package.
 /// Seed salt for the polarization channel's second RNG stream (32-bit wrapping add).
+/// Golden ratio — the flutter harmonic's rate multiplier (never resynchronizes with churn).
+pub const PHI: f64 = 1.618_033_988_749_894_9;
+
 pub const POLAR_SALT: u32 = 0x9E37_79B9;
 /// Polarization-degree ball radius: `sqrt(d^2 + chi^2)` is clamped to this (PSD of the covariance).
 pub const POLAR_DEG_MAX: f64 = 0.97;
@@ -130,6 +133,9 @@ pub struct HelixOptions {
     pub polarization_axis: Option<[f64; 3]>,
     /// Linear-polarization strength `d` in `[0, 0.95]` along `polarization_axis`.
     pub polarization_bias: f64,
+    /// Temporal flutter >= 0: a fast, deterministic phase wobble on top of the churn drift.
+    /// Vanishes exactly at `t = 0` and consumes no RNG draws.
+    pub flutter: f64,
 }
 
 impl Default for HelixOptions {
@@ -156,6 +162,7 @@ impl Default for HelixOptions {
             helicity_fn: None,
             polarization_axis: None,
             polarization_bias: 0.0,
+            flutter: 0.0,
         }
     }
 }
@@ -184,6 +191,7 @@ impl fmt::Debug for HelixOptions {
             .field("helicity_fn", &self.helicity_fn.as_ref().map(|_| "<fn>"))
             .field("polarization_axis", &self.polarization_axis)
             .field("polarization_bias", &self.polarization_bias)
+            .field("flutter", &self.flutter)
             .finish()
     }
 }

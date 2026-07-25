@@ -88,6 +88,17 @@ export interface HelixNoiseOptions {
    */
   polarizationBias?: number;
   /**
+   * Temporal **flutter** ≥ 0: a fast, deterministic wobble added to each wave's phase, on top of
+   * the smooth drift `churn` already gives it. Real turbulence does not just advect — a good part
+   * of the local strain fluctuates on a timescale far shorter than an eddy turnover, and this is
+   * the knob for that shimmer. In radians of phase; `0.3` is a visible flicker, `1` is agitated.
+   *
+   * The wobble is a second harmonic at an irrational multiple of the churn rate, so it never
+   * resynchronizes into a pulse, and it is written to vanish exactly at `t = 0` — like `churn`,
+   * it never changes the static field. Consumes no RNG draws.
+   */
+  flutter?: number;
+  /**
    * Polarization ellipticity ε ∈ [0, 1] (clamped): per-mode chirality χ = ε·s, where s = ±1 is the
    * helicity-biased sign. `1` (default) = circular/Beltrami modes — tubes & corkscrews, the classic
    * engine, bit-identical. `0` = linearly polarized modes — sheets & jets, zero helicity.
@@ -330,6 +341,10 @@ export interface ModeData {
    * curl and potential must use the cross-product form instead of any circular shortcut.
    */
   _general?: boolean;
+  /** Flutter amplitude (radians of phase wobble); 0 = off. */
+  _flutter?: number;
+  /** Per-mode flutter rate, baked alongside the phases when flutter is on. */
+  _omf?: Float64Array;
   /** Per-mode phase rate (rad per unit time): eddy churn + coherent sweep. */
   om: Float64Array;
   /** Viscous decay rate ν (amplitudes ∝ e^(−νk²t)); 0 = none. */

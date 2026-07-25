@@ -90,8 +90,15 @@ def to_glsl(f, name="helixNoise", precision=7, curl=True, potential=False):
         "const float {P}OM[{N}] = {v};".format(P=P, N=N, v=fa(f.om)),
         "const float {P}SCALE = {v};".format(P=P, v=_fl(f._scale, pr)),
     ]
+    flut = getattr(f, "_flutter", 0.0) > 0.0
+    phase = "dot({P}K[j], p) + {P}PH[j] + {P}OM[j] * t".format(P=P) + (
+        " + {P}FL * (sin({P}OMF[j] * t + {P}PH[j]) - sin({P}PH[j]))".format(P=P) if flut else ""
+    )
     if decay:
         L.append("const float {P}NU = {v};".format(P=P, v=_fl(f.nu, pr)))
+    if flut:
+        L.append("const float {P}FL = {v};".format(P=P, v=_fl(f._flutter, pr)))
+        L.append("const float {P}OMF[{N}] = {v};".format(P=P, N=N, v=fa(f.omf)))
     # P_S carries chi = ellipticity*s. The curl/potential shortcuts below are Beltrami-only;
     # emit them iff every |chi| == 1 (then the text is byte-identical to spec 1.0 output).
     general = getattr(f, "_general", False)
@@ -101,7 +108,7 @@ def to_glsl(f, name="helixNoise", precision=7, curl=True, potential=False):
         "vec3 {name}(vec3 p, float t) {{".format(name=name),
         "  vec3 u = vec3(0.0);",
         "  for (int j = 0; j < {P}N; j++) {{".format(P=P),
-        "    float phi = dot({P}K[j], p) + {P}PH[j] + {P}OM[j] * t;".format(P=P),
+        "    float phi = {ph};".format(ph=phase),
         "    u += ({amp}) * (cos(phi) * {P}E1[j] - {P}S[j] * sin(phi) * {P}E2[j]);".format(
             amp=amp, P=P
         ),
@@ -116,7 +123,7 @@ def to_glsl(f, name="helixNoise", precision=7, curl=True, potential=False):
             "vec3 {name}Curl(vec3 p, float t) {{".format(name=name),
             "  vec3 w = vec3(0.0);",
             "  for (int j = 0; j < {P}N; j++) {{".format(P=P),
-            "    float phi = dot({P}K[j], p) + {P}PH[j] + {P}OM[j] * t;".format(P=P),
+            "    float phi = {ph};".format(ph=phase),
         ] + ([
             "    vec3 tv = ({amp}) * (cos(phi) * {P}E1[j] - {P}S[j] * sin(phi) * {P}E2[j]);".format(
                 amp=amp, P=P
@@ -146,7 +153,7 @@ def to_glsl(f, name="helixNoise", precision=7, curl=True, potential=False):
             "vec3 {name}Pot(vec3 p, float t) {{".format(name=name),
             "  vec3 A = vec3(0.0);",
             "  for (int j = 0; j < {P}N; j++) {{".format(P=P),
-            "    float phi = dot({P}K[j], p) + {P}PH[j] + {P}OM[j] * t;".format(P=P),
+            "    float phi = {ph};".format(ph=phase),
         ] + ([
             "    vec3 tv = ({amp}) * (cos(phi) * {P}E1[j] - {P}S[j] * sin(phi) * {P}E2[j]);".format(
                 amp=amp, P=P

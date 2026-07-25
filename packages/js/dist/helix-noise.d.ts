@@ -87,6 +87,17 @@ interface HelixNoiseOptions {
      */
     polarizationBias?: number;
     /**
+     * Temporal **flutter** ≥ 0: a fast, deterministic wobble added to each wave's phase, on top of
+     * the smooth drift `churn` already gives it. Real turbulence does not just advect — a good part
+     * of the local strain fluctuates on a timescale far shorter than an eddy turnover, and this is
+     * the knob for that shimmer. In radians of phase; `0.3` is a visible flicker, `1` is agitated.
+     *
+     * The wobble is a second harmonic at an irrational multiple of the churn rate, so it never
+     * resynchronizes into a pulse, and it is written to vanish exactly at `t = 0` — like `churn`,
+     * it never changes the static field. Consumes no RNG draws.
+     */
+    flutter?: number;
+    /**
      * Polarization ellipticity ε ∈ [0, 1] (clamped): per-mode chirality χ = ε·s, where s = ±1 is the
      * helicity-biased sign. `1` (default) = circular/Beltrami modes — tubes & corkscrews, the classic
      * engine, bit-identical. `0` = linearly polarized modes — sheets & jets, zero helicity.
@@ -323,6 +334,10 @@ interface ModeData {
      * curl and potential must use the cross-product form instead of any circular shortcut.
      */
     _general?: boolean;
+    /** Flutter amplitude (radians of phase wobble); 0 = off. */
+    _flutter?: number;
+    /** Per-mode flutter rate, baked alongside the phases when flutter is on. */
+    _omf?: Float64Array;
     /** Per-mode phase rate (rad per unit time): eddy churn + coherent sweep. */
     om: Float64Array;
     /** Viscous decay rate ν (amplitudes ∝ e^(−νk²t)); 0 = none. */
@@ -387,6 +402,12 @@ declare class HelixField implements Field, ModeData {
     w2x?: Float64Array;
     w2y?: Float64Array;
     w2z?: Float64Array;
+    /** Flutter amplitude (radians of phase wobble); 0 = off. @internal */
+    _flutter: number;
+    /** Per-mode flutter rate — an irrational multiple of the churn rate. @internal */
+    _omf?: Float64Array;
+    private _phT;
+    private _tPh;
     /** Bumped on every rebuild — the wasm backend uses it to re-upload mode data. @internal */
     _buildStamp: number;
     /** Test/bench escape hatch: set true to force the JS batch kernel. @internal */
@@ -419,6 +440,12 @@ declare class HelixField implements Field, ModeData {
     private _allocGeneral;
     /** Mode amplitudes at time t: a·e^(−νk²t), cached per t (recomputed once per frame, not per sample). */
     private _amps;
+    /**
+     * Per-mode phases at time t: `ph` plus the flutter harmonic, which is written as
+     * `sin(ω_f t + ph) − sin(ph)` so it is exactly zero at `t = 0`. Cached per t, like the
+     * decayed amplitudes — recomputed once a frame, not once a sample.
+     */
+    private _phases;
     sampleUW<T extends Out6>(x: number, y: number, z: number, out6: T, t?: number): T;
     sampleUA<T extends Out6>(x: number, y: number, z: number, out6: T, t?: number): T;
     sample(x: number, y: number, z: number, t?: number): Vec3;
@@ -716,7 +743,7 @@ declare function create(options?: HelixNoiseOptions): Field;
 /** Create a sparse-atom field: broadband, infinite, amortized O(1), spatially-varying params. */
 declare function createAtoms(options?: HelixAtomsOptions): AtomField;
 /** Library version. */
-declare const version = "1.7.0";
+declare const version = "1.8.0";
 /** Run the built-in validation (transversality, divergence, helicity tracking). */
 declare function selfTest(): SelfTestReport;
 /** Default export: the Helix Noise namespace (`HelixNoise.create(...)`). */

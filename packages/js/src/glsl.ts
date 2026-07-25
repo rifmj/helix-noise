@@ -44,6 +44,12 @@ export function toGLSL(f: ModeData, opts: GlslOptions = {}): string {
 
   // Amplitude at time t: baked a_j, optionally with the viscous factor e^(-nu k^2 t).
   const amp = decay ? `${P}A[j] * exp(-${P}NU * dot(${P}K[j], ${P}K[j]) * t)` : `${P}A[j]`;
+  // Phase at time t: the baked phase, the churn drift, and (when on) the flutter harmonic —
+  // written so it vanishes exactly at t = 0, matching the CPU sampler.
+  const flut = (f._flutter ?? 0) > 0;
+  const phase =
+    `dot(${P}K[j], p) + ${P}PH[j] + ${P}OM[j] * t` +
+    (flut ? ` + ${P}FL * (sin(${P}OMF[j] * t + ${P}PH[j]) - sin(${P}PH[j]))` : "");
 
   const L: string[] = [
     "// Helix Noise — generated GLSL (GLSL ES 3.00 / WebGL2). Divergence-free velocity field.",
@@ -58,11 +64,22 @@ export function toGLSL(f: ModeData, opts: GlslOptions = {}): string {
     `const float ${P}OM[${N}] = ${fa("om")};`,
     `const float ${P}SCALE = ${fl(f._scale, pr)};`,
     ...(decay ? [`const float ${P}NU = ${fl(f.nu, pr)};`] : []),
+    ...(flut
+      ? [
+          `const float ${P}FL = ${fl(f._flutter as number, pr)};`,
+          `const float ${P}OMF[${N}] = ${((): string => {
+            const arr = f._omf as Float64Array;
+            const parts: string[] = [];
+            for (let j = 0; j < N; j++) parts.push(fl(arr[j], pr));
+            return `float[${N}](${parts.join(",")})`;
+          })()};`,
+        ]
+      : []),
     "",
     `vec3 ${name}(vec3 p, float t) {`,
     "  vec3 u = vec3(0.0);",
     `  for (int j = 0; j < ${P}N; j++) {`,
-    `    float phi = dot(${P}K[j], p) + ${P}PH[j] + ${P}OM[j] * t;`,
+    `    float phi = ${phase};`,
     `    u += (${amp}) * (cos(phi) * ${P}E1[j] - ${P}S[j] * sin(phi) * ${P}E2[j]);`,
     "  }",
     `  return u * ${P}SCALE;`,
@@ -75,7 +92,7 @@ export function toGLSL(f: ModeData, opts: GlslOptions = {}): string {
       `vec3 ${name}Curl(vec3 p, float t) {`,
       "  vec3 w = vec3(0.0);",
       `  for (int j = 0; j < ${P}N; j++) {`,
-      `    float phi = dot(${P}K[j], p) + ${P}PH[j] + ${P}OM[j] * t;`,
+      `    float phi = ${phase};`,
       ...(beltrami
         ? [
             `    vec3 tv = (${amp}) * (cos(phi) * ${P}E1[j] - ${P}S[j] * sin(phi) * ${P}E2[j]);`,
@@ -108,7 +125,7 @@ export function toGLSL(f: ModeData, opts: GlslOptions = {}): string {
       `mat3 ${name}Grad(vec3 p, float t) {`,
       "  mat3 G = mat3(0.0);",
       `  for (int j = 0; j < ${P}N; j++) {`,
-      `    float phi = dot(${P}K[j], p) + ${P}PH[j] + ${P}OM[j] * t;`,
+      `    float phi = ${phase};`,
       `    vec3 b = -(${amp}) * (sin(phi) * ${P}E1[j] + cos(phi) * (${e2c}));`,
       `    G[0] += ${P}K[j].x * b; G[1] += ${P}K[j].y * b; G[2] += ${P}K[j].z * b;`,
       "  }",
@@ -134,7 +151,7 @@ export function toGLSL(f: ModeData, opts: GlslOptions = {}): string {
       `vec3 ${name}Pot(vec3 p, float t) {`,
       "  vec3 A = vec3(0.0);",
       `  for (int j = 0; j < ${P}N; j++) {`,
-      `    float phi = dot(${P}K[j], p) + ${P}PH[j] + ${P}OM[j] * t;`,
+      `    float phi = ${phase};`,
       ...(beltrami
         ? [
             `    vec3 tv = (${amp}) * (cos(phi) * ${P}E1[j] - ${P}S[j] * sin(phi) * ${P}E2[j]);`,

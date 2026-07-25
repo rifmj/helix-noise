@@ -3,6 +3,27 @@
 All notable changes to this project are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [1.8.0]
+
+### Added
+
+- **`flutter`** — fast temporal decorrelation. `churn` drifts the field smoothly; real flow also
+  shimmers, with a good part of the local strain fluctuating far faster than an eddy turns over.
+  This adds that: a second phase harmonic per wave, at the finest scale's eddy rate times the
+  golden ratio, so it is faster than any wave's own drift and never resynchronizes into a global
+  pulse. In radians — `0.3` flickers, `1` is agitated.
+
+### Notes
+
+- Written as `sin(ω_f t + ph) − sin(ph)`, so it vanishes *exactly* at `t = 0`: the static field
+  stays bit-identical, as it must (this is the same contract `churn` has). Consumes no RNG draws.
+- `churn: 0` still freezes the field completely — flutter rides the churn rate, so it stops too.
+- The phases are cached per frame like the decayed amplitudes, so the cost is per-frame, not
+  per-sample, and the wasm batch path keeps working by uploading the shifted phases.
+- Emitted GLSL bakes `<name>_FL` and `<name>_OMF[]` and carries the same phase, so the GPU path
+  shimmers identically. Ported to Python, Rust and all four shader targets; new fixture config
+  `R_flutter`, whose `t = 0.5` samples are what pin it.
+
 ## [1.7.0]
 
 ### Added

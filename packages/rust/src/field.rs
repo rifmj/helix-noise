@@ -2,7 +2,7 @@
 //! evaluatable analytically at any point in space and time.
 
 use crate::boundary::BoundedField;
-use crate::constants::{ga, HelixOptions, Layout, POLAR_DEG_MAX, POLAR_SALT, TAU};
+use crate::constants::{ga, HelixOptions, Layout, PHI, POLAR_DEG_MAX, POLAR_SALT, TAU};
 use crate::glsl::{to_glsl, GlslOptions};
 use crate::rng::Mulberry32;
 
@@ -88,6 +88,10 @@ pub struct ModeSnapshot {
     pub scale: f64,
     /// True when the grain-axis channel folded a general transverse amplitude into the frame.
     pub general: bool,
+    /// Flutter amplitude (radians of phase wobble); 0 = off.
+    pub flutter: f64,
+    /// Per-mode flutter rate (empty when flutter is off).
+    pub omf: Vec<f64>,
 }
 
 /// A divergence-free helical flow field, evaluatable grid-free as an analytic sum of Beltrami
@@ -120,6 +124,10 @@ pub struct HelixField {
     pub(crate) beltrami: bool,
     /// True when the grain-axis channel folded a general transverse amplitude into the frame.
     pub(crate) general: bool,
+    /// Flutter amplitude (radians of phase wobble); 0 = off.
+    pub(crate) flutter: f64,
+    /// Per-mode flutter rate.
+    pub(crate) omf: Vec<f64>,
     /// Curl frame for general modes: `w = a*(cos(phi)*w1 - sin(phi)*w2)`.
     pub(crate) w1: Vec<[f64; 3]>,
     pub(crate) w2: Vec<[f64; 3]>,
@@ -153,6 +161,8 @@ impl HelixField {
             scale: 1.0,
             beltrami: true,
             general: false,
+            flutter: 0.0,
+            omf: Vec::new(),
             w1: Vec::new(),
             w2: Vec::new(),
             fixed: false,
@@ -244,6 +254,8 @@ impl HelixField {
             nu: self.nu,
             scale: self.scale,
             general: self.general,
+            flutter: self.flutter,
+            omf: self.omf.clone(),
         }
     }
 
@@ -427,6 +439,16 @@ impl HelixField {
                 - lam_j * (self.kx[j] * cvx[c] + self.ky[j] * cvy[c] + self.kz[j] * cvz[c]);
         }
 
+        // Flutter: a fast second harmonic on each phase, at the finest scale's eddy rate times
+        // the golden ratio — faster than any mode's own drift and incommensurate with it.
+        self.flutter = p.flutter.max(0.0);
+        if self.flutter > 0.0 {
+            let base = PHI * rate0 * p.kmax.max(p.kmin).powf(2.0 / 3.0);
+            self.omf = (0..n).map(|j| base * (1.0 + 0.25 * self.ph[j].cos())).collect();
+        } else {
+            self.omf = Vec::new();
+        }
+
         self.nu = p.decay.max(0.0);
         let amp = if p.amplitude != 0.0 { p.amplitude } else { 1.0 };
         self.polarize(); // grain-axis channel (no-op unless polarization_axis is set)
@@ -551,7 +573,7 @@ impl HelixField {
         let (mut ux, mut uy, mut uz) = (0.0, 0.0, 0.0);
         let (mut wx, mut wy, mut wz) = (0.0, 0.0, 0.0);
         for j in 0..self.n {
-            let phi = self.kx[j] * x + self.ky[j] * y + self.kz[j] * z + self.ph[j] + self.om[j] * t;
+            let phi = self.kx[j] * x + self.ky[j] * y + self.kz[j] * z + self.phase_at(j, t) + self.om[j] * t;
             let c = phi.cos();
             let sn = phi.sin();
             let a = self.amp_at(j, t);
@@ -590,6 +612,18 @@ impl HelixField {
             }
         }
         ([ux * sc, uy * sc, uz * sc], [wx * sc, wy * sc, wz * sc])
+    }
+
+    /// Phase of mode `j` at time `t`: the baked phase, the churn drift, and (when on) the flutter
+    /// harmonic — written so it is exactly zero at `t = 0`.
+    #[inline]
+    fn phase_at(&self, j: usize, t: f64) -> f64 {
+        if self.flutter > 0.0 && t != 0.0 {
+            let p0 = self.ph[j];
+            p0 + self.flutter * ((self.omf[j] * t + p0).sin() - p0.sin())
+        } else {
+            self.ph[j]
+        }
     }
 
     /// Relative helicity straight from the mode arrays — no grid at all.
@@ -637,7 +671,7 @@ impl HelixField {
         let (mut ux, mut uy, mut uz) = (0.0, 0.0, 0.0);
         let (mut ax, mut ay, mut az) = (0.0, 0.0, 0.0);
         for j in 0..self.n {
-            let phi = self.kx[j] * x + self.ky[j] * y + self.kz[j] * z + self.ph[j] + self.om[j] * t;
+            let phi = self.kx[j] * x + self.ky[j] * y + self.kz[j] * z + self.phase_at(j, t) + self.om[j] * t;
             let c = phi.cos();
             let sn = phi.sin();
             let a = self.amp_at(j, t);

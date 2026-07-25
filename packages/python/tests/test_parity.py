@@ -36,6 +36,7 @@ MODE_CONFIGS = [
     "N_helicity_k",
     "O_shellpeak",
     "Q_grain",
+    "R_flutter",
 ]
 
 # Callable options travel in the fixture as {"$preset": name, "args": [...]} descriptors.

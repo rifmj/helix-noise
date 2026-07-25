@@ -184,7 +184,9 @@ def parse_glsl_constants(glsl):
     OM = float_array("OM")
     SCALE = scalar("SCALE")
     NU = scalar("NU")
-    return dict(K=K, E1=E1, E2=E2, S=S, A=A, PH=PH, OM=OM, SCALE=SCALE, NU=NU)
+    FL = scalar("FL")
+    OMF = float_array("OMF") if "helixNoise_OMF[" in glsl else None
+    return dict(K=K, E1=E1, E2=E2, S=S, A=A, PH=PH, OM=OM, SCALE=SCALE, NU=NU, FL=FL, OMF=OMF)
 
 
 def eval_field(consts, x, y, z, t, mode="beltrami"):
@@ -200,12 +202,16 @@ def eval_field(consts, x, y, z, t, mode="beltrami"):
     )
     scale = consts["SCALE"]
     nu = consts["NU"]
+    flr = consts.get("FL")
+    omf = consts.get("OMF")
     u = [0.0, 0.0, 0.0]
     w = [0.0, 0.0, 0.0]
     apot = [0.0, 0.0, 0.0]
     for j in range(len(K)):
         kx, ky, kz = K[j]
         phi = kx * x + ky * y + kz * z + PH[j] + OM[j] * t
+        if flr is not None and omf is not None and t != 0.0:
+            phi += flr * (math.sin(omf[j] * t + PH[j]) - math.sin(PH[j]))
         amp = A[j]
         if nu is not None and nu > 0.0 and t != 0.0:
             amp = A[j] * math.exp(-nu * (kx * kx + ky * ky + kz * kz) * t)
@@ -287,6 +293,7 @@ def test_preset_configs():
         ("P_abc", ["--abc", "1.5,1.0,0.5"]),
         ("Q_grain", ["--modes", "6", "--seed", "9", "--ellipticity", "0.4",
                      "--polarization-axis", "0,1,0", "--polarization-bias", "0.6"], "general"),
+        ("R_flutter", ["--modes", "6", "--seed", "4", "--flutter", "0.5", "--churn", "1"]),
     ]
     for case in cases:
         label, extra = case[0], case[1]
