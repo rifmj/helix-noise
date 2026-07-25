@@ -12,9 +12,9 @@ const OUT = new URL("../assets/", import.meta.url);
 fs.mkdirSync(OUT, { recursive: true });
 
 // ---------- field → grid, and shared drawing helpers ----------
-function grid(f, w, h) {
+function grid(f, w, h, t = 0) {
   const U = new Float32Array(w * h), V = new Float32Array(w * h), H = new Float32Array(w * h), o = [0, 0, 0, 0, 0, 0];
-  for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) { f.sampleUW((i / w) * TAU, (j / h) * TAU, 0, o); const k = j * w + i; U[k] = o[0]; V[k] = o[1]; H[k] = o[0] * o[3] + o[1] * o[4] + o[2] * o[5]; }
+  for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) { f.sampleUW((i / w) * TAU, (j / h) * TAU, 0, o, t); const k = j * w + i; U[k] = o[0]; V[k] = o[1]; H[k] = o[0] * o[3] + o[1] * o[4] + o[2] * o[5]; }
   return { w, h, U, V, H };
 }
 const gbil = (G, A, x, y) => {
@@ -227,14 +227,38 @@ console.log("rendering assets…");
 // particle animation) — not here, so `npm run assets` never overwrites it.
 
 // knob-sweep GIFs — same seed, one dial animates; you watch the field morph
-function sweep(name, param, a, b) {
+function sweep(name, param, a, b, extra = {}) {
   const w = 480, h = 200, vals = pingpong(a, b, 12), frames = [];
-  for (const val of vals) { const opts = { modes: 34, slope: 1.5, helicity: 0.7, coherence: 0.5, seed: 5, [param]: val }; frames.push(rgbToRGBA(flowU8(grid(create(opts), w, h), w, h, { particles: 2400, steps: 36, seed: 2 }), w, h)); }
+  for (const val of vals) { const opts = { modes: 34, slope: 1.5, helicity: 0.7, coherence: 0.5, seed: 5, ...extra, [param]: val }; frames.push(rgbToRGBA(flowU8(grid(create(opts), w, h), w, h, { particles: 2400, steps: 36, seed: 2 }), w, h)); }
   saveGIF(name, w, h, frames, 75, 128);
 }
 sweep("knob-helicity.gif", "helicity", -1, 1);
 sweep("knob-coherence.gif", "coherence", 0, 1);
 sweep("knob-spectrum.gif", "slope", 2.6, 1.0);
+sweep("knob-ellipticity.gif", "ellipticity", 1, 0);
+// The grain needs room: a fully circular field is already at the polarization-degree ceiling, so
+// the linear channel would be clamped almost to nothing. Lower ellipticity opens the ball.
+sweep("knob-grain.gif", "polarizationBias", 0, 0.9, { ellipticity: 0.35, polarizationAxis: [0, 1, 0] });
+
+// knob-flutter.gif — flutter is a *time* effect (it vanishes at t = 0), so sweeping it as a dial
+// would show nothing honest. Instead: two fields side by side, identical but for flutter, with
+// TIME advancing. Left drifts smoothly on churn alone; right also shimmers.
+{
+  const pw = 300, ph = 200, gap = 6, W = pw * 2 + gap, H = ph, N = 16;
+  const base = { modes: 34, slope: 1.5, helicity: 0.7, coherence: 0.5, seed: 5 };
+  const calm = create({ ...base }), shimmer = create({ ...base, flutter: 0.9 });
+  // Ping-pong over a window that never returns to t = 0: flutter vanishes there by construction,
+  // so a frame at t = 0 would show two identical panels and read as a broken image.
+  const ts = pingpong(0.35, 1.7, N / 2);
+  const frames = [];
+  for (const t of ts) {
+    frames.push(rgbToRGBA(composite(W, H, [
+      { u8: flowU8(grid(calm, pw, ph, t), pw, ph, { particles: 1500, steps: 34, seed: 2 }), w: pw, h: ph, x: 0, y: 0 },
+      { u8: flowU8(grid(shimmer, pw, ph, t), pw, ph, { particles: 1500, steps: 34, seed: 2 }), w: pw, h: ph, x: pw + gap, y: 0 },
+    ]), W, H));
+  }
+  saveGIF("knob-flutter.gif", W, H, frames, 80, 128);
+}
 
 // smoke.gif — volumetric smoke raymarched through bake3D, camera orbiting one full turn
 {

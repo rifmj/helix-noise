@@ -180,6 +180,35 @@ extremes every vortex tube corkscrews the same way (a Beltrami flow). Watch the 
 sweep runs from `0` (even, random) to `1` (energy concentrates into coherent structures) and back.
 The overall busyness never changes, only how arranged it is — the one axis plain curl-noise doesn't have.
 
+### Ellipticity — tubes vs sheets
+
+<img src="https://raw.githubusercontent.com/rifmj/helix-noise/main/packages/js/assets/knob-ellipticity.gif" alt="Ellipticity sweeping from circular tubes to linear sheets" width="100%">
+
+`ellipticity` (`ε ∈ [0, 1]`) is *polarization*: how each wave swirls, as opposed to where it points
+(`anisotropy`) or which way it winds (`helicity`). The sweep runs from `1` — circular waves,
+corkscrew filaments, the classic look — down to `0`, where each wave is a flat linear oscillation and
+the texture laminates into sheets. Spectrum and helicity slider are held fixed throughout. Note that
+at `ε = 0` the waves are achiral, so the helicity slider goes visually inert.
+
+### Grain — combing the texture along an axis
+
+<img src="https://raw.githubusercontent.com/rifmj/helix-noise/main/packages/js/assets/knob-grain.gif" alt="Grain strength sweeping from none to strongly combed along the vertical axis" width="100%">
+
+`polarizationAxis` picks a world direction and `polarizationBias` (`d`) says how hard to comb the
+texture along it. The sweep runs `d = 0 → 0.9` along the vertical axis. It is rendered at
+`ellipticity: 0.35` on purpose: a wave can only be so polarized, so `d` and the chirality are jointly
+capped at `√(d² + χ²) ≤ 0.97`, and a fully circular field has almost no room left for grain.
+
+### Flutter — shimmer on top of the drift
+
+<img src="https://raw.githubusercontent.com/rifmj/helix-noise/main/packages/js/assets/knob-flutter.gif" alt="Two fields side by side over time, left with churn only, right also fluttering" width="100%">
+
+Unlike the dials above, `flutter` is a *time* effect, so this one animates **time**, not the knob:
+both panels are the same field with the same seed, running from `t = 0.35` to `t = 1.7`. The left has
+churn alone and drifts smoothly; the right adds `flutter: 0.9` and shimmers, because part of the local
+strain fluctuates far faster than an eddy turns over. At `t = 0` the two are identical by
+construction — flutter never touches the static field.
+
 ## Time — the field flows by itself
 
 Every sampler takes an optional trailing `t`. The evolution is not a generic 4-D noise scroll — it
@@ -295,7 +324,10 @@ or jump straight in (they're plain HTML files in [`examples/`](examples/), no bu
 | [Vortex tubes](https://rifmj.github.io/helix-noise/examples/tubes.html) | three.js streamtubes — at `helicity ±1` every tube corkscrews the same way |
 | [Kelp forest](https://rifmj.github.io/helix-noise/examples/kelp.html) | sway driven by the field's own `churn` — set it to 0 and the forest freezes |
 | [Ebru marbling](https://rifmj.github.io/helix-noise/examples/ebru.html) | ink stretches and folds but never tears — incompressibility made visible |
-| [Q-criterion isosurfaces](https://rifmj.github.io/helix-noise/examples/qcriterion.html) | marching cubes over the vortex skeleton; raise `coherence` and the tangle condenses |
+| [Vortex rings](https://rifmj.github.io/helix-noise/examples/rings.html) | closed-form structures: a smoke ring flying at Kelvin's speed, a head-on collision, and `compose(ring, noise)` |
+| [Polarization grid](https://rifmj.github.io/helix-noise/examples/polarization.html) | nine fields on one seed — `ellipticity` (tubes → sheets) against the world `grain`, with the measured ρ in each corner |
+| [Two-scale recipe](https://rifmj.github.io/helix-noise/examples/two-scale.html) | an `abc()` backbone carrying `shellPeak` detail; the detail's vorticity budget stays fixed as you slide its scale |
+| [Vortex skeleton](https://rifmj.github.io/helix-noise/examples/qcriterion.html) | marching cubes over `qCriterion` / `lambda2` / `stretching`, all from the analytic gradient; raise `coherence` and the tangle condenses |
 | [Flow around an obstacle](https://rifmj.github.io/helix-noise/examples/obstacle.html) | a cylinder described only by its SDF — free-slip via `withBoundary()` |
 | [Atom engine](https://rifmj.github.io/helix-noise/examples/atoms.html) | regional handedness via `helicityField`, one seamless field |
 | [Jetstream cirrus](https://rifmj.github.io/helix-noise/examples/cirrus.html) | one `anisotropy` dial: wisps combed along the jet, or billow bands across it |
