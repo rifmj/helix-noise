@@ -25,13 +25,17 @@ __export(src_exports, {
   HelixField: () => HelixField,
   NS_TARGETS: () => NS_TARGETS,
   abc: () => abc,
+  collidingRings: () => collidingRings,
+  compose: () => compose,
   condensate: () => condensate,
   create: () => create,
   createAtoms: () => createAtoms,
+  createRing: () => createRing,
   default: () => src_default,
   exactNS: () => exactNS,
   nsDeveloped: () => nsDeveloped,
   nsForced: () => nsForced,
+  ringSpeed: () => ringSpeed,
   rolloff: () => rolloff,
   selfTest: () => selfTest,
   shellPeak: () => shellPeak,
@@ -44,7 +48,7 @@ module.exports = __toCommonJS(src_exports);
 var TAU = 2 * Math.PI;
 var POLAR_SALT = 2654435769;
 var POLAR_DEG_MAX = 0.97;
-var VERSION = "1.5.0";
+var VERSION = "1.6.0";
 var DEFAULTS = {
   modes: 48,
   // number of helical modes (cost of one sample is O(modes))
@@ -1834,6 +1838,192 @@ function nsForced(overrides) {
   };
 }
 
+// src/primitives.ts
+var TAU2 = 2 * Math.PI;
+function ringSpeed(circulation, radius, core) {
+  const r = Math.max(radius, 1e-12), c = Math.max(core, 1e-12);
+  return circulation / (2 * TAU2 * r) * (Math.log(8 * r / c) - 0.25);
+}
+function createRing(opts = {}) {
+  return new RingField(opts);
+}
+function collidingRings(opts = {}) {
+  const sep = opts.separation ?? 2;
+  const ax = norm3(opts.axis ?? [0, 0, 1]);
+  const c = opts.center ?? [0, 0, 0];
+  const off = (s) => [c[0] + s * ax[0], c[1] + s * ax[1], c[2] + s * ax[2]];
+  const G = opts.circulation ?? 1;
+  return compose(
+    createRing({ ...opts, center: off(-sep / 2), circulation: G }),
+    createRing({ ...opts, center: off(sep / 2), circulation: -G })
+  );
+}
+function compose(...fields) {
+  return new ComposedField(fields);
+}
+function norm3(v) {
+  const n = Math.hypot(v[0], v[1], v[2]) || 1;
+  return [v[0] / n, v[1] / n, v[2] / n];
+}
+var _t62 = [0, 0, 0, 0, 0, 0];
+var _s6 = [0, 0, 0, 0, 0, 0];
+var BaseFlow = class {
+  sample(x, y, z, t = 0) {
+    this.sampleUW(x, y, z, _t62, t);
+    return [_t62[0], _t62[1], _t62[2]];
+  }
+  vorticity(x, y, z, t = 0) {
+    this.sampleUW(x, y, z, _t62, t);
+    return [_t62[3], _t62[4], _t62[5]];
+  }
+  helicityDensity(x, y, z, t = 0) {
+    this.sampleUW(x, y, z, _t62, t);
+    return _t62[0] * _t62[3] + _t62[1] * _t62[4] + _t62[2] * _t62[5];
+  }
+  potential(x, y, z, t = 0) {
+    this.sampleUA(x, y, z, _t62, t);
+    return [_t62[3], _t62[4], _t62[5]];
+  }
+  withBoundary(sdf, opts) {
+    return new BoundedFieldImpl(this, sdf, opts);
+  }
+  bake3D(n, t = 0) {
+    const data = new Float32Array(n * n * n * 4);
+    let p = 0;
+    for (let z = 0; z < n; z++) for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
+      this.sampleUW(x / n * TAU2, y / n * TAU2, z / n * TAU2, _t62, t);
+      data[p] = _t62[0];
+      data[p + 1] = _t62[1];
+      data[p + 2] = _t62[2];
+      data[p + 3] = _t62[0] * _t62[3] + _t62[1] * _t62[4] + _t62[2] * _t62[5];
+      p += 4;
+    }
+    return { data, size: n, channels: 4 };
+  }
+  bakePotential3D(n, t = 0) {
+    const data = new Float32Array(n * n * n * 4);
+    let p = 0;
+    for (let z = 0; z < n; z++) for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
+      const px = x / n * TAU2, py = y / n * TAU2, pz = z / n * TAU2;
+      this.sampleUA(px, py, pz, _t62, t);
+      data[p] = _t62[3];
+      data[p + 1] = _t62[4];
+      data[p + 2] = _t62[5];
+      this.sampleUW(px, py, pz, _t62, t);
+      data[p + 3] = _t62[0] * _t62[3] + _t62[1] * _t62[4] + _t62[2] * _t62[5];
+      p += 4;
+    }
+    return { data, size: n, channels: 4 };
+  }
+  bake2D(nx, ny, z = 0, t = 0) {
+    const data = new Float32Array(nx * ny * 4);
+    let p = 0;
+    for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+      this.sampleUW(i / nx * TAU2, j / ny * TAU2, z, _t62, t);
+      data[p] = _t62[0];
+      data[p + 1] = _t62[1];
+      data[p + 2] = _t62[2];
+      data[p + 3] = _t62[0] * _t62[3] + _t62[1] * _t62[4] + _t62[2] * _t62[5];
+      p += 4;
+    }
+    return { data, width: nx, height: ny, channels: 4 };
+  }
+};
+var RingField = class extends BaseFlow {
+  constructor(o) {
+    super();
+    const c0 = o.center ?? [0, 0, 0];
+    const ax = norm3(o.axis ?? [0, 0, 1]);
+    this.cx = c0[0];
+    this.cy = c0[1];
+    this.cz = c0[2];
+    this.nx = ax[0];
+    this.ny = ax[1];
+    this.nz = ax[2];
+    this.R = Math.max(o.radius ?? 1, 1e-9);
+    this.c = Math.min(Math.max(o.core ?? 0.3, 1e-9), 0.95 * this.R);
+    this.G = o.circulation ?? 1;
+    this.speed = o.advect ? ringSpeed(this.G, this.R, this.c) : 0;
+  }
+  /**
+   * One evaluation in the ring's local cylindrical frame. Writes velocity into 0..2 and either
+   * the vorticity or the potential into 3..5.
+   */
+  _eval(x, y, z, out6, t, wantW) {
+    const sh = this.speed * t;
+    const dx = x - (this.cx + sh * this.nx);
+    const dy = y - (this.cy + sh * this.ny);
+    const dz = z - (this.cz + sh * this.nz);
+    const nx = this.nx, ny = this.ny, nz = this.nz;
+    const zc = dx * nx + dy * ny + dz * nz;
+    let rx = dx - zc * nx, ry = dy - zc * ny, rz = dz - zc * nz;
+    const rho = Math.hypot(rx, ry, rz);
+    out6[0] = 0;
+    out6[1] = 0;
+    out6[2] = 0;
+    out6[3] = 0;
+    out6[4] = 0;
+    out6[5] = 0;
+    if (rho < 1e-12) return out6;
+    rx /= rho;
+    ry /= rho;
+    rz /= rho;
+    const dr = rho - this.R;
+    const q2 = dr * dr + zc * zc;
+    const c = this.c, c2 = c * c;
+    if (q2 >= c2) return out6;
+    const s = 1 - q2 / c2;
+    const h = this.G * s * s * s;
+    const H1 = -6 * this.G * s * s / c2;
+    const uRho = -H1 * zc;
+    const uAx = h / rho + H1 * dr;
+    out6[0] = uRho * rx + uAx * nx;
+    out6[1] = uRho * ry + uAx * ny;
+    out6[2] = uRho * rz + uAx * nz;
+    const px = ny * rz - nz * ry, py = nz * rx - nx * rz, pz = nx * ry - ny * rx;
+    if (!wantW) {
+      out6[3] = h * px;
+      out6[4] = h * py;
+      out6[5] = h * pz;
+      return out6;
+    }
+    const H2 = 24 * this.G * s / (c2 * c2);
+    const lap = 2 * H1 + H2 * q2;
+    const wPhi = -(lap + H1 * dr / rho - h / (rho * rho));
+    out6[3] = wPhi * px;
+    out6[4] = wPhi * py;
+    out6[5] = wPhi * pz;
+    return out6;
+  }
+  sampleUW(x, y, z, out6, t = 0) {
+    return this._eval(x, y, z, out6, t, true);
+  }
+  sampleUA(x, y, z, out6, t = 0) {
+    return this._eval(x, y, z, out6, t, false);
+  }
+};
+var ComposedField = class extends BaseFlow {
+  constructor(parts) {
+    super();
+    this.parts = parts;
+  }
+  _sum(pick, x, y, z, out6, t) {
+    for (let i = 0; i < 6; i++) out6[i] = 0;
+    for (const f of this.parts) {
+      if (pick === "uw") f.sampleUW(x, y, z, _s6, t);
+      else f.sampleUA(x, y, z, _s6, t);
+      for (let i = 0; i < 6; i++) out6[i] += _s6[i];
+    }
+    return out6;
+  }
+  sampleUW(x, y, z, out6, t = 0) {
+    return this._sum("uw", x, y, z, out6, t);
+  }
+  sampleUA(x, y, z, out6, t = 0) {
+    return this._sum("ua", x, y, z, out6, t);
+  }
+};
+
 // src/index.ts
 function create(options) {
   return new HelixField(options);
@@ -1897,12 +2087,16 @@ var src_default = HelixNoise;
   HelixField,
   NS_TARGETS,
   abc,
+  collidingRings,
+  compose,
   condensate,
   create,
   createAtoms,
+  createRing,
   exactNS,
   nsDeveloped,
   nsForced,
+  ringSpeed,
   rolloff,
   selfTest,
   shellPeak,

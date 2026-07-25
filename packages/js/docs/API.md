@@ -182,6 +182,32 @@ const detail = create({ spectrum: shellPeak(kD), kmin: kD - 3, kmax: kD + 3,
 const storm = twoScale(abc(3, 3, 3), detail);
 ```
 
+### Structure primitives
+
+Besides the noise field there is a second genre: **localized closed-form structures**, with no
+randomness in them at all. A smoke ring is a smoke ring, wherever you sample it.
+
+| Factory | Returns | What it is |
+|---|---|---|
+| `createRing({ center, axis, radius, core, circulation, advect })` | `FlowField` | A **vortex ring** — a compact torus of swirl pushing a jet through its own middle. Exactly zero outside the core. `advect: true` sends it flying at the textbook self-induced speed. |
+| `collidingRings({ …, separation })` | `FlowField` | Two rings fired head-on: equal and opposite circulation, mirrored. |
+| `compose(...fields)` | `FlowField` | Sum any number of flows — primitives with each other, or with a noise field. |
+| `ringSpeed(circulation, radius, core)` | `number` | Kelvin's self-induced ring speed, if you want to drive the motion yourself. |
+
+```js
+import { create, createRing, collidingRings, compose } from "helix-noise";
+
+const smoke = compose(
+  collidingRings({ radius: 1.2, core: 0.35, circulation: 1.5, separation: 1.6 }),
+  create({ modes: 24, seed: 3, amplitude: 0.25 })   // broadband detail on top
+);
+```
+
+These are built as an explicit curl, so they are exactly divergence-free *and* carry an exact
+potential — obstacles and the potential bakes work on them, and on any `compose` of them, exactly
+as they do on a noise field. The ring's potential is compactly supported too, so a `withBoundary`
+obstacle outside the core sees literally nothing.
+
 ### Ready-made looks
 
 | Factory | Returns | What it is |

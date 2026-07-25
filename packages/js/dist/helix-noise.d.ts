@@ -621,12 +621,63 @@ declare function nsDeveloped(overrides?: Partial<HelixNoiseOptions>): HelixNoise
  */
 declare function nsForced(overrides?: Partial<HelixNoiseOptions>): HelixNoiseOptions;
 
+/** Options for {@link createRing}. */
+interface RingOptions {
+    /** Center of the ring. Default `[0, 0, 0]`. */
+    center?: Vec3;
+    /** Ring axis — the direction it travels along. Normalized internally. Default `[0, 0, 1]`. */
+    axis?: Vec3;
+    /** Radius of the ring's core circle. Default 1. */
+    radius?: number;
+    /**
+     * Core thickness: the flow lives within this distance of the core circle and is exactly zero
+     * outside. Must stay below `radius` (otherwise the support would touch the axis, where the
+     * closed form is not smooth). Default `0.3`.
+     */
+    core?: number;
+    /** Circulation Γ — strength and, by its sign, travel direction. Default 1. */
+    circulation?: number;
+    /**
+     * Let the ring travel: the center advances at Kelvin's self-induced speed for a thin-core ring,
+     * `U = Γ/(4πR)·(ln(8R/c) − ¼)`, so `sample(x, y, z, t)` shows it in flight. Default false.
+     */
+    advect?: boolean;
+}
+/** Kelvin's self-induced translation speed of a thin-core vortex ring. */
+declare function ringSpeed(circulation: number, radius: number, core: number): number;
+/**
+ * A **vortex ring** — a smoke ring: a compact torus of swirling flow that pushes a jet through
+ * its own middle. Closed form, exactly divergence-free, exactly zero outside the core, and with a
+ * compactly supported potential, so it drops straight into `withBoundary` and the potential bakes.
+ *
+ * ```js
+ * const ring = createRing({ radius: 1.5, core: 0.4, circulation: 2, advect: true });
+ * ```
+ *
+ * The construction is the azimuthal potential `A = Γ·h(q/c)·ê_φ` with `q` the distance to the core
+ * circle and `h(u) = (1−u²)³` a C² window; `u = ∇×A` is then dipolar flow threading the ring.
+ */
+declare function createRing(opts?: RingOptions): FlowField;
+/**
+ * Two rings fired at each other head-on — the classic colliding-rings setup, and the reason
+ * `compose` exists. Equal and opposite circulation, mirrored about the origin along `axis`.
+ */
+declare function collidingRings(opts?: RingOptions & {
+    separation?: number;
+}): FlowField;
+/**
+ * Sum any number of flow fields. The sum of divergence-free fields is divergence-free and its
+ * potential is the sum of theirs, so obstacles and potential bakes keep working — mix primitives
+ * with each other or with a spectral field.
+ */
+declare function compose(...fields: FlowField[]): FlowField;
+
 /** Create a Helix Noise field. */
 declare function create(options?: HelixNoiseOptions): Field;
 /** Create a sparse-atom field: broadband, infinite, amortized O(1), spatially-varying params. */
 declare function createAtoms(options?: HelixAtomsOptions): AtomField;
 /** Library version. */
-declare const version = "1.5.0";
+declare const version = "1.6.0";
 /** Run the built-in validation (transversality, divergence, helicity tracking). */
 declare function selfTest(): SelfTestReport;
 /** Default export: the Helix Noise namespace (`HelixNoise.create(...)`). */
@@ -637,4 +688,4 @@ declare const HelixNoise: {
     version: string;
 };
 
-export { type AtomField, type Bake2DResult, type Bake3DResult, type BoundaryOptions, type BoundedField, C_TWO_SCALE, type ExactNSOptions, type Field, type FlowField, type GlslOptions, HelixAtoms, type HelixAtomsOptions, HelixField, type HelixNoiseOptions, NS_TARGETS, type Out6, type ScaleFn, type Sdf, type SelfTestReport, type Vec3, abc, condensate, create, createAtoms, HelixNoise as default, exactNS, nsDeveloped, nsForced, rolloff, selfTest, shellPeak, twoScale, version };
+export { type AtomField, type Bake2DResult, type Bake3DResult, type BoundaryOptions, type BoundedField, C_TWO_SCALE, type ExactNSOptions, type Field, type FlowField, type GlslOptions, HelixAtoms, type HelixAtomsOptions, HelixField, type HelixNoiseOptions, NS_TARGETS, type Out6, type RingOptions, type ScaleFn, type Sdf, type SelfTestReport, type Vec3, abc, collidingRings, compose, condensate, create, createAtoms, createRing, HelixNoise as default, exactNS, nsDeveloped, nsForced, ringSpeed, rolloff, selfTest, shellPeak, twoScale, version };

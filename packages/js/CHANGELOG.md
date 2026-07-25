@@ -3,6 +3,31 @@
 All notable changes to this project are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [1.6.0]
+
+### Added
+
+- **Structure primitives** — a second field genre next to the noise sum: localized, closed-form
+  flows with no randomness in them at all.
+  - `createRing({ center, axis, radius, core, circulation, advect })` — a **vortex ring**: a compact
+    torus of swirl pushing a jet through its own middle, exactly zero outside the core.
+    `advect: true` sends it flying at Kelvin's self-induced speed `Γ/(4πR)·(ln(8R/c) − ¼)`.
+  - `collidingRings({ …, separation })` — two rings fired head-on.
+  - `compose(...fields)` — sum any number of flows, primitives or noise.
+  - `ringSpeed(circulation, radius, core)` — the closed-form ring speed on its own.
+
+### Notes
+
+- Built as an explicit curl `u = ∇×A` with `A = Γ(1 − q²/c²)³·ê_φ`, so the ring is exactly
+  divergence-free and its analytic vorticity is the real curl — the test pins that by Richardson
+  extrapolation (halving the step quarters the error, ratio 4.0), not by a loose tolerance.
+- The potential is compactly supported as well, so `withBoundary` and `bakePotential3D` work
+  exactly, and an obstacle outside the core sees literally nothing.
+- JS-first, like the atom engine: the primitives are outside the cross-port spectral spec.
+- Not yet shipped: columnar (tornado) swirl. Its potential cannot be compactly supported — a
+  solenoid never has one — and picking the decaying gauge is a real design decision rather than a
+  transcription, so it waits rather than shipping half-right.
+
 ## [1.5.0]
 
 ### Added

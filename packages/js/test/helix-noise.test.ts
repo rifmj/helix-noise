@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert";
-import HelixNoise, { create, createAtoms, HelixField, abc, twoScale, shellPeak, rolloff, condensate, C_TWO_SCALE, exactNS, nsDeveloped, nsForced, NS_TARGETS } from "../src/index";
-import type { Vec3 } from "../src/types";
+import HelixNoise, { create, createAtoms, HelixField, abc, twoScale, shellPeak, rolloff, condensate, C_TWO_SCALE, exactNS, nsDeveloped, nsForced, NS_TARGETS, createRing, collidingRings, compose, ringSpeed } from "../src/index";
+import type { Vec3, FlowField } from "../src/types";
 import { runWasm } from "../src/wasm";
 
 const TAU = 2 * Math.PI;
@@ -1172,4 +1172,105 @@ test("nsDeveloped / nsForced: polarization matches the measured targets", () => 
   }
   assert.ok((nsForced().ellipticity as number) > (nsDeveloped().ellipticity as number),
     "the forced state is the more polarized of the two");
+});
+
+// ---------------------------------------------------------------------------
+// Structure primitives — closed-form localized flows
+// ---------------------------------------------------------------------------
+
+const fdCurl = (fn: (x: number, y: number, z: number) => Vec3, x: number, y: number, z: number, h: number): number[] => {
+  const ap = fn(x, y + h, z), am = fn(x, y - h, z);
+  const bp = fn(x, y, z + h), bm = fn(x, y, z - h);
+  const cp = fn(x + h, y, z), cm = fn(x - h, y, z);
+  return [
+    (ap[2] - am[2]) / (2 * h) - (bp[1] - bm[1]) / (2 * h),
+    (bp[0] - bm[0]) / (2 * h) - (cp[2] - cm[2]) / (2 * h),
+    (cp[1] - cm[1]) / (2 * h) - (ap[0] - am[0]) / (2 * h),
+  ];
+};
+
+/** Points where the ring's flow is actually non-negligible (it is exactly zero elsewhere). */
+function ringPoints(f: FlowField, want = 12): [number, number, number][] {
+  const out: [number, number, number][] = [];
+  for (let i = 0; i < 4000 && out.length < want; i++) {
+    const p: [number, number, number] = [Math.sin(i * 1.7) * 2.2, Math.cos(i * 2.3) * 2.2, Math.sin(i * 0.9) * 1.2];
+    if (Math.hypot(...f.sample(...p)) > 0.1) out.push(p);
+  }
+  return out;
+}
+
+test("vortex ring: compactly supported, and exactly zero outside its core", () => {
+  const f = createRing({ radius: 1.5, core: 0.4, circulation: 2 });
+  assert.deepEqual(f.sample(9, 9, 9), [0, 0, 0], "far field");
+  assert.deepEqual(f.sample(0, 0, 0.2), [0, 0, 0], "on the axis, inside the ring");
+  assert.deepEqual(f.potential(9, 9, 9), [0, 0, 0], "the potential is compact too");
+  assert.ok(ringPoints(f).length === 12, "but the core carries real flow");
+});
+
+test("vortex ring: divergence-free with an exact analytic vorticity and potential", () => {
+  const f = createRing({ radius: 1.5, core: 0.4, circulation: 2 });
+  const pts = ringPoints(f);
+  const err = (h: number): { div: number; w: number; u: number } => {
+    let div = 0, w = 0, u = 0;
+    for (const [x, y, z] of pts) {
+      const dx = (f.sample(x + h, y, z)[0] - f.sample(x - h, y, z)[0]) / (2 * h);
+      const dy = (f.sample(x, y + h, z)[1] - f.sample(x, y - h, z)[1]) / (2 * h);
+      const dz = (f.sample(x, y, z + h)[2] - f.sample(x, y, z - h)[2]) / (2 * h);
+      div = Math.max(div, Math.abs(dx + dy + dz));
+      const aw = f.vorticity(x, y, z), fw = fdCurl((a, b, c) => f.sample(a, b, c), x, y, z, h);
+      const au = f.sample(x, y, z), fu = fdCurl((a, b, c) => f.potential(a, b, c), x, y, z, h);
+      for (let c = 0; c < 3; c++) {
+        w = Math.max(w, Math.abs(aw[c] - fw[c]));
+        u = Math.max(u, Math.abs(au[c] - fu[c]));
+      }
+    }
+    return { div, w, u };
+  };
+  const coarse = err(4e-4), fine = err(2e-4);
+  assert.ok(fine.div < 1e-4, `FD divergence ${fine.div}`);
+  assert.ok(fine.u < 1e-4, `curl(A) vs u: ${fine.u}`);
+  // Second-order convergence is what proves the analytic vorticity is the real curl, not
+  // merely close to it: halving the step must quarter the error.
+  const ratio = coarse.w / fine.w;
+  assert.ok(ratio > 3.5 && ratio < 4.5, `vorticity error should converge as O(h²) (ratio ${ratio})`);
+});
+
+test("vortex ring: advect moves it at Kelvin's self-induced speed", () => {
+  const G = 2, R = 1.5, c = 0.4;
+  const want = (G / (4 * Math.PI * R)) * (Math.log((8 * R) / c) - 0.25);
+  assert.ok(Math.abs(ringSpeed(G, R, c) - want) < 1e-12, "the closed-form speed");
+
+  const still = createRing({ radius: R, core: c, circulation: G });
+  const flying = createRing({ radius: R, core: c, circulation: G, advect: true });
+  const t = 0.7, shift = ringSpeed(G, R, c) * t;
+  const a = still.sample(R + 0.1, 0, 0);
+  const b = flying.sample(R + 0.1, 0, shift, t);
+  for (let i = 0; i < 3; i++) assert.ok(Math.abs(a[i] - b[i]) < 1e-12, "the flying ring is the still one, translated");
+});
+
+test("compose: rings and a spectral field sum into one divergence-free flow", () => {
+  const rings = collidingRings({ radius: 1.2, core: 0.35, circulation: 1.5, separation: 1.6 });
+  const mixed = compose(rings, create({ modes: 12, seed: 3, amplitude: 0.2 }));
+  const h = 1e-4;
+  let div = 0, uErr = 0;
+  for (let i = 0; i < 40; i++) {
+    const x = i * 0.31, y = i * 0.57, z = i * 0.13;
+    const dx = (mixed.sample(x + h, y, z)[0] - mixed.sample(x - h, y, z)[0]) / (2 * h);
+    const dy = (mixed.sample(x, y + h, z)[1] - mixed.sample(x, y - h, z)[1]) / (2 * h);
+    const dz = (mixed.sample(x, y, z + h)[2] - mixed.sample(x, y, z - h)[2]) / (2 * h);
+    div = Math.max(div, Math.abs(dx + dy + dz));
+    const u = mixed.sample(x, y, z), fu = fdCurl((a, b, c) => mixed.potential(a, b, c), x, y, z, 1e-3);
+    for (let c = 0; c < 3; c++) uErr = Math.max(uErr, Math.abs(u[c] - fu[c]));
+  }
+  assert.ok(div < 1e-6, `composite divergence ${div}`);
+  assert.ok(uErr < 1e-3, `composite potential is still exact: ${uErr}`);
+
+  // and the shared surface still gives obstacles and bakes
+  const bnd = mixed.withBoundary((x, y, z) => Math.hypot(x, y, z) - 0.5, { thickness: 0.4 });
+  assert.deepEqual(bnd.sample(0, 0, 0), [0, 0, 0]);
+  assert.equal(mixed.bake3D(4).data.length, 4 * 4 * 4 * 4);
+
+  // colliding rings really are mirror images with opposite circulation
+  const p = rings.sample(1.2, 0, 0.8), m = rings.sample(1.2, 0, -0.8);
+  assert.ok(Math.abs(p[2] + m[2]) < 1e-12, "axial flow is antisymmetric about the collision plane");
 });
