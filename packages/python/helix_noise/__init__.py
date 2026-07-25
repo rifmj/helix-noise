@@ -9,7 +9,18 @@ parity with the reference.
 from ._constants import GA, TAU, VERSION
 from .boundary import BoundedField
 from .field import HelixField, create
-from .presets import C_TWO_SCALE, abc, condensate, rolloff, shell_peak, two_scale
+from .presets import (
+    C_TWO_SCALE,
+    NS_TARGETS,
+    abc,
+    condensate,
+    exact_ns,
+    ns_developed,
+    ns_forced,
+    rolloff,
+    shell_peak,
+    two_scale,
+)
 
 __all__ = [
     "create",
@@ -21,10 +32,14 @@ __all__ = [
     "abc",
     "two_scale",
     "C_TWO_SCALE",
+    "exact_ns",
+    "ns_developed",
+    "ns_forced",
+    "NS_TARGETS",
     "TAU",
     "GA",
     "VERSION",
     "__version__",
 ]
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"

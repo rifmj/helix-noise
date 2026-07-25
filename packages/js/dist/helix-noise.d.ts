@@ -186,6 +186,8 @@ interface Field extends FlowField {
     set(options: HelixNoiseOptions): Field;
     /** Relative helicity ⟨u·ω⟩/(‖u‖‖ω‖) on an ng³ grid; should track helicity p. Default ng = 12. */
     relativeHelicity(ng?: number): number;
+    /** Relative helicity straight from the mode arrays — the exact, grid-free value at time t. */
+    relativeHelicitySpectral(t?: number): number;
     /** Emit self-contained GLSL (WebGL2) defining `vec3 <name>(vec3 p)` + `(vec3 p, float t)` (+ curl). */
     glsl(opts?: GlslOptions): string;
 }
@@ -421,6 +423,18 @@ declare class HelixField implements Field, ModeData {
     private _rms;
     set(opts: HelixNoiseOptions): Field;
     relativeHelicity(ng?: number): number;
+    /**
+     * Relative helicity computed straight from the mode arrays, with no grid at all.
+     *
+     * Writing each mode as `u_j = Re[v_j e^(iφ)]` with `v_j = a_j(e1 + i·e2)` (the same complex
+     * amplitude the samplers use), the space averages are exact sums:
+     * `⟨|u|²⟩ = ½Σ|v|²`, `⟨|ω|²⟩ = ½Σ|k×v|²`, `⟨u·ω⟩ = ½ΣRe[v̄·(i k×v)]`.
+     *
+     * This is the infinite-volume value — {@link relativeHelicity} differs from it only by the
+     * cross-mode terms a finite grid fails to cancel. For a single mode it is exactly `2χ/(1+χ²)`,
+     * and under viscous decay it is constant in time when all modes share one `|k|`.
+     */
+    relativeHelicitySpectral(t?: number): number;
     bake3D(n: number, t?: number): Bake3DResult;
     bakePotential3D(n: number, t?: number): Bake3DResult;
     bake2D(nx: number, ny: number, z?: number, t?: number): Bake2DResult;
@@ -536,13 +550,83 @@ declare const C_TWO_SCALE = 1.6;
 declare function twoScale(base: FlowField, detail: FlowField, opts?: {
     detailGain?: number;
 }): FlowField;
+/** Options for {@link exactNS}. */
+interface ExactNSOptions {
+    /** Shell wavenumber k₀ (used for both `kmin` and `kmax`). Default 2. */
+    k0?: number;
+    /** Kinematic viscosity ν (becomes `decay`). Default 0.02; `0` gives the steady Euler member. */
+    nu?: number;
+    /** Chirality s = ±1 (becomes `helicity`, so every mode takes that sign). Default 1. */
+    sign?: 1 | -1;
+    /** Passed through untouched — none of these break exactness. */
+    modes?: number;
+    seed?: number;
+    amplitude?: number;
+    coherence?: number;
+    centers?: number;
+    layout?: "fibonacci" | "random";
+}
+/**
+ * Options for a field that is an **exact solution of the Navier–Stokes equations**, not merely a
+ * plausible-looking one: a single-wavenumber Beltrami field decaying at the exact Stokes rate.
+ *
+ * All modes share one `|k| = k₀` and one handedness, which makes the field Beltrami
+ * (`∇×u = ±k₀·u`); the nonlinear term is then a pure gradient and is absorbed by the pressure, so
+ * the flow just decays as `e^(−νk₀²t)` — which is precisely what `decay` does to every amplitude.
+ *
+ * ```js
+ * const field = create(exactNS({ k0: 2, nu: 0.05, seed: 7 }));
+ * ```
+ *
+ * Keep `tileable` off and `ellipticity` at 1 — integer rounding would break the single shell, and
+ * elliptic modes are not Beltrami.
+ */
+declare function exactNS(opts?: ExactNSOptions): HelixNoiseOptions;
+/**
+ * Energy-weighted polarization of the two measured turbulence states these presets aim at:
+ * `d` = linear polarization degree, `absP` = per-shell helical fraction, `signedP` = its signed
+ * mean. Quoted so tests and docs can check what a field actually reproduces.
+ */
+declare const NS_TARGETS: {
+    readonly dev: {
+        readonly d: 1.155;
+        readonly absP: 0.462;
+        readonly signedP: 0.057;
+    };
+    readonly forced: {
+        readonly d: 1.062;
+        readonly absP: 0.516;
+        readonly signedP: 0.229;
+        readonly condensateK1: 0.55;
+    };
+};
+/**
+ * Option bundle whose **polarization** matches measured developed turbulence: per-mode helical
+ * fraction |p| ≈ 0.46 with a weakly positive signed mean, i.e. strongly polarized waves whose
+ * handedness nearly cancels. Both numbers are inverted exactly — `ellipticity` from
+ * 2ε/(1+ε²) = |p|, and the `helicity` slider from signedP/|p|.
+ *
+ * Scope, honestly: the polarization is calibrated, the **spectrum is not** — this keeps the
+ * default power law. Matching the measured shell spectrum needs a table this package does not
+ * ship; pass your own `spectrum` if you have one.
+ */
+declare function nsDeveloped(overrides?: Partial<HelixNoiseOptions>): HelixNoiseOptions;
+/**
+ * Same as {@link nsDeveloped} for the *forced* state: more strongly polarized waves (|p| ≈ 0.52)
+ * and a markedly net-handed field (signed mean +0.23), which reads as a visible overall swirl
+ * direction. The measured state also carries a helical condensate at the largest scale; expressing
+ * that needs a per-wavenumber `helicity` — see the `condensate` preset if you want to add one.
+ *
+ * Same scope caveat as {@link nsDeveloped}: polarization calibrated, spectrum not.
+ */
+declare function nsForced(overrides?: Partial<HelixNoiseOptions>): HelixNoiseOptions;
 
 /** Create a Helix Noise field. */
 declare function create(options?: HelixNoiseOptions): Field;
 /** Create a sparse-atom field: broadband, infinite, amortized O(1), spatially-varying params. */
 declare function createAtoms(options?: HelixAtomsOptions): AtomField;
 /** Library version. */
-declare const version = "1.4.0";
+declare const version = "1.5.0";
 /** Run the built-in validation (transversality, divergence, helicity tracking). */
 declare function selfTest(): SelfTestReport;
 /** Default export: the Helix Noise namespace (`HelixNoise.create(...)`). */
@@ -553,4 +637,4 @@ declare const HelixNoise: {
     version: string;
 };
 
-export { type AtomField, type Bake2DResult, type Bake3DResult, type BoundaryOptions, type BoundedField, C_TWO_SCALE, type Field, type FlowField, type GlslOptions, HelixAtoms, type HelixAtomsOptions, HelixField, type HelixNoiseOptions, type Out6, type ScaleFn, type Sdf, type SelfTestReport, type Vec3, abc, condensate, create, createAtoms, HelixNoise as default, rolloff, selfTest, shellPeak, twoScale, version };
+export { type AtomField, type Bake2DResult, type Bake3DResult, type BoundaryOptions, type BoundedField, C_TWO_SCALE, type ExactNSOptions, type Field, type FlowField, type GlslOptions, HelixAtoms, type HelixAtomsOptions, HelixField, type HelixNoiseOptions, NS_TARGETS, type Out6, type ScaleFn, type Sdf, type SelfTestReport, type Vec3, abc, condensate, create, createAtoms, HelixNoise as default, exactNS, nsDeveloped, nsForced, rolloff, selfTest, shellPeak, twoScale, version };

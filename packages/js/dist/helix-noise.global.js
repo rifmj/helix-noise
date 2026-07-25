@@ -24,11 +24,15 @@ var HelixNoise = (() => {
     C_TWO_SCALE: () => C_TWO_SCALE,
     HelixAtoms: () => HelixAtoms,
     HelixField: () => HelixField,
+    NS_TARGETS: () => NS_TARGETS,
     abc: () => abc,
     condensate: () => condensate,
     create: () => create,
     createAtoms: () => createAtoms,
     default: () => src_default,
+    exactNS: () => exactNS,
+    nsDeveloped: () => nsDeveloped,
+    nsForced: () => nsForced,
     rolloff: () => rolloff,
     selfTest: () => selfTest,
     shellPeak: () => shellPeak,
@@ -40,7 +44,7 @@ var HelixNoise = (() => {
   var TAU = 2 * Math.PI;
   var POLAR_SALT = 2654435769;
   var POLAR_DEG_MAX = 0.97;
-  var VERSION = "1.4.0";
+  var VERSION = "1.5.0";
   var DEFAULTS = {
     modes: 48,
     // number of helical modes (cost of one sample is O(modes))
@@ -1116,6 +1120,52 @@ var HelixNoise = (() => {
       }
       return H / (Math.sqrt(un * wn) || 1);
     }
+    /**
+     * Relative helicity computed straight from the mode arrays, with no grid at all.
+     *
+     * Writing each mode as `u_j = Re[v_j e^(iφ)]` with `v_j = a_j(e1 + i·e2)` (the same complex
+     * amplitude the samplers use), the space averages are exact sums:
+     * `⟨|u|²⟩ = ½Σ|v|²`, `⟨|ω|²⟩ = ½Σ|k×v|²`, `⟨u·ω⟩ = ½ΣRe[v̄·(i k×v)]`.
+     *
+     * This is the infinite-volume value — {@link relativeHelicity} differs from it only by the
+     * cross-mode terms a finite grid fails to cancel. For a single mode it is exactly `2χ/(1+χ²)`,
+     * and under viscous decay it is constant in time when all modes share one `|k|`.
+     */
+    relativeHelicitySpectral(t = 0) {
+      let H = 0, E = 0, Z = 0;
+      const gen = this._general;
+      for (let j = 0; j < this.N; j++) {
+        const km = this.km[j], k2 = km * km;
+        const a = this.a[j];
+        const m = a * a * (this.nu > 0 && t !== 0 ? Math.exp(-2 * this.nu * k2 * t) : 1);
+        let e1x = this.e1x[j], e1y = this.e1y[j], e1z = this.e1z[j];
+        let e2x = this.e2x[j], e2y = this.e2y[j], e2z = this.e2z[j];
+        let w1x, w1y, w1z, w2x, w2y, w2z;
+        if (gen) {
+          w1x = this.w1x[j];
+          w1y = this.w1y[j];
+          w1z = this.w1z[j];
+          w2x = this.w2x[j];
+          w2y = this.w2y[j];
+          w2z = this.w2z[j];
+        } else {
+          const chi = this.chi[j], ck = chi * km;
+          w1x = ck * e1x;
+          w1y = ck * e1y;
+          w1z = ck * e1z;
+          w2x = km * e2x;
+          w2y = km * e2y;
+          w2z = km * e2z;
+          e2x *= chi;
+          e2y *= chi;
+          e2z *= chi;
+        }
+        E += 0.5 * m * (e1x * e1x + e1y * e1y + e1z * e1z + e2x * e2x + e2y * e2y + e2z * e2z);
+        Z += 0.5 * m * (w1x * w1x + w1y * w1y + w1z * w1z + w2x * w2x + w2y * w2y + w2z * w2z);
+        H += 0.5 * m * (e1x * w1x + e1y * w1y + e1z * w1z + e2x * w2x + e2y * w2y + e2z * w2z);
+      }
+      return H / (Math.sqrt(E * Z) || 1);
+    }
     bake3D(n, t = 0) {
       const data = new Float32Array(n * n * n * 4), o = [0, 0, 0, 0, 0, 0];
       let p = 0;
@@ -1733,6 +1783,56 @@ var HelixNoise = (() => {
     }
   };
   var TAU_ = 2 * Math.PI;
+  function exactNS(opts = {}) {
+    const { k0 = 2, nu = 0.02, sign = 1, ...rest } = opts;
+    return {
+      kmin: k0,
+      kmax: k0,
+      // one shell: |k| is the same for every mode
+      helicity: sign,
+      // p = ±1 makes every drawn sign that sign
+      churn: 0,
+      // om = 0; the only time dependence is the viscous decay
+      decay: nu,
+      tileable: false,
+      ellipticity: 1,
+      // Beltrami — the whole point
+      ...rest
+    };
+  }
+  var NS_TARGETS = {
+    dev: { d: 1.155, absP: 0.462, signedP: 0.057 },
+    forced: { d: 1.062, absP: 0.516, signedP: 0.229, condensateK1: 0.55 }
+  };
+  function epsForP(p) {
+    return (1 - Math.sqrt(1 - p * p)) / p;
+  }
+  function nsDeveloped(overrides) {
+    const { absP, signedP } = NS_TARGETS.dev;
+    return {
+      modes: 96,
+      layout: "random",
+      // a genuine ensemble, matching how the target was measured
+      kmin: 1,
+      kmax: 15,
+      // the band holding ~99% of the measured energy
+      ellipticity: epsForP(absP),
+      helicity: signedP / absP,
+      ...overrides
+    };
+  }
+  function nsForced(overrides) {
+    const { absP, signedP } = NS_TARGETS.forced;
+    return {
+      modes: 96,
+      layout: "random",
+      kmin: 1,
+      kmax: 15,
+      ellipticity: epsForP(absP),
+      helicity: signedP / absP,
+      ...overrides
+    };
+  }
 
   // src/index.ts
   function create(options) {

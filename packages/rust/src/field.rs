@@ -592,6 +592,45 @@ impl HelixField {
         ([ux * sc, uy * sc, uz * sc], [wx * sc, wy * sc, wz * sc])
     }
 
+    /// Relative helicity straight from the mode arrays — no grid at all.
+    ///
+    /// Writing each mode as `u_j = Re[v_j e^(i phi)]` with `v_j = a_j(e1' + i e2')`, the space
+    /// averages are exact sums. This is the infinite-volume value; [`Self::relative_helicity`]
+    /// differs from it only by the cross-mode terms a finite grid fails to cancel. For a single
+    /// mode it is exactly `2 chi / (1 + chi^2)`.
+    pub fn relative_helicity_spectral(&self, t: f64) -> f64 {
+        let (mut h, mut e, mut z) = (0.0, 0.0, 0.0);
+        for j in 0..self.n {
+            let km = self.km[j];
+            let k2 = km * km;
+            let a = self.a[j];
+            let mut m = a * a;
+            if self.nu > 0.0 && t != 0.0 {
+                m *= (-2.0 * self.nu * k2 * t).exp();
+            }
+            let e1 = [self.e1x[j], self.e1y[j], self.e1z[j]];
+            let mut e2 = [self.e2x[j], self.e2y[j], self.e2z[j]];
+            let (w1, w2) = if self.general {
+                (self.w1[j], self.w2[j])
+            } else {
+                let chi = self.chi[j];
+                let ck = chi * km;
+                let w1 = [ck * e1[0], ck * e1[1], ck * e1[2]];
+                let w2 = [km * e2[0], km * e2[1], km * e2[2]];
+                for c in 0..3 {
+                    e2[c] *= chi;
+                }
+                (w1, w2)
+            };
+            let dot = |a: [f64; 3], b: [f64; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+            e += 0.5 * m * (dot(e1, e1) + dot(e2, e2));
+            z += 0.5 * m * (dot(w1, w1) + dot(w2, w2));
+            h += 0.5 * m * (dot(e1, w1) + dot(e2, w2));
+        }
+        let denom = (e * z).sqrt();
+        h / if denom != 0.0 { denom } else { 1.0 }
+    }
+
     /// Velocity `u` and analytic vector potential `A` at `(x, y, z, t)`. Returns `(u, A)`.
     pub fn sample_ua(&self, x: f64, y: f64, z: f64, t: f64) -> ([f64; 3], [f64; 3]) {
         let sc = self.scale;

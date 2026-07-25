@@ -182,6 +182,31 @@ const detail = create({ spectrum: shellPeak(kD), kmin: kD - 3, kmax: kD + 3,
 const storm = twoScale(abc(3, 3, 3), detail);
 ```
 
+### Ready-made looks
+
+| Factory | Returns | What it is |
+|---|---|---|
+| `exactNS({ k0, nu, sign })` | options | A field that genuinely **solves** the Navier–Stokes equations, not one that merely looks like it: a single-wavenumber Beltrami flow decaying at the exact viscous rate. Sample it at any `t` and you are looking at a real solution. |
+| `nsDeveloped(overrides?)` | options | Polarization matched to measured developed turbulence — strongly polarized waves whose handedness nearly cancels. |
+| `nsForced(overrides?)` | options | The same for forced turbulence: more polarized, and visibly net-handed. |
+
+```js
+import { create, exactNS, nsForced } from "helix-noise";
+
+const solution = create(exactNS({ k0: 2, nu: 0.05, seed: 7 }));
+const turbulent = create(nsForced({ seed: 3 }));
+```
+
+Why `exactNS` is exact: with one `|k|` and one handedness the flow is Beltrami (`∇×u = ±k₀u`),
+which makes the nonlinear term a pure gradient that the pressure absorbs. What is left is plain
+viscous decay — `e^(−νk₀²t)` on every amplitude, which is what `decay` already does.
+
+**Scope of the two NS bundles, plainly:** they calibrate the **polarization** — `ellipticity` is
+the exact inverse of the measured per-mode helical fraction, and `helicity` carries its signed
+mean. They do **not** calibrate the spectrum; that keeps the default power law, because matching a
+measured shell spectrum needs a table this package does not ship. Pass your own `spectrum` if you
+have one. `NS_TARGETS` exports the numbers so you can check what a field reproduces.
+
 ### Reading the field
 
 Every sampler takes an optional trailing `t` (field time). Omit it for the static field.
@@ -277,6 +302,7 @@ const src = field.glsl({ name: "helixNoise" });
 |---|---|---|
 | `set(options)` | `this` | Change any subset of options and rebuild. Chainable. |
 | `params` | object (read-only) | The current, fully-resolved parameters. |
+| `relativeHelicitySpectral(t?)` | `number` | The exact, grid-free relative helicity, straight from the wave data. `relativeHelicity` is a grid estimate of this. |
 | `relativeHelicity(ng?)` | `number` | Measures the field's average handedness on an `ng³` grid (default `12`) — should track `helicity`. Mostly a diagnostic. |
 
 ```js

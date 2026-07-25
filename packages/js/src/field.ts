@@ -655,6 +655,46 @@ export class HelixField implements Field, ModeData {
     return H / (Math.sqrt(un * wn) || 1);
   }
 
+  /**
+   * Relative helicity computed straight from the mode arrays, with no grid at all.
+   *
+   * Writing each mode as `u_j = Re[v_j e^(iφ)]` with `v_j = a_j(e1 + i·e2)` (the same complex
+   * amplitude the samplers use), the space averages are exact sums:
+   * `⟨|u|²⟩ = ½Σ|v|²`, `⟨|ω|²⟩ = ½Σ|k×v|²`, `⟨u·ω⟩ = ½ΣRe[v̄·(i k×v)]`.
+   *
+   * This is the infinite-volume value — {@link relativeHelicity} differs from it only by the
+   * cross-mode terms a finite grid fails to cancel. For a single mode it is exactly `2χ/(1+χ²)`,
+   * and under viscous decay it is constant in time when all modes share one `|k|`.
+   */
+  relativeHelicitySpectral(t = 0): number {
+    let H = 0, E = 0, Z = 0;
+    const gen = this._general;
+    for (let j = 0; j < this.N; j++) {
+      const km = this.km[j], k2 = km * km;
+      const a = this.a[j];
+      const m = a * a * (this.nu > 0 && t !== 0 ? Math.exp(-2 * this.nu * k2 * t) : 1);
+      // The velocity amplitude vector is v = a(e1' + i·e2'). For elliptic modes e2' = χ·e2,
+      // for grain-axis modes the folded frame already *is* (e1', e2').
+      let e1x = this.e1x[j], e1y = this.e1y[j], e1z = this.e1z[j];
+      let e2x = this.e2x[j], e2y = this.e2y[j], e2z = this.e2z[j];
+      // Curl frame: w1 = −k×e2', w2 = k×e1'. For circular/elliptic modes that is (χκ·e1, κ·e2).
+      let w1x: number, w1y: number, w1z: number, w2x: number, w2y: number, w2z: number;
+      if (gen) {
+        w1x = this.w1x![j]; w1y = this.w1y![j]; w1z = this.w1z![j];
+        w2x = this.w2x![j]; w2y = this.w2y![j]; w2z = this.w2z![j];
+      } else {
+        const chi = this.chi[j], ck = chi * km;
+        w1x = ck * e1x; w1y = ck * e1y; w1z = ck * e1z;
+        w2x = km * e2x; w2y = km * e2y; w2z = km * e2z;
+        e2x *= chi; e2y *= chi; e2z *= chi;
+      }
+      E += 0.5 * m * (e1x * e1x + e1y * e1y + e1z * e1z + e2x * e2x + e2y * e2y + e2z * e2z);
+      Z += 0.5 * m * (w1x * w1x + w1y * w1y + w1z * w1z + w2x * w2x + w2y * w2y + w2z * w2z);
+      H += 0.5 * m * (e1x * w1x + e1y * w1y + e1z * w1z + e2x * w2x + e2y * w2y + e2z * w2z);
+    }
+    return H / (Math.sqrt(E * Z) || 1);
+  }
+
   bake3D(n: number, t = 0): Bake3DResult {
     const data = new Float32Array(n * n * n * 4), o = [0, 0, 0, 0, 0, 0];
     let p = 0;

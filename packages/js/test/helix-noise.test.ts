@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert";
-import HelixNoise, { create, createAtoms, HelixField, abc, twoScale, shellPeak, rolloff, condensate, C_TWO_SCALE } from "../src/index";
+import HelixNoise, { create, createAtoms, HelixField, abc, twoScale, shellPeak, rolloff, condensate, C_TWO_SCALE, exactNS, nsDeveloped, nsForced, NS_TARGETS } from "../src/index";
 import type { Vec3 } from "../src/types";
 import { runWasm } from "../src/wasm";
 
@@ -1093,4 +1093,83 @@ test("grain axis: batch kernels and the emitted GLSL agree with the sampler", ()
       assert.ok(Math.abs(A[i] * g._scale - P[i]) < 1e-12, "shader potential");
     }
   }
+});
+
+// ---------------------------------------------------------------------------
+// exactNS + measured-polarization bundles
+// ---------------------------------------------------------------------------
+
+test("exactNS: a genuine Navier–Stokes solution — single shell, Beltrami, Stokes decay", () => {
+  const nu = 0.05, k0 = 2;
+  const f = create(exactNS({ k0, nu, seed: 7, modes: 24 })) as unknown as HelixField;
+
+  for (let j = 0; j < f.N; j++) {
+    assert.ok(Math.abs(f.km[j] - k0) < 1e-12, `mode ${j} sits on the single shell`);
+    assert.equal(f.s[j], 1, `mode ${j} takes the requested chirality`);
+    assert.equal(f.om[j], 0, "no churn: viscous decay is the only time dependence");
+  }
+  assert.equal(f.nu, nu);
+  // Beltrami by construction: ∇×u = s·k₀·u exactly, at every point and every time.
+  for (const t of [0, 1.7]) {
+    for (const [x, y, z] of [[1, 2, 3], [0.4, 5.2, 2.1]] as const) {
+      const u = f.sample(x, y, z, t), w = f.vorticity(x, y, z, t);
+      for (let c = 0; c < 3; c++) assert.ok(Math.abs(w[c] - k0 * u[c]) < 1e-12, "curl u = k₀·u");
+    }
+  }
+  // The exact viscous law: every amplitude decays at the same rate, so the shape is frozen.
+  const t = 2.5, decay = Math.exp(-nu * k0 * k0 * t);
+  const u0 = f.sample(1, 2, 3, 0), ut = f.sample(1, 2, 3, t);
+  for (let c = 0; c < 3; c++) assert.ok(Math.abs(ut[c] - decay * u0[c]) < 1e-12, "u(t) = e^(−νk₀²t)·u(0)");
+
+  assert.ok(Math.abs(f.relativeHelicitySpectral(0) - 1) < 1e-12, "maximal helicity: ρ = +1");
+  assert.ok(Math.abs(f.relativeHelicitySpectral(t) - 1) < 1e-12, "and it is conserved under decay");
+  assert.ok(Math.abs(create(exactNS({ sign: -1, modes: 12 })).relativeHelicitySpectral() + 1) < 1e-12, "sign: −1 flips it");
+});
+
+test("relativeHelicitySpectral is the exact value the grid estimate approximates", () => {
+  // One mode: the closed form 2χ/(1+χ²), for every ellipticity.
+  for (const eps of [0, 0.3, 0.5, 1]) {
+    const f = create({ modes: 1, seed: 3, tileable: true, kmin: 2, kmax: 2, helicity: 1, ellipticity: eps }) as unknown as HelixField;
+    const chi = f.chi[0];
+    assert.ok(
+      Math.abs(f.relativeHelicitySpectral() - (2 * chi) / (1 + chi * chi)) < 1e-12,
+      `eps=${eps}: single-mode spectral helicity`
+    );
+  }
+  // With few, distinct, integer wavevectors the grid quadrature is exact, so the two agree.
+  for (const [modes, eps] of [[4, 1], [4, 0.6], [8, 0.6]] as const) {
+    const f = create({ modes, seed: 2, tileable: true, kmin: 1, kmax: 3, helicity: 0.5, ellipticity: eps }) as unknown as HelixField;
+    const seen = new Set(Array.from({ length: f.N }, (_, j) => `${f.kx[j]},${f.ky[j]},${f.kz[j]}`));
+    assert.equal(seen.size, f.N, "this config must have distinct wavevectors for the identity to hold");
+    assert.ok(
+      Math.abs(f.relativeHelicitySpectral() - f.relativeHelicity(16)) < 1e-9,
+      `${modes} modes at eps=${eps}: grid ${f.relativeHelicity(16)} vs exact ${f.relativeHelicitySpectral()}`
+    );
+  }
+  // Colliding wavevectors (what `tileable` rounding produces in a crowded band) are exactly the
+  // case where the grid estimate departs — cross terms between duplicated k do not cancel.
+  const crowded = create({ modes: 200, seed: 11, helicity: 0.7, tileable: true, kmin: 1, kmax: 4 });
+  assert.ok(crowded.relativeHelicitySpectral() > crowded.relativeHelicity(16), "documented, not a bug");
+});
+
+test("nsDeveloped / nsForced: polarization matches the measured targets", () => {
+  for (const [name, bundle, target] of [
+    ["dev", nsDeveloped(), NS_TARGETS.dev],
+    ["forced", nsForced(), NS_TARGETS.forced],
+  ] as const) {
+    const eps = bundle.ellipticity as number;
+    // ellipticity is the exact inverse of the per-mode helical fraction 2ε/(1+ε²) = |p|
+    const pMode = (2 * eps) / (1 + eps * eps);
+    assert.ok(Math.abs(pMode - target.absP) < 1e-12, `${name}: per-mode |p| = ${pMode}, want ${target.absP}`);
+    // and the helicity slider carries the signed mean
+    assert.ok(
+      Math.abs((bundle.helicity as number) * target.absP - target.signedP) < 1e-12,
+      `${name}: signed mean should come out at ${target.signedP}`
+    );
+    const f = create(bundle);
+    assert.ok(Number.isFinite(f.relativeHelicity(8)), `${name}: builds a usable field`);
+    assert.equal(create(nsForced({ seed: 7 })).params.seed, 7, "overrides win");
+  }
+  assert.ok((nsForced().ellipticity as number) > (nsDeveloped().ellipticity as number),
+    "the forced state is the more polarized of the two");
 });

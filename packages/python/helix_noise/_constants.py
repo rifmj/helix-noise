@@ -12,7 +12,7 @@ POLAR_SALT = 0x9E3779B9
 #: Polarization-degree ball radius: sqrt(d^2 + chi^2) is clamped to this (PSD of the covariance).
 POLAR_DEG_MAX = 0.97
 
-VERSION = "0.4.0"
+VERSION = "0.5.0"
 
 # Default options, filled in for every field. ``spectrum`` stays optional
 # (there is no default spectral-law callable).

@@ -1,5 +1,6 @@
 import { HelixField } from "./field";
 import type {
+  HelixNoiseOptions,
   Bake2DResult,
   Bake3DResult,
   BoundaryOptions,
@@ -212,3 +213,108 @@ class TwoScaleField implements FlowField {
 }
 
 const TAU_ = 2 * Math.PI;
+
+/** Options for {@link exactNS}. */
+export interface ExactNSOptions {
+  /** Shell wavenumber k₀ (used for both `kmin` and `kmax`). Default 2. */
+  k0?: number;
+  /** Kinematic viscosity ν (becomes `decay`). Default 0.02; `0` gives the steady Euler member. */
+  nu?: number;
+  /** Chirality s = ±1 (becomes `helicity`, so every mode takes that sign). Default 1. */
+  sign?: 1 | -1;
+  /** Passed through untouched — none of these break exactness. */
+  modes?: number;
+  seed?: number;
+  amplitude?: number;
+  coherence?: number;
+  centers?: number;
+  layout?: "fibonacci" | "random";
+}
+
+/**
+ * Options for a field that is an **exact solution of the Navier–Stokes equations**, not merely a
+ * plausible-looking one: a single-wavenumber Beltrami field decaying at the exact Stokes rate.
+ *
+ * All modes share one `|k| = k₀` and one handedness, which makes the field Beltrami
+ * (`∇×u = ±k₀·u`); the nonlinear term is then a pure gradient and is absorbed by the pressure, so
+ * the flow just decays as `e^(−νk₀²t)` — which is precisely what `decay` does to every amplitude.
+ *
+ * ```js
+ * const field = create(exactNS({ k0: 2, nu: 0.05, seed: 7 }));
+ * ```
+ *
+ * Keep `tileable` off and `ellipticity` at 1 — integer rounding would break the single shell, and
+ * elliptic modes are not Beltrami.
+ */
+export function exactNS(opts: ExactNSOptions = {}): HelixNoiseOptions {
+  const { k0 = 2, nu = 0.02, sign = 1, ...rest } = opts;
+  return {
+    kmin: k0,
+    kmax: k0, // one shell: |k| is the same for every mode
+    helicity: sign, // p = ±1 makes every drawn sign that sign
+    churn: 0, // om = 0; the only time dependence is the viscous decay
+    decay: nu,
+    tileable: false,
+    ellipticity: 1, // Beltrami — the whole point
+    ...rest,
+  };
+}
+
+/**
+ * Energy-weighted polarization of the two measured turbulence states these presets aim at:
+ * `d` = linear polarization degree, `absP` = per-shell helical fraction, `signedP` = its signed
+ * mean. Quoted so tests and docs can check what a field actually reproduces.
+ */
+export const NS_TARGETS = {
+  dev: { d: 1.155, absP: 0.462, signedP: 0.057 },
+  forced: { d: 1.062, absP: 0.516, signedP: 0.229, condensateK1: 0.55 },
+} as const;
+
+/** Invert the per-mode relative helicity 2ε/(1+ε²) = p for ε — the ellipticity matching a target. */
+function epsForP(p: number): number {
+  return (1 - Math.sqrt(1 - p * p)) / p;
+}
+
+/**
+ * Option bundle whose **polarization** matches measured developed turbulence: per-mode helical
+ * fraction |p| ≈ 0.46 with a weakly positive signed mean, i.e. strongly polarized waves whose
+ * handedness nearly cancels. Both numbers are inverted exactly — `ellipticity` from
+ * 2ε/(1+ε²) = |p|, and the `helicity` slider from signedP/|p|.
+ *
+ * Scope, honestly: the polarization is calibrated, the **spectrum is not** — this keeps the
+ * default power law. Matching the measured shell spectrum needs a table this package does not
+ * ship; pass your own `spectrum` if you have one.
+ */
+export function nsDeveloped(overrides?: Partial<HelixNoiseOptions>): HelixNoiseOptions {
+  const { absP, signedP } = NS_TARGETS.dev;
+  return {
+    modes: 96,
+    layout: "random", // a genuine ensemble, matching how the target was measured
+    kmin: 1,
+    kmax: 15, // the band holding ~99% of the measured energy
+    ellipticity: epsForP(absP),
+    helicity: signedP / absP,
+    ...overrides,
+  };
+}
+
+/**
+ * Same as {@link nsDeveloped} for the *forced* state: more strongly polarized waves (|p| ≈ 0.52)
+ * and a markedly net-handed field (signed mean +0.23), which reads as a visible overall swirl
+ * direction. The measured state also carries a helical condensate at the largest scale; expressing
+ * that needs a per-wavenumber `helicity` — see the `condensate` preset if you want to add one.
+ *
+ * Same scope caveat as {@link nsDeveloped}: polarization calibrated, spectrum not.
+ */
+export function nsForced(overrides?: Partial<HelixNoiseOptions>): HelixNoiseOptions {
+  const { absP, signedP } = NS_TARGETS.forced;
+  return {
+    modes: 96,
+    layout: "random",
+    kmin: 1,
+    kmax: 15,
+    ellipticity: epsForP(absP),
+    helicity: signedP / absP,
+    ...overrides,
+  };
+}

@@ -4,7 +4,7 @@
 //! never disturbs a field's mode layout.
 
 use crate::boundary::VectorPotential;
-use crate::constants::ScaleFn;
+use crate::constants::{HelixOptions, ScaleFn};
 use crate::field::HelixField;
 
 /// Spectrum preset: a Gaussian shell bump `a(k) = exp(-(k-k_peak)^2 / (2*width^2))` — an
@@ -137,4 +137,91 @@ impl VectorPotential for TwoScale<'_> {
     fn velocity_and_potential(&self, x: f64, y: f64, z: f64, t: f64) -> ([f64; 3], [f64; 3]) {
         self.sample_ua(x, y, z, t)
     }
+}
+
+
+/// Options for [`exact_ns`].
+pub struct ExactNsOptions {
+    /// Shell wavenumber `k0` (used for both `kmin` and `kmax`).
+    pub k0: f64,
+    /// Kinematic viscosity `nu` (becomes `decay`); `0` gives the steady Euler member.
+    pub nu: f64,
+    /// Chirality `+1` or `-1` (becomes `helicity`, so every mode takes that sign).
+    pub sign: f64,
+}
+
+impl Default for ExactNsOptions {
+    fn default() -> Self {
+        ExactNsOptions { k0: 2.0, nu: 0.02, sign: 1.0 }
+    }
+}
+
+/// Options for a field that is an **exact solution of the Navier–Stokes equations**.
+///
+/// All modes share one `|k| = k0` and one handedness, which makes the field Beltrami
+/// (`curl u = ±k0·u`); the nonlinear term is then a pure gradient absorbed by the pressure, so
+/// the flow simply decays as `e^(-nu·k0²·t)` — exactly what `decay` does to every amplitude.
+///
+/// ```
+/// use helix_noise::{exact_ns, ExactNsOptions, HelixField, HelixOptions};
+/// let f = HelixField::create(HelixOptions { seed: 7, ..exact_ns(ExactNsOptions::default()) });
+/// ```
+pub fn exact_ns(o: ExactNsOptions) -> HelixOptions {
+    HelixOptions {
+        kmin: o.k0,
+        kmax: o.k0,        // one shell: |k| is the same for every mode
+        helicity: o.sign,  // p = ±1 makes every drawn sign that sign
+        churn: 0.0,        // om = 0; viscous decay is the only time dependence
+        decay: o.nu,
+        tileable: false,
+        ellipticity: 1.0, // Beltrami — the whole point
+        ..Default::default()
+    }
+}
+
+/// Energy-weighted polarization of a measured turbulence state.
+pub struct NsTargets {
+    /// Linear-polarization degree.
+    pub d: f64,
+    /// Per-shell helical fraction `|p|`.
+    pub abs_p: f64,
+    /// Its signed mean.
+    pub signed_p: f64,
+}
+
+/// Measured developed-turbulence polarization.
+pub const NS_TARGETS_DEV: NsTargets = NsTargets { d: 1.155, abs_p: 0.462, signed_p: 0.057 };
+/// Measured forced-turbulence polarization.
+pub const NS_TARGETS_FORCED: NsTargets = NsTargets { d: 1.062, abs_p: 0.516, signed_p: 0.229 };
+
+/// Invert the per-mode relative helicity `2e/(1+e²) = p` for `e`.
+fn eps_for_p(p: f64) -> f64 {
+    (1.0 - (1.0 - p * p).sqrt()) / p
+}
+
+fn ns_bundle(t: &NsTargets) -> HelixOptions {
+    HelixOptions {
+        modes: 96,
+        layout: crate::constants::Layout::Random, // a genuine ensemble, as the target was measured
+        kmin: 1.0,
+        kmax: 15.0, // the band holding ~99% of the measured energy
+        ellipticity: eps_for_p(t.abs_p),
+        helicity: t.signed_p / t.abs_p,
+        ..Default::default()
+    }
+}
+
+/// Option bundle whose **polarization** matches measured developed turbulence: per-mode helical
+/// fraction `|p| ≈ 0.46` with a weakly positive signed mean. Both numbers are inverted exactly.
+///
+/// Scope, honestly: the polarization is calibrated, the **spectrum is not** — this keeps the
+/// default power law. Supply your own `spectrum` if you have a measured one.
+pub fn ns_developed() -> HelixOptions {
+    ns_bundle(&NS_TARGETS_DEV)
+}
+
+/// As [`ns_developed`] for the *forced* state: more strongly polarized waves (`|p| ≈ 0.52`) and a
+/// markedly net-handed field, which reads as a visible overall swirl direction. Same scope caveat.
+pub fn ns_forced() -> HelixOptions {
+    ns_bundle(&NS_TARGETS_FORCED)
 }

@@ -23,7 +23,8 @@ export type {
 } from "./types";
 export { HelixField } from "./field";
 export { HelixAtoms } from "./atoms";
-export { shellPeak, rolloff, condensate, abc, twoScale, C_TWO_SCALE } from "./presets";
+export { shellPeak, rolloff, condensate, abc, twoScale, C_TWO_SCALE, exactNS, nsDeveloped, nsForced, NS_TARGETS } from "./presets";
+export type { ExactNSOptions } from "./presets";
 
 /** Create a Helix Noise field. */
 export function create(options?: HelixNoiseOptions): Field {

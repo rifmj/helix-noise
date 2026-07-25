@@ -74,5 +74,8 @@ pub use boundary::{BoundaryOptions, BoundedField, VectorPotential};
 pub use constants::{ga, HelixOptions, Layout, ScaleFn, SpectrumFn, TAU, VERSION};
 pub use field::{HelixField, ModeSnapshot};
 pub use glsl::GlslOptions;
-pub use presets::{abc, condensate, rolloff, shell_peak, AbcOptions, TwoScale, C_TWO_SCALE};
+pub use presets::{
+    abc, condensate, exact_ns, ns_developed, ns_forced, rolloff, shell_peak, AbcOptions,
+    ExactNsOptions, NsTargets, TwoScale, C_TWO_SCALE, NS_TARGETS_DEV, NS_TARGETS_FORCED,
+};
 pub use rng::Mulberry32;

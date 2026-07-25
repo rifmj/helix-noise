@@ -3,6 +3,28 @@
 All notable changes to this project are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [1.5.0]
+
+### Added
+
+- **`exactNS({ k0, nu, sign })`** — options for a field that genuinely *solves* the Navier–Stokes
+  equations rather than merely resembling one. A single wavenumber and one handedness make the flow
+  Beltrami (`∇×u = ±k₀u`), so the nonlinear term is a pure gradient the pressure absorbs and what
+  remains is exact viscous decay. Verified as a shipped test: `∇×u = k₀u` pointwise, `u(t)` is
+  `e^(−νk₀²t)·u(0)` to machine precision, and the relative helicity is `±1` and conserved.
+- **`nsDeveloped()` / `nsForced()`** — option bundles whose polarization matches measured
+  turbulence: `ellipticity` is the exact inverse of the per-mode helical fraction (2ε/(1+ε²) = |p|)
+  and `helicity` carries its signed mean. `NS_TARGETS` exports the numbers.
+- **`relativeHelicitySpectral(t)`** — the exact, grid-free relative helicity, computed straight
+  from the wave data. `relativeHelicity(ng)` is a grid estimate of it; with few, distinct, integer
+  wavevectors the two agree to 1e-9, and they part company exactly where you would expect —
+  when `tileable` rounding makes wavevectors collide.
+
+### Notes
+
+- The NS bundles calibrate **polarization only**; the spectrum keeps the default power law, because
+  matching a measured shell spectrum needs a table this package does not ship. The docs say so.
+
 ## [1.4.0]
 
 ### Added

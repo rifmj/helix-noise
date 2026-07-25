@@ -5,8 +5,9 @@
 //! GLSL emitter for config A reproduces the reference shader's float constants.
 
 use helix_noise::{
-    abc, condensate, rolloff, shell_peak, AbcOptions, AtomOptions, BoundaryOptions, GlslOptions,
-    HelixAtoms, HelixField, HelixOptions, Layout,
+    abc, condensate, exact_ns, ns_developed, ns_forced, rolloff, shell_peak, AbcOptions,
+    AtomOptions, BoundaryOptions, ExactNsOptions, GlslOptions, HelixAtoms, HelixField, HelixOptions,
+    Layout, NS_TARGETS_DEV, NS_TARGETS_FORCED,
 };
 use serde_json::Value;
 
@@ -470,5 +471,62 @@ fn glsl_config_q_grain_matches_reference() {
     assert_eq!(got.len(), exp.len(), "GLSL float count differs\n--- got ---\n{src}");
     for (i, (&g, &e)) in got.iter().zip(exp.iter()).enumerate() {
         assert!(close(g, e, 1e-6, 1e-6), "GLSL float #{i}: got {g}, expected {e}");
+    }
+}
+
+/// exact_ns(): a single-shell Beltrami field with the exact Stokes decay.
+#[test]
+fn exact_ns_is_beltrami_and_decays_exactly() {
+    let (k0, nu) = (2.0, 0.05);
+    let f = HelixField::create(HelixOptions {
+        seed: 7,
+        modes: 24,
+        ..exact_ns(ExactNsOptions { k0, nu, sign: 1.0 })
+    });
+    let snap = f.mode_snapshot();
+    for j in 0..snap.n {
+        assert!((snap.km[j] - k0).abs() < 1e-12, "mode {j} sits on the single shell");
+        assert_eq!(snap.s[j], 1.0, "mode {j} takes the requested chirality");
+        assert_eq!(snap.om[j], 0.0, "no churn");
+    }
+    for &t in &[0.0, 1.7] {
+        let (u, w) = f.sample_uw(1.0, 2.0, 3.0, t);
+        for c in 0..3 {
+            assert!((w[c] - k0 * u[c]).abs() < 1e-12, "curl u = k0*u at t={t}");
+        }
+    }
+    let t = 2.5;
+    let d = (-nu * k0 * k0 * t).exp();
+    let u0 = f.sample_uw(1.0, 2.0, 3.0, 0.0).0;
+    let ut = f.sample_uw(1.0, 2.0, 3.0, t).0;
+    for c in 0..3 {
+        assert!((ut[c] - d * u0[c]).abs() < 1e-12, "u(t) = e^(-nu k0^2 t) u(0)");
+    }
+    assert!((f.relative_helicity_spectral(0.0) - 1.0).abs() < 1e-12, "rho = +1");
+    assert!((f.relative_helicity_spectral(t) - 1.0).abs() < 1e-12, "conserved under decay");
+}
+
+/// The NS bundles invert the measured polarization exactly.
+#[test]
+fn ns_bundles_match_measured_polarization() {
+    for (o, t) in [(ns_developed(), &NS_TARGETS_DEV), (ns_forced(), &NS_TARGETS_FORCED)] {
+        let e = o.ellipticity;
+        let p_mode = 2.0 * e / (1.0 + e * e);
+        assert!((p_mode - t.abs_p).abs() < 1e-12, "per-mode |p| = {p_mode}, want {}", t.abs_p);
+        assert!((o.helicity * t.abs_p - t.signed_p).abs() < 1e-12, "signed mean");
+    }
+}
+
+/// One mode's spectral helicity is exactly 2*chi/(1+chi^2).
+#[test]
+fn spectral_helicity_matches_the_closed_form() {
+    for &eps in &[0.0, 0.3, 0.5, 1.0] {
+        let f = HelixField::create(HelixOptions {
+            modes: 1, seed: 3, tileable: true, kmin: 2.0, kmax: 2.0,
+            helicity: 1.0, ellipticity: eps, ..Default::default()
+        });
+        let chi = f.mode_snapshot().chi[0];
+        let want = 2.0 * chi / (1.0 + chi * chi);
+        assert!((f.relative_helicity_spectral(0.0) - want).abs() < 1e-12, "eps={eps}");
     }
 }

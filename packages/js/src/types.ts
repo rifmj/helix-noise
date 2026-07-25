@@ -193,6 +193,8 @@ export interface Field extends FlowField {
   set(options: HelixNoiseOptions): Field;
   /** Relative helicity ⟨u·ω⟩/(‖u‖‖ω‖) on an ng³ grid; should track helicity p. Default ng = 12. */
   relativeHelicity(ng?: number): number;
+  /** Relative helicity straight from the mode arrays — the exact, grid-free value at time t. */
+  relativeHelicitySpectral(t?: number): number;
   /** Emit self-contained GLSL (WebGL2) defining `vec3 <name>(vec3 p)` + `(vec3 p, float t)` (+ curl). */
   glsl(opts?: GlslOptions): string;
 }

@@ -3,6 +3,13 @@
 All notable changes to this project are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.5.0]
+
+- **Preset bundles**: `exact_ns` (single-shell Beltrami + exact Stokes decay — a true Navier-Stokes
+  solution), `ns_developed` / `ns_forced` (measured polarization, inverted exactly; spectrum
+  deliberately not calibrated) and `NS_TARGETS`. New `relative_helicity_spectral(t)`: the exact,
+  grid-free relative helicity, `2*chi/(1+chi^2)` for a single mode.
+
 ## [0.4.0]
 
 - **Grain axis (spec 1.2)**: `polarizationAxis` / `polarizationBias` add world-anchored linear

@@ -601,6 +601,39 @@ class HelixField:
 
     # --------------------------------------------------------------- bakes
 
+    def relative_helicity_spectral(self, t=0.0):
+        """Relative helicity straight from the mode arrays -- no grid at all.
+
+        Writing each mode as ``u_j = Re[v_j exp(i phi)]`` with ``v_j = a_j (e1' + i e2')``,
+        the space averages are exact sums. This is the infinite-volume value;
+        :meth:`relative_helicity` differs from it only by the cross-mode terms a finite grid
+        fails to cancel. For a single mode it is exactly ``2 chi / (1 + chi^2)``.
+        """
+        H = E = Z = 0.0
+        gen = getattr(self, "_general", False)
+        for j in range(self.N):
+            km = self.km[j]
+            k2 = km * km
+            a = self.a[j]
+            m = a * a
+            if self.nu > 0 and t != 0.0:
+                m *= math.exp(-2.0 * self.nu * k2 * t)
+            e1 = [self.e1x[j], self.e1y[j], self.e1z[j]]
+            e2 = [self.e2x[j], self.e2y[j], self.e2z[j]]
+            if gen:
+                w1 = list(self.w1[j])
+                w2 = list(self.w2[j])
+            else:
+                chi = self.chi[j]
+                w1 = [chi * km * c for c in e1]
+                w2 = [km * c for c in e2]
+                e2 = [chi * c for c in e2]
+            E += 0.5 * m * (sum(c * c for c in e1) + sum(c * c for c in e2))
+            Z += 0.5 * m * (sum(c * c for c in w1) + sum(c * c for c in w2))
+            H += 0.5 * m * (sum(e1[c] * w1[c] for c in range(3)) + sum(e2[c] * w2[c] for c in range(3)))
+        denom = math.sqrt(E * Z)
+        return H / (denom or 1.0)
+
     def bake3d(self, n, t=0.0):
         """Bake velocity + helicity density on an ``n^3`` grid.
 
