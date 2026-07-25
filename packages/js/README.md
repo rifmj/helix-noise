@@ -324,6 +324,8 @@ or jump straight in (they're plain HTML files in [`examples/`](examples/), no bu
 | [Vortex tubes](https://rifmj.github.io/helix-noise/examples/tubes.html) | three.js streamtubes — at `helicity ±1` every tube corkscrews the same way |
 | [Kelp forest](https://rifmj.github.io/helix-noise/examples/kelp.html) | sway driven by the field's own `churn` — set it to 0 and the forest freezes |
 | [Ebru marbling](https://rifmj.github.io/helix-noise/examples/ebru.html) | ink stretches and folds but never tears — incompressibility made visible |
+| [Exact Navier–Stokes](https://rifmj.github.io/helix-noise/examples/exact-ns.html) | a field that genuinely solves the equations, plus three break-it buttons and a truth table where no single test catches every break |
+| [Heat haze](https://rifmj.github.io/helix-noise/examples/boil.html) | `flutter` against plain `churn`, refracting the same plate — the shimmer is exactly zero at `t = 0` and dies when churn does |
 | [Vortex rings](https://rifmj.github.io/helix-noise/examples/rings.html) | closed-form structures: a smoke ring flying at Kelvin's speed, a head-on collision, and `compose(ring, noise)` |
 | [Polarization grid](https://rifmj.github.io/helix-noise/examples/polarization.html) | nine fields on one seed — `ellipticity` (tubes → sheets) against the world `grain`, with the measured ρ in each corner |
 | [Two-scale recipe](https://rifmj.github.io/helix-noise/examples/two-scale.html) | an `abc()` backbone carrying `shellPeak` detail; the detail's vorticity budget stays fixed as you slide its scale |

@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Helix Noise — flutter as heat haze</title>
+<style>
+  html,body{margin:0;background:#070a0e;color:#cdd6dd;font-family:system-ui,sans-serif}
+  .wrap{max-width:1020px;margin:0 auto;padding:22px 16px}
+  h1{font-size:19px;font-weight:600;margin:0 0 6px}
+  h1 code{color:#f4a13c}
+  p{color:#8a97a2;font-size:13.5px;line-height:1.6;margin:0 0 14px}
+  p b{color:#cdd6dd;font-weight:500}
+  code{font-family:ui-monospace,Menlo,monospace;color:#f4a13c;font-size:12.5px}
+  .pair{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .cell{position:relative;border:1px solid rgba(150,180,200,.15);border-radius:10px;overflow:hidden;background:#070a0e;aspect-ratio:4/3}
+  .cell canvas{display:block;width:100%;height:100%}
+  .cap{position:absolute;left:9px;top:8px;font-family:ui-monospace,monospace;font-size:10.5px;color:#93a3b0;
+    background:rgba(7,10,14,.62);border-radius:5px;padding:3px 7px;pointer-events:none}
+  .cap b{font-weight:400;color:#38d9d1}
+  .row{display:flex;flex-wrap:wrap;gap:14px;align-items:center;margin-top:12px;font-family:ui-monospace,monospace;font-size:12px;color:#93a3b0}
+  .row label{display:flex;align-items:center;gap:8px}
+  input[type=range]{width:120px}
+  button{font-family:ui-monospace,monospace;font-size:11.5px;color:#cdd6dd;background:#0c1016;
+    border:1px solid rgba(150,180,200,.22);border-radius:7px;padding:6px 11px;cursor:pointer}
+  button:hover{border-color:#38d9d1}
+  .receipt{margin-top:16px;display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .rc{border:1px solid rgba(150,180,200,.16);border-radius:9px;padding:11px 13px;font-size:12.5px;color:#8a97a2;line-height:1.6}
+  .rc h3{margin:0 0 5px;font-size:12px;color:#cdd6dd;font-weight:500}
+  .rc .num{font-family:ui-monospace,monospace;color:#2fd6bf}
+  .rc .num.warn{color:#f4a13c}
+  .note{margin-top:14px;font-size:12px;color:#5d6b77;font-family:ui-monospace,monospace;line-height:1.7}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Flutter — <code>flutter</code>, the shimmer that costs nothing at frame 0</h1>
+  <p><code>churn</code> drifts the field smoothly. Real air also <b>boils</b>: a good part of the local strain
+    fluctuates far faster than an eddy turns over, which is what makes heat haze read as heat haze rather than
+    as slow warping. <code>flutter</code> adds that. Both panels below refract the same reference plate through
+    the same field with the same seed — <b>left is churn alone, right adds flutter</b> — so any difference you
+    see is the dial and nothing else.</p>
+
+  <div class="pair">
+    <div class="cell"><canvas id="a"></canvas><div class="cap">churn only — <b>flutter 0</b></div></div>
+    <div class="cell"><canvas id="b"></canvas><div class="cap">+ flutter <b id="cap-f">0.90</b></div></div>
+  </div>
+
+  <div class="row">
+    <label>churn <input id="churn" type="range" min="0" max="2" step="0.05" value="1"><span id="v-churn">1.00</span></label>
+    <label>flutter <input id="flut" type="range" min="0" max="2" step="0.05" value="0.9"><span id="v-flut">0.90</span></label>
+    <label>haze <input id="haze" type="range" min="0" max="0.06" step="0.002" value="0.03"><span id="v-haze">0.030</span></label>
+    <button id="rewind">jump to t = 0</button>
+    <button id="play">pause</button>
+    <span id="clock" style="opacity:.7"></span>
+  </div>
+
+  <div class="receipt">
+    <div class="rc">
+      <h3>The frame-0 identity</h3>
+      Over 4096 points, <code>max |u<sub>flutter</sub>(x, 0) − u<sub>0</sub>(x, 0)|</code> =
+      <span class="num" id="r-zero">—</span>. Not "small" — <b>exactly zero</b>, and structurally so: flutter is
+      built from phases that were already drawn (it consumes no RNG), the phase term is written as
+      <code>sin(ω_f t + ph) − sin(ph)</code> so it cancels at <code>t = 0</code>, and the RMS normalization is
+      measured there too. Hit <b>jump to t = 0</b> and the two panels become pixel-identical.
+    </div>
+    <div class="rc">
+      <h3>Flutter rides the churn clock</h3>
+      They are not independent dials. The flutter rate is <code>φ·rate₀·k<sub>max</sub>^⅔</code> and
+      <code>rate₀ ∝ churn</code>, so with <b>churn at 0</b> the difference between flutter 2 and flutter 0 is
+      <span class="num" id="r-frozen">—</span> at <code>t = 3.7</code>. Drag churn to zero and both dials die
+      together — a frozen field stays frozen no matter how hard you shake this one.
+    </div>
+  </div>
+
+  <div class="note" id="note">—</div>
+</div>
+
+<script src="../dist/helix-noise.global.js"></script>
+<script>
+(function(){
+  var TAU = Math.PI * 2;
+  var params = { churn: 1, flutter: 0.9, haze: 0.03, seed: 11, modes: 40 };
+  var playing = true, t = 0;
+
+  var fieldA, fieldB;
+  function build(){
+    fieldA = HelixNoise.create({ modes: params.modes, seed: params.seed, slope: 1.5,
+                                 coherence: 0.35, churn: params.churn, flutter: 0 });
+    fieldB = HelixNoise.create({ modes: params.modes, seed: params.seed, slope: 1.5,
+                                 coherence: 0.35, churn: params.churn, flutter: params.flutter });
+  }
+  build();
+
+  // --- the reference plate: hard edges, so refraction is legible -----------
+  var plate = document.createElement("canvas");
+  plate.width = 480; plate.height = 360;
+  (function drawPlate(){
+    var g = plate.getContext("2d");
+    g.fillStyle = "#0a0e13"; g.fillRect(0,0,480,360);
+    var cols = ["#2fd6bf","#38d9d1","#f4a13c","#cdd6dd","#4aa3ff","#b48ef0"];
+    for (var i=0;i<6;i++){ g.fillStyle = cols[i]; g.fillRect(i*80, 40, 80, 120); }
+    g.strokeStyle = "rgba(205,214,221,.55)"; g.lineWidth = 2;
+    for (var y=200; y<=320; y+=24){ g.beginPath(); g.moveTo(24,y); g.lineTo(456,y); g.stroke(); }
+    g.fillStyle = "#cdd6dd"; g.font = "600 30px ui-monospace, monospace";
+    g.fillText("HELIX NOISE", 24, 26);
+  })();
+  var plateData = plate.getContext("2d").getImageData(0,0,480,360).data;
+
+  // --- refract the plate through a z-slice of the field --------------------
+  function render(cv, field){
+    var ctx = cv.getContext("2d");
+    var w = cv.clientWidth || 320, h = cv.clientHeight || 240;
+    var dpr = 1;                              // 1:1 — this is a per-pixel loop, keep it honest
+    if (cv.width !== Math.round(w*dpr)) { cv.width = Math.round(w*dpr); cv.height = Math.round(h*dpr); }
+    w = cv.width; h = cv.height;
+    var img = ctx.createImageData(w, h), d = img.data;
+    var uw = [0,0,0,0,0,0];
+    var amp = params.haze * Math.min(w,h);
+    // sample the field on a coarse lattice and interpolate — 1 sample per 4x4 block
+    var BS = 4, gw = Math.ceil(w/BS)+1, gh = Math.ceil(h/BS)+1;
+    var DX = new Float32Array(gw*gh), DY = new Float32Array(gw*gh);
+    for (var gy=0; gy<gh; gy++) for (var gx=0; gx<gw; gx++){
+      field.sampleUW((gx*BS/w)*TAU, (gy*BS/h)*TAU, 1.3, uw, t);
+      DX[gy*gw+gx] = uw[0]; DY[gy*gw+gx] = uw[1];
+    }
+    for (var y=0; y<h; y++){
+      var fy = y/BS, y0 = fy|0, ty = fy-y0;
+      for (var x=0; x<w; x++){
+        var fx = x/BS, x0 = fx|0, tx = fx-x0;
+        var i00=y0*gw+x0, i10=i00+1, i01=i00+gw, i11=i01+1;
+        var dx = (DX[i00]*(1-tx)+DX[i10]*tx)*(1-ty) + (DX[i01]*(1-tx)+DX[i11]*tx)*ty;
+        var dy = (DY[i00]*(1-tx)+DY[i10]*tx)*(1-ty) + (DY[i01]*(1-tx)+DY[i11]*tx)*ty;
+        var sx = Math.round((x + dx*amp) * 480/w), sy = Math.round((y + dy*amp) * 360/h);
+        sx = sx<0?0:(sx>479?479:sx); sy = sy<0?0:(sy>359?359:sy);
+        var s = (sy*480+sx)*4, o = (y*w+x)*4;
+        d[o]=plateData[s]; d[o+1]=plateData[s+1]; d[o+2]=plateData[s+2]; d[o+3]=255;
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+  }
+
+  // --- receipts, measured live --------------------------------------------
+  function measureReceipts(){
+    // (1) frame-0 identity, over 4096 points
+    var worst = 0;
+    for (var i=0;i<4096;i++){
+      var x = Math.sin(i*1.7)*6, y = Math.cos(i*2.3)*6, z = Math.sin(i*0.9)*6;
+      var p = fieldA.sample(x,y,z,0), q = fieldB.sample(x,y,z,0);
+      for (var c=0;c<3;c++){ var e = Math.abs(p[c]-q[c]); if (e>worst) worst = e; }
+    }
+    document.getElementById("r-zero").textContent = worst === 0 ? "0 (exactly)" : worst.toExponential(2);
+    document.getElementById("r-zero").className = worst === 0 ? "num" : "num warn";
+
+    // (2) with churn 0, flutter does nothing at all
+    var f0 = HelixNoise.create({ modes: params.modes, seed: params.seed, slope:1.5, coherence:0.35, churn: 0, flutter: 0 });
+    var f2 = HelixNoise.create({ modes: params.modes, seed: params.seed, slope:1.5, coherence:0.35, churn: 0, flutter: 2 });
+    var w2 = 0;
+    for (var j=0;j<1500;j++){
+      var a = j*0.31, b = j*0.77, cc = j*0.19;
+      var p2 = f0.sample(a,b,cc,3.7), q2 = f2.sample(a,b,cc,3.7);
+      for (var k=0;k<3;k++){ var e2 = Math.abs(p2[k]-q2[k]); if (e2>w2) w2 = e2; }
+    }
+    var el = document.getElementById("r-frozen");
+    el.textContent = w2 === 0 ? "0 (exactly)" : w2.toExponential(2);
+    el.className = w2 === 0 ? "num" : "num warn";
+
+    // (3) short-lag correlation, ensemble — bounded to where it is monotone
+    var LAGS = [0.25, 0.5, 0.75], SEEDS = 8;
+    var out = [];
+    for (var li=0; li<LAGS.length; li++){
+      var accA = 0, accB = 0;
+      for (var s=0; s<SEEDS; s++){
+        accA += corr(HelixNoise.create({ modes: params.modes, seed: 100+s, slope:1.5, coherence:0.35, churn: params.churn, flutter: 0 }), LAGS[li]);
+        accB += corr(HelixNoise.create({ modes: params.modes, seed: 100+s, slope:1.5, coherence:0.35, churn: params.churn, flutter: params.flutter }), LAGS[li]);
+      }
+      out.push({ lag: LAGS[li], a: accA/SEEDS, b: accB/SEEDS });
+    }
+    document.getElementById("note").innerHTML =
+      "short-lag correlation ⟨u(0)·u(τ)⟩ / √(⟨|u(0)|²⟩⟨|u(τ)|²⟩), mean of " + SEEDS + " seeds &nbsp;·&nbsp; " +
+      out.map(function(r){ return "τ=" + r.lag + " <b style='color:#93a3b0'>" + r.a.toFixed(3) +
+        "</b> → <b style='color:#2fd6bf'>" + r.b.toFixed(3) + "</b>"; }).join(" &nbsp;·&nbsp; ") +
+      "<br>Short lags only, deliberately. A finite sum of waves <b>recurs</b>, so this correlation is " +
+      "oscillatory, not decaying — and you can already see it turn in the numbers above, where the last lag " +
+      "often sits <i>higher</i> than the one before it. Flutter reliably lowers the correlation at τ ≈ 0.25–0.5; " +
+      "beyond that the ordering stops being stable seed to seed. There is no half-life here and this page does " +
+      "not invent one.";
+  }
+
+  function corr(f, lag){
+    var num=0, na=0, nb=0, o1=[0,0,0,0,0,0], o2=[0,0,0,0,0,0];
+    for (var i=0;i<220;i++){
+      var x = Math.sin(i*2.1)*5, y = Math.cos(i*1.3)*5, z = Math.sin(i*0.7)*5;
+      f.sampleUW(x,y,z,o1,0); f.sampleUW(x,y,z,o2,lag);
+      for (var c=0;c<3;c++){ num += o1[c]*o2[c]; na += o1[c]*o1[c]; nb += o2[c]*o2[c]; }
+    }
+    return num / Math.sqrt(na*nb);
+  }
+
+  // --- loop ---------------------------------------------------------------
+  var A = document.getElementById("a"), B = document.getElementById("b");
+  function frame(){
+    if (playing) t += 0.016;
+    render(A, fieldA); render(B, fieldB);
+    document.getElementById("clock").textContent = "t = " + t.toFixed(2);
+    requestAnimationFrame(frame);
+  }
+
+  var $ = function(id){ return document.getElementById(id); };
+  $("churn").oninput = function(e){ params.churn = +e.target.value; $("v-churn").textContent = params.churn.toFixed(2); build(); measureReceipts(); };
+  $("flut").oninput = function(e){ params.flutter = +e.target.value; $("v-flut").textContent = params.flutter.toFixed(2); $("cap-f").textContent = params.flutter.toFixed(2); build(); measureReceipts(); };
+  $("haze").oninput = function(e){ params.haze = +e.target.value; $("v-haze").textContent = params.haze.toFixed(3); };
+  $("rewind").onclick = function(){ t = 0; };
+  $("play").onclick = function(){ playing = !playing; $("play").textContent = playing ? "pause" : "play"; };
+  addEventListener("resize", function(){ A.width = 0; B.width = 0; });
+
+  measureReceipts();
+  frame();
+})();
+</script>
+</body>
+</html>

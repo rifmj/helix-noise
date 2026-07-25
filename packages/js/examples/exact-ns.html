@@ -1,0 +1,372 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Helix Noise — an exact Navier–Stokes solution (and three ways to break it)</title>
+<style>
+  html,body{margin:0;background:#070a0e;color:#cdd6dd;font-family:system-ui,sans-serif}
+  .wrap{max-width:1020px;margin:0 auto;padding:22px 16px}
+  h1{font-size:19px;font-weight:600;margin:0 0 6px}
+  h1 code{color:#f4a13c}
+  p{color:#8a97a2;font-size:13.5px;line-height:1.6;margin:0 0 14px}
+  p b{color:#cdd6dd;font-weight:500}
+  code{font-family:ui-monospace,Menlo,monospace;color:#f4a13c;font-size:12.5px}
+  .split{display:grid;grid-template-columns:1.35fr 1fr;gap:10px}
+  #stage,.plot{position:relative;border:1px solid rgba(150,180,200,.15);border-radius:10px;overflow:hidden;background:#070a0e}
+  #stage{aspect-ratio:4/3}
+  .plot{aspect-ratio:4/3}
+  .plot canvas{display:block;width:100%;height:100%}
+  .badge{position:absolute;top:9px;left:11px;font-family:ui-monospace,monospace;font-size:10px;
+    letter-spacing:.12em;text-transform:uppercase;color:#93a3b0;background:rgba(7,10,14,.6);
+    border:1px solid rgba(150,180,200,.14);border-radius:6px;padding:4px 8px;pointer-events:none}
+  .ro{position:absolute;top:9px;right:11px;font-family:ui-monospace,monospace;font-size:11px;color:#93a3b0;
+    background:rgba(7,10,14,.6);border:1px solid rgba(150,180,200,.14);border-radius:6px;padding:5px 9px;
+    text-align:right;line-height:1.5;pointer-events:none}
+  .ro b{font-weight:400;color:#2fd6bf}
+  .row{display:flex;flex-wrap:wrap;gap:14px;align-items:center;margin-top:12px;font-family:ui-monospace,monospace;font-size:12px;color:#93a3b0}
+  .row label{display:flex;align-items:center;gap:8px}
+  input[type=range]{width:110px}
+  button{font-family:ui-monospace,monospace;font-size:11.5px;color:#cdd6dd;background:#0c1016;
+    border:1px solid rgba(150,180,200,.22);border-radius:7px;padding:6px 11px;cursor:pointer}
+  button:hover{border-color:#38d9d1}
+  button.on{border-color:#f4a13c;color:#fff}
+  table{width:100%;border-collapse:collapse;margin-top:16px;font-family:ui-monospace,monospace;font-size:11.5px}
+  th,td{padding:7px 9px;text-align:right;border-bottom:1px solid rgba(150,180,200,.1)}
+  th:first-child,td:first-child{text-align:left;color:#8a97a2}
+  th{color:#93a3b0;font-weight:400;text-transform:uppercase;letter-spacing:.09em;font-size:10px}
+  td.pass{color:#2fd6bf}
+  td.fail{color:#f4a13c}
+  td.on{background:rgba(244,161,60,.07)}
+  .note{margin-top:14px;font-size:12px;color:#5d6b77;font-family:ui-monospace,monospace;line-height:1.7}
+  .scope{margin-top:14px;padding:11px 13px;border:1px solid rgba(150,180,200,.16);border-left:2px solid #f4a13c;
+    border-radius:0 8px 8px 0;font-size:12.5px;color:#8a97a2;line-height:1.65}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>An exact Navier–Stokes solution — <code>exactNS</code></h1>
+  <p>Every other page here shows a field that <i>looks</i> like a fluid. This one <b>is one</b>:
+    <code>create(exactNS({k0, nu}))</code> puts every wave on a single <code>|k| = k₀</code> with one
+    handedness, which makes the flow <b>Beltrami</b> (<code>∇×u = ±k₀u</code>). The nonlinear term then
+    reduces to a pure gradient that the pressure absorbs, and what is left is exact viscous decay —
+    every amplitude shrinking as <code>e^(−νk₀²t)</code>, which is precisely what <code>decay</code> does.
+    The table below checks that, live, and the three <b>break-it</b> buttons show what stops being true.</p>
+
+  <div class="split">
+    <div id="stage"><div class="badge">helix-noise · exactNS · three.js</div><div class="ro" id="ro">—</div></div>
+    <div class="plot"><canvas id="plot"></canvas><div class="badge">energy · log axis</div></div>
+  </div>
+
+  <div class="row">
+    <label>k₀ <input id="k0" type="range" min="1" max="6" step="1" value="3"><span id="v-k0">3</span></label>
+    <label>ν <input id="nu" type="range" min="0.01" max="0.2" step="0.01" value="0.04"><span id="v-nu">0.04</span></label>
+    <button id="sign">chirality: +1</button>
+    <span style="opacity:.5">break it →</span>
+    <button id="b-ell">ellipticity 0.6</button>
+    <button id="b-band">two shells</button>
+    <button id="b-churn">churn 1</button>
+  </div>
+
+  <table id="truth">
+    <thead><tr><th>test</th><th id="h0">exactNS</th><th id="h1">ellipticity 0.6</th><th id="h2">two shells</th><th id="h3">churn 1</th></tr></thead>
+    <tbody></tbody>
+  </table>
+
+  <div class="note" id="note">—</div>
+
+  <div class="scope">
+    <b style="color:#cdd6dd">Scope, stated plainly.</b> This is the classical decaying Beltrami (Trkalian)
+    class: free space, no boundaries, and a nonlinearity that is inert rather than balanced. It is an
+    <b>exact solution</b>, not a turbulent one — no cascade, no intermittency, and the whole field decays at
+    one rate. Note also that the curl in row A is read from <code>field.sampleGrad()</code>, not from
+    <code>vorticity()</code>: on a circular field the sampler computes <code>w = s·κ·u</code> by assignment,
+    so testing <code>∇×u = k₀u</code> against it would be circular reasoning. The gradient is an independent
+    analytic code path, so the residual below is a real measurement. And the "two shells" button rebuilds the
+    mode table — it is the same seed, a new draw, not the same field with a wider band.
+  </div>
+</div>
+
+<script src="../dist/helix-noise.global.js"></script>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+  import * as THREE from "three";
+  import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+  const TAU = Math.PI * 2;
+  const params = { k0: 3, nu: 0.04, sign: 1, modes: 32, seed: 5 };
+  const BREAKS = ["ell", "band", "churn"];
+  let broken = null;              // null = the genuine solution
+
+  // ---- the fields -------------------------------------------------------
+  // The break-it variants keep the seed, so what changes is the physics, not the draw.
+  function build(which) {
+    const base = HelixNoise.exactNS({ k0: params.k0, nu: params.nu, sign: params.sign,
+                                      modes: params.modes, seed: params.seed });
+    if (which === "ell") return HelixNoise.create({ ...base, ellipticity: 0.6 });
+    if (which === "band") return HelixNoise.create({ ...base, kmax: params.k0 + 2 });
+    if (which === "churn") return HelixNoise.create({ ...base, churn: 1 });
+    return HelixNoise.create(base);
+  }
+  let field = build(null);
+
+  // ---- the two hypotheses, measured -------------------------------------
+  const g9 = new Float64Array(9), o6 = [0, 0, 0, 0, 0, 0];
+  const PTS = (() => {
+    const p = [];
+    for (let i = 0; i < 48; i++) p.push([Math.sin(i * 1.7) * 5, Math.cos(i * 2.3) * 5, Math.sin(i * 0.9) * 5]);
+    return p;
+  })();
+
+  /** (A) Beltrami: is curl u parallel to u, with the right factor? Curl from the GRADIENT. */
+  function beltramiResidual(f) {
+    let worst = 0, scale = 1e-12;
+    for (const [x, y, z] of PTS) {
+      const u = f.sample(x, y, z, 0);
+      f.sampleGrad(x, y, z, g9, 0);
+      const w = [g9[5] - g9[7], g9[6] - g9[2], g9[1] - g9[3]];
+      for (let c = 0; c < 3; c++) {
+        worst = Math.max(worst, Math.abs(w[c] - params.sign * params.k0 * u[c]));
+        scale = Math.max(scale, Math.abs(w[c]));
+      }
+    }
+    return worst / scale;
+  }
+
+  /** (C) the momentum law: with the nonlinearity inert, ∂ₜu must be exactly −νk₀²u. */
+  function momentumResidual(f) {
+    const h = 1e-3, t0 = 1.5;
+    let worst = 0, scale = 1e-12;
+    for (const [x, y, z] of PTS) {
+      const up = f.sample(x, y, z, t0 + h), um = f.sample(x, y, z, t0 - h), u = f.sample(x, y, z, t0);
+      for (let c = 0; c < 3; c++) {
+        const dudt = (up[c] - um[c]) / (2 * h);
+        const want = -params.nu * params.k0 * params.k0 * u[c];
+        worst = Math.max(worst, Math.abs(dudt - want));
+        scale = Math.max(scale, Math.abs(want), Math.abs(dudt));
+      }
+    }
+    return worst / scale;
+  }
+
+  /** (B) the energy law: does <|u|²> follow e^(−2νk₀²t) exactly? */
+  function energyLaw(f) {
+    const e0 = meanEnergy(f, 0);
+    let worst = 0;
+    for (const t of [1, 3, 6, 10]) {
+      const want = e0 * Math.exp(-2 * params.nu * params.k0 * params.k0 * t);
+      worst = Math.max(worst, Math.abs(meanEnergy(f, t) - want) / (e0 || 1));
+    }
+    return worst;
+  }
+
+  function meanEnergy(f, t) {
+    let s = 0, n = 0;
+    const ng = 6;
+    for (let i = 0; i < ng; i++) for (let j = 0; j < ng; j++) for (let k = 0; k < ng; k++) {
+      f.sampleUW((i / ng) * TAU, (j / ng) * TAU, (k / ng) * TAU, o6, t);
+      s += o6[0] * o6[0] + o6[1] * o6[1] + o6[2] * o6[2]; n++;
+    }
+    return 0.5 * s / n;
+  }
+
+  const fmt = (v) => (v < 1e-6 ? v.toExponential(1) : v.toFixed(3));
+  const cls = (v) => (v < 1e-6 ? "pass" : "fail");
+
+  function refreshTable() {
+    const cols = [null, ...BREAKS];
+    const rows = [
+      { label: "(A) Beltrami  ‖∇×u − k₀u‖ / ‖∇×u‖", fn: beltramiResidual },
+      { label: "(B) energy law  |⟨|u|²⟩ − e^(−2νk₀²t)|", fn: energyLaw },
+      { label: "(C) momentum  ‖∂ₜu + νk₀²u‖ / ‖νk₀²u‖", fn: momentumResidual },
+    ];
+    const body = document.querySelector("#truth tbody");
+    body.innerHTML = "";
+    const measured = cols.map((c) => (c === broken || (c === null && broken === null) ? field : build(c)));
+    for (const r of rows) {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td>${r.label}</td>` + measured.map((f, i) => {
+        const v = r.fn(f);
+        const active = cols[i] === broken ? " on" : "";
+        return `<td class="${cls(v)}${active}">${fmt(v)}</td>`;
+      }).join("");
+      body.appendChild(tr);
+    }
+    // the teaching moment: (B) alone cannot tell a solution from a non-solution
+    const ellB = rows[1].fn(measured[1]);
+    const churnA = rows[0].fn(measured[3]);
+    document.getElementById("note").innerHTML =
+      "<b style='color:#cdd6dd'>No single row decides it.</b> Read down each break instead. " +
+      "The ellipticity break scores <b style='color:#2fd6bf'>" + fmt(ellB) + "</b> on the energy law — it " +
+      "<b>passes</b>, and it has to: ellipticity changes how each wave polarizes, not its amplitude, so every " +
+      "amplitude still carries the same <code>e^(−νk₀²t)</code>. Churn passes row (A) at " +
+      "<b style='color:#2fd6bf'>" + fmt(churnA) + "</b> too — a churning field is still Beltrami at every " +
+      "instant, it just marches its phases somewhere Navier–Stokes never sends them, which only row (C) sees. " +
+      "A page that checked one of these would certify a field that is not a solution.";
+  }
+
+  // ---- particles --------------------------------------------------------
+  const N = 7000;
+  const pos = new Float32Array(3 * N), posD = new Float64Array(3 * N), col = new Float32Array(3 * N);
+  let rs = 12345;
+  const rnd = () => ((rs = (rs * 1664525 + 1013904223) >>> 0) / 4294967296);
+  const spawn = (i) => {
+    posD[3 * i] = rnd() * TAU; posD[3 * i + 1] = rnd() * TAU; posD[3 * i + 2] = rnd() * TAU;
+  };
+  for (let i = 0; i < N; i++) spawn(i);
+
+  const stage = document.getElementById("stage");
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(Math.min(2, devicePixelRatio));
+  stage.appendChild(renderer.domElement);
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x070a0e);
+  const camera = new THREE.PerspectiveCamera(45, 4 / 3, 0.1, 100);
+  camera.position.set(9.5, 5.5, 11);
+  camera.lookAt(TAU / 2, TAU / 2, TAU / 2);
+  const controls = new OrbitControls(camera, renderer.domElement);
+  controls.target.set(TAU / 2, TAU / 2, TAU / 2);
+  controls.enableDamping = true; controls.autoRotate = true; controls.autoRotateSpeed = 0.45;
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute("color", new THREE.BufferAttribute(col, 3));
+  scene.add(new THREE.Points(geo, new THREE.PointsMaterial({
+    size: 0.05, vertexColors: true, transparent: true, opacity: 0.8,
+    blending: THREE.AdditiveBlending, depthWrite: false,
+  })));
+  const box = new THREE.LineSegments(
+    new THREE.EdgesGeometry(new THREE.BoxGeometry(TAU, TAU, TAU)),
+    new THREE.LineBasicMaterial({ color: 0x1d3038 })
+  );
+  box.position.set(TAU / 2, TAU / 2, TAU / 2);
+  scene.add(box);
+
+  function resize() {
+    renderer.setSize(stage.clientWidth, stage.clientHeight);
+    camera.aspect = stage.clientWidth / stage.clientHeight;
+    camera.updateProjectionMatrix();
+  }
+  addEventListener("resize", () => { resize(); drawPlot(); });
+  resize();
+
+  // ---- the run ----------------------------------------------------------
+  const TEAL = [0.184, 0.839, 0.749], AMBER = [0.957, 0.631, 0.235];
+  let t = 0;
+  const T_MAX = 14;
+  function step() {
+    const dt = 0.03;
+    t += dt;
+    if (t > T_MAX) t = 0;               // loop, so the box does not just go dark
+    for (let i = 0; i < N; i++) {
+      const x = posD[3 * i], y = posD[3 * i + 1], z = posD[3 * i + 2];
+      field.sampleUW(x, y, z, o6, t);
+      // wrap in the 2π box — the field is not tileable here, but the box is only a viewport
+      posD[3 * i] = ((x + o6[0] * dt) % TAU + TAU) % TAU;
+      posD[3 * i + 1] = ((y + o6[1] * dt) % TAU + TAU) % TAU;
+      posD[3 * i + 2] = ((z + o6[2] * dt) % TAU + TAU) % TAU;
+      pos[3 * i] = posD[3 * i]; pos[3 * i + 1] = posD[3 * i + 1]; pos[3 * i + 2] = posD[3 * i + 2];
+      const h = o6[0] * o6[3] + o6[1] * o6[4] + o6[2] * o6[5];
+      const c = h >= 0 ? TEAL : AMBER;
+      const g = Math.min(1, 0.2 + Math.hypot(o6[0], o6[1], o6[2]) * 0.7);
+      col[3 * i] = c[0] * g; col[3 * i + 1] = c[1] * g; col[3 * i + 2] = c[2] * g;
+    }
+    geo.attributes.position.needsUpdate = true;
+    geo.attributes.color.needsUpdate = true;
+  }
+
+  // ---- the energy plot --------------------------------------------------
+  const pc = document.getElementById("plot");
+  let e0cache = null;
+  function drawPlot() {
+    const ctx = pc.getContext("2d");
+    const w = pc.clientWidth || 300, h = pc.clientHeight || 240;
+    const dpr = Math.min(2, devicePixelRatio || 1);
+    pc.width = Math.round(w * dpr); pc.height = Math.round(h * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = "#070a0e"; ctx.fillRect(0, 0, w, h);
+
+    const pad = { l: 40, r: 12, t: 26, b: 26 };
+    const e0 = e0cache;
+    const lo = Math.log10(Math.max(e0 * Math.exp(-2 * params.nu * params.k0 * params.k0 * T_MAX), 1e-12));
+    const hi = Math.log10(Math.max(e0, 1e-12));
+    const X = (tt) => pad.l + (tt / T_MAX) * (w - pad.l - pad.r);
+    const Y = (e) => pad.t + (1 - (Math.log10(Math.max(e, 1e-12)) - lo) / ((hi - lo) || 1)) * (h - pad.t - pad.b);
+
+    ctx.strokeStyle = "rgba(150,180,200,.16)"; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(pad.l, pad.t); ctx.lineTo(pad.l, h - pad.b); ctx.lineTo(w - pad.r, h - pad.b); ctx.stroke();
+
+    // the analytic law
+    ctx.strokeStyle = "rgba(47,214,191,.85)"; ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    for (let i = 0; i <= 120; i++) {
+      const tt = (i / 120) * T_MAX;
+      const e = e0 * Math.exp(-2 * params.nu * params.k0 * params.k0 * tt);
+      i ? ctx.lineTo(X(tt), Y(e)) : ctx.moveTo(X(tt), Y(e));
+    }
+    ctx.stroke();
+
+    // measured points
+    ctx.fillStyle = "#f4a13c";
+    for (let i = 0; i <= 7; i++) {
+      const tt = (i / 7) * T_MAX;
+      const e = meanEnergy(field, tt);
+      ctx.beginPath(); ctx.arc(X(tt), Y(e), 2.6, 0, TAU); ctx.fill();
+    }
+
+    // the playhead
+    ctx.strokeStyle = "rgba(205,214,221,.35)";
+    ctx.beginPath(); ctx.moveTo(X(t), pad.t); ctx.lineTo(X(t), h - pad.b); ctx.stroke();
+
+    ctx.fillStyle = "#5d6b77"; ctx.font = "10px ui-monospace, monospace";
+    ctx.fillText("½⟨|u|²⟩", 6, pad.t + 4);
+    ctx.fillText("t = 0", pad.l, h - 9);
+    ctx.fillText("t = " + T_MAX, w - pad.r - 34, h - 9);
+    ctx.fillStyle = "rgba(47,214,191,.9)"; ctx.fillText("e^(−2νk₀²t)", pad.l + 8, pad.t + 14);
+  }
+
+  const ro = document.getElementById("ro");
+  function frame() {
+    step();
+    ro.innerHTML = `t <b>${t.toFixed(2)}</b><br>E/E₀ <b>${(meanEnergy(field, t) / (e0cache || 1)).toExponential(1)}</b>` +
+      `<br>ρ <b>${field.relativeHelicitySpectral(t).toFixed(3)}</b>`;
+    if ((frame.n = (frame.n || 0) + 1) % 12 === 0) drawPlot();
+    controls.update();
+    renderer.render(scene, camera);
+    requestAnimationFrame(frame);
+  }
+
+  // ---- controls ---------------------------------------------------------
+  const $ = (id) => document.getElementById(id);
+  function rebuild() {
+    field = build(broken);
+    e0cache = meanEnergy(field, 0);
+    t = 0;
+    refreshTable();
+    drawPlot();
+  }
+  $("k0").oninput = (e) => { params.k0 = +e.target.value; $("v-k0").textContent = params.k0; rebuild(); };
+  $("nu").oninput = (e) => { params.nu = +e.target.value; $("v-nu").textContent = params.nu.toFixed(2); rebuild(); };
+  $("sign").onclick = () => {
+    params.sign = params.sign === 1 ? -1 : 1;
+    $("sign").textContent = "chirality: " + (params.sign > 0 ? "+1" : "−1");
+    rebuild();
+  };
+  for (const b of BREAKS) {
+    $("b-" + b).onclick = () => {
+      broken = broken === b ? null : b;
+      for (const o of BREAKS) $("b-" + o).classList.toggle("on", o === broken);
+      rebuild();
+    };
+  }
+
+  rebuild();
+  frame();
+</script>
+</body>
+</html>
