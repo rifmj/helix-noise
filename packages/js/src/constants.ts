@@ -2,7 +2,7 @@ import type { HelixNoiseOptions } from "./types";
 
 export const TAU = 2 * Math.PI;
 
-export const VERSION = "1.2.0";
+export const VERSION = "1.3.0";
 
 /** Default options, filled in for every field (`spectrum` stays optional — no default law object). */
 export const DEFAULTS: Required<Omit<HelixNoiseOptions, "spectrum">> & Pick<HelixNoiseOptions, "spectrum"> = {

@@ -20,19 +20,25 @@ var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: tru
 // src/index.ts
 var src_exports = {};
 __export(src_exports, {
+  C_TWO_SCALE: () => C_TWO_SCALE,
   HelixAtoms: () => HelixAtoms,
   HelixField: () => HelixField,
+  abc: () => abc,
+  condensate: () => condensate,
   create: () => create,
   createAtoms: () => createAtoms,
   default: () => src_default,
+  rolloff: () => rolloff,
   selfTest: () => selfTest,
+  shellPeak: () => shellPeak,
+  twoScale: () => twoScale,
   version: () => version
 });
 module.exports = __toCommonJS(src_exports);
 
 // src/constants.ts
 var TAU = 2 * Math.PI;
-var VERSION = "1.2.0";
+var VERSION = "1.3.0";
 var DEFAULTS = {
   modes: 48,
   // number of helical modes (cost of one sample is O(modes))
@@ -516,8 +522,7 @@ function rotFromUniforms(u1, u2, u3) {
   ]);
 }
 var HelixField = class {
-  // batch-sampler accumulator scratch
-  constructor(opts) {
+  constructor(opts, direct) {
     /** Viscous decay rate ν (amplitudes ∝ e^(−νk²t)); 0 = none. */
     this.nu = 0;
     this._scale = 1;
@@ -535,6 +540,12 @@ var HelixField = class {
     // decayed-amplitude cache, valid at time _tAmp
     this._tAmp = NaN;
     this._tile = null;
+    // batch-sampler accumulator scratch
+    /**
+     * Set when the modes come from a closed-form preset instead of the RNG (see
+     * {@link DirectModes}); `set()` refuses to regenerate such a field. @internal
+     */
+    this._fixed = false;
     this.params = { ...DEFAULTS };
     if (opts) {
       for (const k of Object.keys(opts)) {
@@ -543,8 +554,49 @@ var HelixField = class {
         }
       }
     }
+    if (direct) {
+      this._installDirect(direct);
+      return;
+    }
     this._alloc(this.params.modes);
     this._build();
+  }
+  /** Install an explicit, closed-form mode table (no RNG draws at all). @internal */
+  _installDirect(d) {
+    const N = d.k.length;
+    this.params.modes = N;
+    this._alloc(N);
+    const fr = [0, 0, 0, 0, 0, 0];
+    for (let j = 0; j < N; j++) {
+      const [kx, ky, kz] = d.k[j];
+      const km = Math.hypot(kx, ky, kz);
+      this.kx[j] = kx;
+      this.ky[j] = ky;
+      this.kz[j] = kz;
+      this.km[j] = km;
+      frame(kx / km, ky / km, kz / km, fr);
+      this.e1x[j] = fr[0];
+      this.e1y[j] = fr[1];
+      this.e1z[j] = fr[2];
+      this.e2x[j] = fr[3];
+      this.e2y[j] = fr[4];
+      this.e2z[j] = fr[5];
+      this.s[j] = d.s[j];
+      this.chi[j] = d.s[j];
+      this.a[j] = d.a[j];
+      this.ph[j] = d.ph[j];
+      this.om[j] = 0;
+    }
+    const nc = Math.max(1, this.params.centers | 0);
+    this.cvx = new Float64Array(nc);
+    this.cvy = new Float64Array(nc);
+    this.cvz = new Float64Array(nc);
+    this.nu = Math.max(0, this.params.decay);
+    this._beltrami = true;
+    this._tAmp = NaN;
+    this._buildStamp++;
+    this._scale = d.scale;
+    this._fixed = true;
   }
   _alloc(N) {
     this.N = N;
@@ -576,7 +628,11 @@ var HelixField = class {
       cz[m] = rng() * TAU;
     }
     const fr = [0, 0, 0, 0, 0, 0];
-    const lam = Math.min(1, Math.max(0, p.coherence));
+    const cohFn = typeof p.coherence === "function" ? p.coherence : null;
+    const helFn = typeof p.helicity === "function" ? p.helicity : null;
+    const helVal = helFn ? 0 : p.helicity;
+    const lam = cohFn ? 0 : Math.min(1, Math.max(0, p.coherence));
+    const lamArr = cohFn ? new Float64Array(N) : null;
     const fib = p.layout !== "random";
     const ci = new Int32Array(N);
     const gam = Math.min(9, Math.max(-0.99, p.anisotropy));
@@ -649,14 +705,16 @@ var HelixField = class {
       this.e2x[j] = fr[3];
       this.e2y[j] = fr[4];
       this.e2z[j] = fr[5];
-      this.s[j] = rng() < (1 + p.helicity) / 2 ? 1 : -1;
+      this.s[j] = rng() < (1 + (helFn ? helFn(km) : helVal)) / 2 ? 1 : -1;
       this.chi[j] = eps * this.s[j];
       this.a[j] = p.spectrum ? Math.max(0, p.spectrum(km)) : Math.pow(km, -p.slope);
       const phr = TAU * rng();
       const c = rng() * nc | 0;
       ci[j] = c;
       const phc = -(kxc * cx[c] + kyc * cy[c] + kzc * cz[c]);
-      this.ph[j] = phc + (1 - lam) * phr;
+      const lamJ = cohFn ? Math.min(1, Math.max(0, cohFn(km))) : lam;
+      if (lamArr) lamArr[j] = lamJ;
+      this.ph[j] = phc + (1 - lamJ) * phr;
     }
     const churnRate = Math.max(0, p.churn);
     this.cvx = new Float64Array(nc);
@@ -674,7 +732,8 @@ var HelixField = class {
     for (let j = 0; j < N; j++) {
       const sgn = rng() < 0.5 ? -1 : 1;
       const c = ci[j];
-      this.om[j] = (1 - lam) * sgn * rate0 * Math.pow(this.km[j], 2 / 3) - lam * (this.kx[j] * this.cvx[c] + this.ky[j] * this.cvy[c] + this.kz[j] * this.cvz[c]);
+      const lamJ = lamArr ? lamArr[j] : lam;
+      this.om[j] = (1 - lamJ) * sgn * rate0 * Math.pow(this.km[j], 2 / 3) - lamJ * (this.kx[j] * this.cvx[c] + this.ky[j] * this.cvy[c] + this.kz[j] * this.cvz[c]);
     }
     this.nu = Math.max(0, p.decay);
     this._tAmp = NaN;
@@ -893,6 +952,7 @@ var HelixField = class {
     return Math.sqrt(s / n);
   }
   set(opts) {
+    if (this._fixed) throw new Error("helix-noise: this is a closed-form preset field \u2014 build a new one instead of set()");
     const reAlloc = !!opts && "modes" in opts && opts.modes !== this.params.modes;
     for (const k of Object.keys(opts)) {
       if ((k in DEFAULTS || k === "spectrum") && opts[k] !== void 0) {
@@ -1408,6 +1468,130 @@ var HelixAtoms = class {
   }
 };
 
+// src/presets.ts
+function shellPeak(kPeak, width = 1) {
+  const w = Math.abs(width) || 1;
+  return (k) => Math.exp(-(k - kPeak) * (k - kPeak) / (2 * w * w));
+}
+function rolloff(kc) {
+  return (k) => Math.min(1, Math.max(0, 1 - k / kc));
+}
+function condensate(kSplit, pLarge, pSmall = 0) {
+  return (k) => k <= kSplit ? pLarge : pSmall;
+}
+function abc(A = 1, B = 1, C = 1, opts) {
+  const HALF_PI = Math.PI / 2;
+  const rms = Math.sqrt(A * A + B * B + C * C);
+  const amp = opts?.amplitude;
+  return new HelixField(
+    { modes: 3, tileable: true, churn: 0, decay: opts?.decay ?? 0 },
+    {
+      k: [
+        [0, 0, 1],
+        [1, 0, 0],
+        [0, 1, 0]
+      ],
+      s: [1, 1, 1],
+      a: [A, B, C],
+      ph: [-HALF_PI, -HALF_PI, Math.PI],
+      scale: amp === void 0 ? 1 : amp / (rms || 1)
+    }
+  );
+}
+var C_TWO_SCALE = 1.6;
+function twoScale(base, detail, opts) {
+  return new TwoScaleField(base, detail, opts?.detailGain ?? 1);
+}
+var _a6 = [0, 0, 0, 0, 0, 0];
+var _b6 = [0, 0, 0, 0, 0, 0];
+var _t6 = [0, 0, 0, 0, 0, 0];
+var TwoScaleField = class {
+  constructor(base, detail, detailGain) {
+    this.base = base;
+    this.detail = detail;
+    this.detailGain = detailGain;
+  }
+  _sum(pick, x, y, z, out6, t) {
+    const g = this.detailGain;
+    if (pick === "uw") {
+      this.base.sampleUW(x, y, z, _a6, t);
+      this.detail.sampleUW(x, y, z, _b6, t);
+    } else {
+      this.base.sampleUA(x, y, z, _a6, t);
+      this.detail.sampleUA(x, y, z, _b6, t);
+    }
+    for (let i = 0; i < 6; i++) out6[i] = _a6[i] + g * _b6[i];
+    return out6;
+  }
+  sampleUW(x, y, z, out6, t = 0) {
+    return this._sum("uw", x, y, z, out6, t);
+  }
+  sampleUA(x, y, z, out6, t = 0) {
+    return this._sum("ua", x, y, z, out6, t);
+  }
+  sample(x, y, z, t = 0) {
+    this.sampleUW(x, y, z, _t6, t);
+    return [_t6[0], _t6[1], _t6[2]];
+  }
+  vorticity(x, y, z, t = 0) {
+    this.sampleUW(x, y, z, _t6, t);
+    return [_t6[3], _t6[4], _t6[5]];
+  }
+  helicityDensity(x, y, z, t = 0) {
+    this.sampleUW(x, y, z, _t6, t);
+    return _t6[0] * _t6[3] + _t6[1] * _t6[4] + _t6[2] * _t6[5];
+  }
+  potential(x, y, z, t = 0) {
+    this.sampleUA(x, y, z, _t6, t);
+    return [_t6[3], _t6[4], _t6[5]];
+  }
+  withBoundary(sdf, opts) {
+    return new BoundedFieldImpl(this, sdf, opts);
+  }
+  bake3D(n, t = 0) {
+    const data = new Float32Array(n * n * n * 4);
+    let p = 0;
+    for (let z = 0; z < n; z++) for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
+      this.sampleUW(x / n * TAU_, y / n * TAU_, z / n * TAU_, _t6, t);
+      data[p] = _t6[0];
+      data[p + 1] = _t6[1];
+      data[p + 2] = _t6[2];
+      data[p + 3] = _t6[0] * _t6[3] + _t6[1] * _t6[4] + _t6[2] * _t6[5];
+      p += 4;
+    }
+    return { data, size: n, channels: 4 };
+  }
+  bakePotential3D(n, t = 0) {
+    const data = new Float32Array(n * n * n * 4);
+    let p = 0;
+    for (let z = 0; z < n; z++) for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
+      const px = x / n * TAU_, py = y / n * TAU_, pz = z / n * TAU_;
+      this.sampleUA(px, py, pz, _t6, t);
+      data[p] = _t6[3];
+      data[p + 1] = _t6[4];
+      data[p + 2] = _t6[5];
+      this.sampleUW(px, py, pz, _t6, t);
+      data[p + 3] = _t6[0] * _t6[3] + _t6[1] * _t6[4] + _t6[2] * _t6[5];
+      p += 4;
+    }
+    return { data, size: n, channels: 4 };
+  }
+  bake2D(nx, ny, z = 0, t = 0) {
+    const data = new Float32Array(nx * ny * 4);
+    let p = 0;
+    for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+      this.sampleUW(i / nx * TAU_, j / ny * TAU_, z, _t6, t);
+      data[p] = _t6[0];
+      data[p + 1] = _t6[1];
+      data[p + 2] = _t6[2];
+      data[p + 3] = _t6[0] * _t6[3] + _t6[1] * _t6[4] + _t6[2] * _t6[5];
+      p += 4;
+    }
+    return { data, width: nx, height: ny, channels: 4 };
+  }
+};
+var TAU_ = 2 * Math.PI;
+
 // src/index.ts
 function create(options) {
   return new HelixField(options);
@@ -1466,11 +1650,17 @@ var HelixNoise = { create, createAtoms, selfTest, version };
 var src_default = HelixNoise;
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
+  C_TWO_SCALE,
   HelixAtoms,
   HelixField,
+  abc,
+  condensate,
   create,
   createAtoms,
+  rolloff,
   selfTest,
+  shellPeak,
+  twoScale,
   version
 });
 //# sourceMappingURL=helix-noise.cjs.map

@@ -1,6 +1,6 @@
 {
   "name": "helix-noise",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Helix Noise \u2014 divergence-free helical flow fields, grid-free. Sample a 3-D incompressible velocity field at any point with three artist controls: spectral slope, helicity, phase coherence. No FFT, no grid, no simulation.",
   "keywords": [
     "helix-noise",

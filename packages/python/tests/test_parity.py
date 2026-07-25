@@ -32,7 +32,27 @@ MODE_CONFIGS = [
     "E_tileable",
     "J_elliptic_linear",
     "K_elliptic_half",
+    "M_coherence_k",
+    "N_helicity_k",
+    "O_shellpeak",
 ]
+
+# Callable options travel in the fixture as {"$preset": name, "args": [...]} descriptors.
+PRESET_REGISTRY = {
+    "shellPeak": hn.shell_peak,
+    "rolloff": hn.rolloff,
+    "condensate": hn.condensate,
+}
+
+
+def _resolve(config):
+    out = {}
+    for k, v in config.items():
+        if isinstance(v, dict) and "$preset" in v:
+            out[k] = PRESET_REGISTRY[v["$preset"]](*v["args"])
+        else:
+            out[k] = v
+    return out
 
 # JS-style camelCase config keys -> python snake_case create() kwargs.
 KEY_MAP = {"layout": "layout", "axis": "axis"}
@@ -48,7 +68,7 @@ def _close(actual, expected, atol=ATOL, rtol=RTOL):
 
 
 def _build(config):
-    return hn.create(**config)
+    return hn.create(**_resolve(config))
 
 
 def _check_modes(f, modes, label):
@@ -197,9 +217,22 @@ def test_glsl_K_elliptic():
         )
 
 
+def test_abc_factory():
+    """The closed-form abc() field (spec §10.2) matches the reference mode-for-mode."""
+    data = _load()
+    entry = data["P_abc"]
+    f = hn.abc(*entry["factory"]["args"])
+    _check_modes(f, entry["modes"], "P_abc")
+    _check_samples(f, entry["samples"], "P_abc")
+    _check_relhelicity(f, entry["relativeHelicity"], "P_abc")
+    _check_bakesum(f, entry["bake3d4_sum"], "P_abc")
+
+
 def _run_all():
     test_mode_configs()
-    print("mode configs (A-E, J-K): modes, samples, relHelicity, bake sum, vectorized OK")
+    print("mode configs (A-E, J-K, M-O): modes, samples, relHelicity, bake sum, vectorized OK")
+    test_abc_factory()
+    print("P_abc factory: modes, samples, relHelicity, bake sum OK")
     test_boundary_F()
     print("boundary_F: u, w, potential OK")
     test_boundary_L_elliptic()

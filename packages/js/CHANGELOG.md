@@ -3,6 +3,31 @@
 All notable changes to this project are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [1.3.0]
+
+### Added
+
+- **Scale-dependent dials.** `helicity` and `coherence` now also take a function of the wavenumber,
+  evaluated once per wave exactly like `spectrum`. That reaches looks a single slider cannot:
+  organized large-scale rollers carrying incoherent fine grain, or handedness that lives only at
+  the largest scales. The callables never draw randomness, so the mode layout is untouched — a
+  function returning a constant reproduces the scalar field bit for bit.
+- **Dial presets** `shellPeak(kPeak, width)`, `rolloff(kc)`, `condensate(kSplit, pLarge, pSmall)`.
+- **`abc(A, B, C, { amplitude, decay })`** — the classical ABC cell flow as exactly three waves of
+  the same engine, so every sampler, bake, `glsl()` and `withBoundary` works on it. No RNG at all,
+  seamlessly tileable, a pure Beltrami field (`∇×u = u`, potential `= u`); `decay: ν` makes it the
+  exact viscous solution. It refuses `set()` — build a new one instead.
+- **`twoScale(base, detail, { detailGain })`** plus the constant `C_TWO_SCALE` — a coherent backbone
+  carrying broadband detail. The sum of two divergence-free fields is divergence-free and its
+  potential is the sum of theirs, so boundaries and potential bakes keep working. Sizing the detail
+  as `amplitude: C_TWO_SCALE / kDetail` holds its vorticity budget fixed as you slide its scale.
+- Sandbox demo: `rollers` and `band` preset buttons driving the new dials.
+
+### Notes
+
+- Purely additive: with scalars everywhere the executed code path is unchanged, and every
+  pre-existing parity-fixture config is bit-identical.
+
 ## [1.2.0]
 
 ### Added

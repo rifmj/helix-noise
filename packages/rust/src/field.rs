@@ -116,6 +116,8 @@ pub struct HelixField {
     /// True when every mode is fully circular (`ellipticity == 1`): gates the legacy Beltrami
     /// shortcut, whose exact rounding the parity fixture pins.
     pub(crate) beltrami: bool,
+    /// Set when the modes come from a closed-form preset instead of the RNG.
+    pub(crate) fixed: bool,
     opts: HelixOptions,
 }
 
@@ -143,9 +145,58 @@ impl HelixField {
             nu: 0.0,
             scale: 1.0,
             beltrami: true,
+            fixed: false,
             opts,
         };
         f.build();
+        f
+    }
+
+    /// Build a field from an explicit, closed-form mode table — no RNG draws at all.
+    ///
+    /// `e1`/`e2` are always recomputed with the engine's own `frame()`, and `om` is zero
+    /// (preset fields are steady). Used by the preset factories; `set_options` refuses to
+    /// regenerate such a field.
+    pub(crate) fn from_modes(
+        k: &[[f64; 3]],
+        s: &[f64],
+        a: &[f64],
+        ph: &[f64],
+        scale: f64,
+        decay: f64,
+    ) -> Self {
+        let n = k.len();
+        let mut f = HelixField::new(HelixOptions {
+            modes: n,
+            tileable: true,
+            churn: 0.0,
+            decay,
+            ..Default::default()
+        });
+        for j in 0..n {
+            let (kx, ky, kz) = (k[j][0], k[j][1], k[j][2]);
+            let km = hypot3(kx, ky, kz);
+            f.kx[j] = kx;
+            f.ky[j] = ky;
+            f.kz[j] = kz;
+            f.km[j] = km;
+            let fr = frame(kx / km, ky / km, kz / km);
+            f.e1x[j] = fr[0];
+            f.e1y[j] = fr[1];
+            f.e1z[j] = fr[2];
+            f.e2x[j] = fr[3];
+            f.e2y[j] = fr[4];
+            f.e2z[j] = fr[5];
+            f.s[j] = s[j];
+            f.chi[j] = s[j];
+            f.a[j] = a[j];
+            f.ph[j] = ph[j];
+            f.om[j] = 0.0;
+        }
+        f.nu = decay.max(0.0);
+        f.beltrami = true;
+        f.scale = scale;
+        f.fixed = true;
         f
     }
 
@@ -205,7 +256,10 @@ impl HelixField {
             cz[m] = rng.next_f64() * TAU;
         }
 
+        // coherence / helicity accept a scalar or a pure per-wavenumber callable. Neither ever
+        // gates an rng() call, so the draw sequence is identical either way.
         let lam = p.coherence.clamp(0.0, 1.0);
+        let mut lam_arr = vec![lam; n];
         let fib = p.layout != Layout::Random;
         let mut ci = vec![0usize; n];
         let gam = p.anisotropy.clamp(-0.99, 9.0);
@@ -305,7 +359,11 @@ impl HelixField {
             self.e2x[j] = fr[3];
             self.e2y[j] = fr[4];
             self.e2z[j] = fr[5];
-            self.s[j] = if rng.next_f64() < (1.0 + p.helicity) / 2.0 {
+            let p_j = match &p.helicity_fn {
+                Some(f) => f(km),
+                None => p.helicity,
+            };
+            self.s[j] = if rng.next_f64() < (1.0 + p_j) / 2.0 {
                 1.0
             } else {
                 -1.0
@@ -325,7 +383,12 @@ impl HelixField {
             // and well-defined for every λ (no λ=½ antipodal singularity of the earlier
             // complex-plane "chord" blend). |a_j| is untouched, so the energy spectrum and
             // helicity bias are frozen at every λ; only the phase moves.
-            self.ph[j] = phc + (1.0 - lam) * phr;
+            let lam_j = match &p.coherence_fn {
+                Some(f) => f(km).clamp(0.0, 1.0),
+                None => lam,
+            };
+            lam_arr[j] = lam_j;
+            self.ph[j] = phc + (1.0 - lam_j) * phr;
         }
 
         // Time evolution — all draws happen AFTER the spatial loop, so the t = 0 field is
@@ -348,8 +411,9 @@ impl HelixField {
         for j in 0..n {
             let sgn = if rng.next_f64() < 0.5 { -1.0 } else { 1.0 };
             let c = ci[j];
-            self.om[j] = (1.0 - lam) * sgn * rate0 * self.km[j].powf(2.0 / 3.0)
-                - lam * (self.kx[j] * cvx[c] + self.ky[j] * cvy[c] + self.kz[j] * cvz[c]);
+            let lam_j = lam_arr[j];
+            self.om[j] = (1.0 - lam_j) * sgn * rate0 * self.km[j].powf(2.0 / 3.0)
+                - lam_j * (self.kx[j] * cvx[c] + self.ky[j] * cvy[c] + self.kz[j] * cvz[c]);
         }
 
         self.nu = p.decay.max(0.0);

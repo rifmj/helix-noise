@@ -73,8 +73,8 @@ Returns a [`Field`](#field). All options are optional — sensible defaults are 
 | Option | Type | Default | What it does |
 |---|---|---|---|
 | `slope` | `number` | `1.6` | Size of the structures. Higher = a few big soft swirls; lower = fine multi-scale grain. |
-| `helicity` | `number` | `0` | Handedness of the swirls, from `-1` (one way) through `0` (mirror-symmetric) to `+1` (the other way). |
-| `coherence` | `number` | `0` | `0` = formless noise, `1` = organized eddies — **at the same busyness**. The dial plain curl-noise doesn't have. |
+| `helicity` | `number \| (k) => number` | `0` | Handedness of the swirls, from `-1` (one way) through `0` (mirror-symmetric) to `+1` (the other way). Pass a function of the wavenumber for a scale-dependent profile. |
+| `coherence` | `number \| (k) => number` | `0` | `0` = formless noise, `1` = organized eddies — **at the same busyness**. The dial plain curl-noise doesn't have. Also accepts a function of the wavenumber. |
 | `ellipticity` | `number` | `1` | Polarization: `1` = corkscrew **tubes** (the classic look), `0` = laminated **sheets/jets**, in between = braided. Changes the texture at a fixed spectrum and a fixed `helicity`. |
 
 > **Three independent shape dials.** `anisotropy` = *where the waves point*, `ellipticity` =
@@ -112,6 +112,49 @@ Returns a [`Field`](#field). All options are optional — sensible defaults are 
 | `axis` | `[number,number,number]` | `[0,0,1]` | The direction `anisotropy` works along. |
 | `spectrum` | `(k: number) => number` | — | Custom amplitude curve, replacing the `slope` power law. Only the shape matters (the field is re-normalized). Must be pure. |
 | `layout` | `"fibonacci" \| "random"` | `"fibonacci"` | How the waves are spread out. `"fibonacci"` (default) looks cleaner at the same `modes` — use it for rendering. `"random"` gives statistically independent waves (for Monte-Carlo / analysis work); it needs more `modes` to look as smooth. |
+
+### Scale-dependent dials
+
+`helicity` and `coherence` also take a **function of the wavenumber**, evaluated once per wave —
+just like `spectrum`. That buys the looks a single slider can't reach: organized rollers carrying
+fine random grain, or a strongly handed large scale over mirror-symmetric detail.
+
+```js
+import { create, rolloff, condensate, shellPeak } from "helix-noise";
+
+create({ coherence: rolloff(4), kmax: 12 });                 // rollers + fine grain
+create({ helicity: condensate(1.5, 0.55, 0.06) });           // handed large scale only
+create({ spectrum: shellPeak(3), kmin: 1, kmax: 6 });        // one energetic band
+```
+
+The callables must be pure — they never draw randomness, so the mode layout is untouched: pass
+a function that returns a constant and you get back exactly the scalar field, bit for bit.
+
+| Preset | Shape | Use for |
+|---|---|---|
+| `shellPeak(kPeak, width = 1)` | `a(k) = exp(−(k−kPeak)²/(2·width²))` | one energetic band instead of a power law |
+| `rolloff(kc)` | `λ(k) = clamp(1 − k/kc, 0, 1)` | organized big structures, incoherent detail |
+| `condensate(kSplit, pLarge, pSmall = 0)` | `p(k) = k ≤ kSplit ? pLarge : pSmall` | handedness that lives only at large scale |
+
+### Preset fields
+
+| Factory | Returns | Notes |
+|---|---|---|
+| `abc(A, B, C, { amplitude?, decay? })` | `Field` | The classical ABC cell flow as exactly 3 waves. No randomness at all, seamlessly tileable, and a pure Beltrami field (`∇×u = u`). `decay: ν` makes it the exact viscous solution `e^(−νt)·u`. Being fixed, it refuses `set()`. |
+| `twoScale(base, detail, { detailGain? })` | `FlowField` | The sum of two fields — still divergence-free, still has an exact potential, so boundaries and potential bakes keep working. |
+
+The recipe those two exist for is **a coherent backbone carrying broadband detail**. Sizing the
+detail as `amplitude: C_TWO_SCALE / kDetail` holds its vorticity budget fixed, so you can slide
+the detail scale without the picture getting busier or calmer:
+
+```js
+import { create, abc, twoScale, shellPeak, C_TWO_SCALE } from "helix-noise";
+
+const kD = 8;
+const detail = create({ spectrum: shellPeak(kD), kmin: kD - 3, kmax: kD + 3,
+                        amplitude: C_TWO_SCALE / kD, seed: 2 });
+const storm = twoScale(abc(3, 3, 3), detail);
+```
 
 ### Reading the field
 

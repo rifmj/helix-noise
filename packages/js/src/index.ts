@@ -16,12 +16,14 @@ export type {
   HelixAtomsOptions,
   HelixNoiseOptions,
   Out6,
+  ScaleFn,
   Sdf,
   SelfTestReport,
   Vec3,
 } from "./types";
 export { HelixField } from "./field";
 export { HelixAtoms } from "./atoms";
+export { shellPeak, rolloff, condensate, abc, twoScale, C_TWO_SCALE } from "./presets";
 
 /** Create a Helix Noise field. */
 export function create(options?: HelixNoiseOptions): Field {

@@ -4,7 +4,10 @@
 //! relative helicity, and bake sums match the reference within tolerance. Also checks that the
 //! GLSL emitter for config A reproduces the reference shader's float constants.
 
-use helix_noise::{AtomOptions, BoundaryOptions, GlslOptions, HelixAtoms, HelixField, HelixOptions, Layout};
+use helix_noise::{
+    abc, condensate, rolloff, shell_peak, AbcOptions, AtomOptions, BoundaryOptions, GlslOptions,
+    HelixAtoms, HelixField, HelixOptions, Layout,
+};
 use serde_json::Value;
 
 const FIXTURE: &str = include_str!("parity_fixture.json");
@@ -33,6 +36,18 @@ fn arr(v: &Value) -> Vec<f64> {
         .collect()
 }
 
+/// Map a fixture preset descriptor onto this port's preset registry.
+fn preset_from(d: &serde_json::Map<String, Value>) -> helix_noise::ScaleFn {
+    let name = d["$preset"].as_str().unwrap();
+    let a: Vec<f64> = d["args"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();
+    match name {
+        "shellPeak" => shell_peak(a[0], *a.get(1).unwrap_or(&1.0)),
+        "rolloff" => rolloff(a[0]),
+        "condensate" => condensate(a[0], a[1], *a.get(2).unwrap_or(&0.0)),
+        other => panic!("unknown fixture preset {other}"),
+    }
+}
+
 fn build_from_config(cfg: &Value) -> HelixField {
     let mut o = HelixOptions::default();
     let m = cfg.as_object().unwrap();
@@ -42,11 +57,11 @@ fn build_from_config(cfg: &Value) -> HelixField {
     if let Some(v) = m.get("slope") {
         o.slope = v.as_f64().unwrap();
     }
-    if let Some(v) = m.get("helicity") {
-        o.helicity = v.as_f64().unwrap();
+    if let Some(v) = m.get("helicity").and_then(|v| v.as_f64()) {
+        o.helicity = v;
     }
-    if let Some(v) = m.get("coherence") {
-        o.coherence = v.as_f64().unwrap();
+    if let Some(v) = m.get("coherence").and_then(|v| v.as_f64()) {
+        o.coherence = v;
     }
     if let Some(v) = m.get("kmin") {
         o.kmin = v.as_f64().unwrap();
@@ -65,6 +80,16 @@ fn build_from_config(cfg: &Value) -> HelixField {
     }
     if let Some(v) = m.get("seed") {
         o.seed = v.as_u64().unwrap() as u32;
+    }
+    // Callable options travel in the fixture as {"$preset": name, "args": [...]} descriptors.
+    if let Some(v) = m.get("coherence").and_then(|v| v.as_object()) {
+        o.coherence_fn = Some(preset_from(v));
+    }
+    if let Some(v) = m.get("helicity").and_then(|v| v.as_object()) {
+        o.helicity_fn = Some(preset_from(v));
+    }
+    if let Some(v) = m.get("spectrum").and_then(|v| v.as_object()) {
+        o.spectrum = Some(preset_from(v));
     }
     if let Some(v) = m.get("ellipticity") {
         o.ellipticity = v.as_f64().unwrap();
@@ -108,9 +133,19 @@ fn spectral_configs_match_fixture() {
         "E_tileable",
         "J_elliptic_linear",
         "K_elliptic_half",
+        "M_coherence_k",
+        "N_helicity_k",
+        "O_shellpeak",
     ] {
         let entry = &root[name];
         let f = build_from_config(&entry["config"]);
+        check_field_against(name, &f, entry);
+    }
+}
+
+/// Mode arrays, samples, relative helicity and the bake checksum of one spectral config.
+fn check_field_against(name: &str, f: &HelixField, entry: &Value) {
+    {
         let modes = &entry["modes"];
 
         assert_eq!(f.modes(), modes["N"].as_u64().unwrap() as usize, "{name} N");
@@ -229,8 +264,8 @@ fn build_atoms_from_config(cfg: &Value) -> HelixAtoms {
     if let Some(v) = m.get("slope") {
         o.slope = v.as_f64().unwrap();
     }
-    if let Some(v) = m.get("helicity") {
-        o.helicity = v.as_f64().unwrap();
+    if let Some(v) = m.get("helicity").and_then(|v| v.as_f64()) {
+        o.helicity = v;
     }
     if let Some(v) = m.get("amplitude") {
         o.amplitude = v.as_f64().unwrap();
@@ -394,4 +429,19 @@ fn glsl_config_k_elliptic_matches_reference() {
     for (i, (&g, &e)) in got.iter().zip(exp.iter()).enumerate() {
         assert!(close(g, e, 1e-6, 1e-6), "GLSL float #{i}: got {g}, expected {e}");
     }
+}
+
+/// The closed-form abc() field (spec §10.2) matches the reference mode-for-mode.
+#[test]
+fn abc_factory_matches_fixture() {
+    let root: Value = serde_json::from_str(FIXTURE).unwrap();
+    let entry = &root["P_abc"];
+    let a = entry["factory"]["args"].as_array().unwrap();
+    let f = abc(
+        a[0].as_f64().unwrap(),
+        a[1].as_f64().unwrap(),
+        a[2].as_f64().unwrap(),
+        AbcOptions::default(),
+    );
+    check_field_against("P_abc", &f, entry);
 }

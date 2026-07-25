@@ -27,7 +27,7 @@ from decimal import Decimal, ROUND_HALF_UP
 
 TAU = 2.0 * math.pi
 GA = math.pi * (3.0 - math.sqrt(5.0))  # golden angle
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 
 
 # ---------------------------------------------------------------------------
@@ -90,6 +90,39 @@ def rot_from_uniforms(u1, u2, u3):
 
 
 # ---------------------------------------------------------------------------
+# Scale-function presets (spec §10.1) — pure functions of |k|, no RNG
+# ---------------------------------------------------------------------------
+def shell_peak(k_peak, width=1.0):
+    """Gaussian shell bump a(k) = exp(-(k-k_peak)^2 / (2*width^2))."""
+    w = abs(width) or 1.0
+    return lambda k: math.exp(-(k - k_peak) * (k - k_peak) / (2.0 * w * w))
+
+
+def rolloff(kc):
+    """lam(k) = clamp(1 - k/kc, 0, 1): organized large scales, random fine detail."""
+    return lambda k: min(1.0, max(0.0, 1.0 - k / kc))
+
+
+def condensate(k_split, p_large, p_small=0.0):
+    """p(k) = p_large below k_split, p_small above: a large-scale helical condensate."""
+    return lambda k: (p_large if k <= k_split else p_small)
+
+
+PRESETS = {"shellPeak": shell_peak, "rolloff": rolloff, "condensate": condensate}
+
+
+def parse_preset(spec):
+    """Parse a CLI descriptor `name:arg[,arg...]` into the preset callable."""
+    if spec is None:
+        return None
+    name, _, rest = spec.partition(":")
+    if name not in PRESETS:
+        raise SystemExit("unknown preset %r (known: %s)" % (name, ", ".join(sorted(PRESETS))))
+    args = [float(a) for a in rest.split(",")] if rest else []
+    return PRESETS[name](*args)
+
+
+# ---------------------------------------------------------------------------
 # Field builder — produces the baked mode arrays (matches the JS reference)
 # ---------------------------------------------------------------------------
 DEFAULTS = {
@@ -137,7 +170,13 @@ class HelixField:
             cx[m] = rng() * TAU
             cy[m] = rng() * TAU
             cz[m] = rng() * TAU
-        lam = min(1.0, max(0.0, p["coherence"]))
+        # coherence / helicity accept a scalar or a pure per-wavenumber callable; neither
+        # ever gates an rng() call, so the draw sequence is identical either way.
+        coh_fn = p["coherence"] if callable(p["coherence"]) else None
+        hel_fn = p["helicity"] if callable(p["helicity"]) else None
+        hel_val = 0.0 if hel_fn else p["helicity"]
+        lam = 0.0 if coh_fn else min(1.0, max(0.0, p["coherence"]))
+        lam_arr = [0.0] * N if coh_fn else None
         fib = p["layout"] != "random"
         ci = [0] * N
         gam = min(9.0, max(-0.99, p["anisotropy"]))
@@ -226,7 +265,8 @@ class HelixField:
             f = frame(dx, dy, dz)
             e1x[j], e1y[j], e1z[j] = f[0], f[1], f[2]
             e2x[j], e2y[j], e2z[j] = f[3], f[4], f[5]
-            s[j] = 1.0 if rng() < (1.0 + p["helicity"]) / 2.0 else -1.0
+            p_j = hel_fn(kmj) if hel_fn else hel_val
+            s[j] = 1.0 if rng() < (1.0 + p_j) / 2.0 else -1.0
             chi[j] = eps * s[j]
             spec = p["spectrum"]
             a[j] = max(0.0, spec(kmj)) if spec else math.pow(kmj, -p["slope"])
@@ -237,7 +277,10 @@ class HelixField:
             # Additive phase interpolation (helical-fields Eq. 9): reference at full
             # weight, random part fading as lam->1; well-defined for every lam (no
             # lam=1/2 antipodal singularity of the old complex-plane "chord" blend).
-            ph[j] = phc + (1.0 - lam) * phr
+            lam_j = min(1.0, max(0.0, coh_fn(kmj))) if coh_fn else lam
+            if lam_arr is not None:
+                lam_arr[j] = lam_j
+            ph[j] = phc + (1.0 - lam_j) * phr
 
         # Time evolution — all draws AFTER the spatial loop.
         churn_rate = max(0.0, p["churn"])  # `chi` is reserved for chirality
@@ -257,7 +300,8 @@ class HelixField:
         for j in range(N):
             sgn = -1.0 if rng() < 0.5 else 1.0
             c = ci[j]
-            om[j] = (1.0 - lam) * sgn * rate0 * math.pow(km[j], 2.0 / 3.0) - lam * (
+            lam_j = lam_arr[j] if lam_arr is not None else lam
+            om[j] = (1.0 - lam_j) * sgn * rate0 * math.pow(km[j], 2.0 / 3.0) - lam_j * (
                 kx[j] * cvx[c] + ky[j] * cvy[c] + kz[j] * cvz[c]
             )
 
@@ -698,14 +742,44 @@ EMITTERS = {
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
+def abc_field(A=1.0, B=1.0, C=1.0):
+    """The closed-form ABC cell field as exactly three engine modes (spec §10.2, no RNG)."""
+    f = HelixField.__new__(HelixField)
+    f.params = dict(DEFAULTS)
+    f.N = 3
+    f._beltrami = True
+    ks = [(0.0, 0.0, 1.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)]
+    f.kx = [k[0] for k in ks]
+    f.ky = [k[1] for k in ks]
+    f.kz = [k[2] for k in ks]
+    f.km = [1.0, 1.0, 1.0]
+    e1, e2 = [], []
+    for k in ks:
+        fr = frame(*k)
+        e1.append(fr[0:3])
+        e2.append(fr[3:6])
+    f.e1x = [e[0] for e in e1]; f.e1y = [e[1] for e in e1]; f.e1z = [e[2] for e in e1]
+    f.e2x = [e[0] for e in e2]; f.e2y = [e[1] for e in e2]; f.e2z = [e[2] for e in e2]
+    f.s = [1.0, 1.0, 1.0]
+    f.chi = [1.0, 1.0, 1.0]
+    f.a = [A, B, C]
+    f.ph = [-math.pi / 2.0, -math.pi / 2.0, math.pi]
+    f.om = [0.0, 0.0, 0.0]
+    f.nu = 0.0
+    f._scale = 1.0
+    return f
+
+
 def build_field_from_args(args):
+    if args.abc:
+        return abc_field(*[float(v) for v in args.abc.split(",")])
     return HelixField(
         modes=args.modes,
         seed=args.seed,
         slope=args.slope,
-        helicity=args.helicity,
+        helicity=parse_preset(args.helicity_preset) or args.helicity,
         ellipticity=args.ellipticity,
-        coherence=args.coherence,
+        coherence=parse_preset(args.coherence_preset) or args.coherence,
         kmin=args.kmin,
         kmax=args.kmax,
         centers=args.centers,
@@ -716,6 +790,7 @@ def build_field_from_args(args):
         decay=args.decay,
         anisotropy=args.anisotropy,
         axis=tuple(args.axis) if args.axis else (0.0, 0.0, 1.0),
+        spectrum=parse_preset(args.spectrum_preset),
     )
 
 
@@ -742,6 +817,14 @@ def make_parser():
     ap.add_argument("--anisotropy", type=float, default=0.0, help="axis stretch (default: 0)")
     ap.add_argument("--axis", type=float, nargs=3, default=[0.0, 0.0, 1.0],
                     metavar=("X", "Y", "Z"), help="anisotropy axis (default: 0 0 1)")
+    ap.add_argument("--spectrum-preset", default=None, metavar="NAME:ARGS",
+                    help="named spectrum preset, e.g. shellPeak:3 or shellPeak:3,1.5")
+    ap.add_argument("--coherence-preset", default=None, metavar="NAME:ARGS",
+                    help="named coherence preset, e.g. rolloff:4")
+    ap.add_argument("--helicity-preset", default=None, metavar="NAME:ARGS",
+                    help="named helicity preset, e.g. condensate:3,1,-1")
+    ap.add_argument("--abc", default=None, metavar="A,B,C",
+                    help="emit the closed-form ABC cell field as 3 modes (no RNG), e.g. --abc 1.5,1,0.5")
     ap.add_argument("--ellipticity", type=float, default=1.0,
                     help="polarization ellipticity eps in [0,1]: 1 = circular/tubes (default), 0 = linear/sheets")
     ap.add_argument("--name", default="helixNoise", help="emitted function name (default: helixNoise)")

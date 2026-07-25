@@ -19,6 +19,18 @@ import type {
 
 const _tmp6: number[] = [0, 0, 0, 0, 0, 0];
 
+/**
+ * An explicit, RNG-free mode table for closed-form preset fields (e.g. `abc()`).
+ * `e1`/`e2` are always recomputed with the engine's own `frame()`. @internal
+ */
+export interface DirectModes {
+  k: [number, number, number][];
+  s: number[];
+  a: number[];
+  ph: number[];
+  scale: number;
+}
+
 /** Golden angle (radians) — the Fibonacci-sphere azimuth increment. */
 const GA = Math.PI * (3 - Math.sqrt(5));
 
@@ -101,7 +113,13 @@ export class HelixField implements Field, ModeData {
   private _tAmp = NaN;
   private _tile: Float64Array | null = null; // batch-sampler accumulator scratch
 
-  constructor(opts?: HelixNoiseOptions) {
+  /**
+   * Set when the modes come from a closed-form preset instead of the RNG (see
+   * {@link DirectModes}); `set()` refuses to regenerate such a field. @internal
+   */
+  _fixed = false;
+
+  constructor(opts?: HelixNoiseOptions, direct?: DirectModes) {
     this.params = { ...DEFAULTS };
     if (opts) {
       for (const k of Object.keys(opts) as (keyof HelixNoiseOptions)[]) {
@@ -110,8 +128,41 @@ export class HelixField implements Field, ModeData {
         }
       }
     }
+    if (direct) {
+      this._installDirect(direct);
+      return;
+    }
     this._alloc(this.params.modes);
     this._build();
+  }
+
+  /** Install an explicit, closed-form mode table (no RNG draws at all). @internal */
+  private _installDirect(d: DirectModes): void {
+    const N = d.k.length;
+    this.params.modes = N;
+    this._alloc(N);
+    const fr = [0, 0, 0, 0, 0, 0];
+    for (let j = 0; j < N; j++) {
+      const [kx, ky, kz] = d.k[j];
+      const km = Math.hypot(kx, ky, kz);
+      this.kx[j] = kx; this.ky[j] = ky; this.kz[j] = kz; this.km[j] = km;
+      frame(kx / km, ky / km, kz / km, fr); // the engine's own frame — never a hand-written one
+      this.e1x[j] = fr[0]; this.e1y[j] = fr[1]; this.e1z[j] = fr[2];
+      this.e2x[j] = fr[3]; this.e2y[j] = fr[4]; this.e2z[j] = fr[5];
+      this.s[j] = d.s[j];
+      this.chi[j] = d.s[j];
+      this.a[j] = d.a[j];
+      this.ph[j] = d.ph[j];
+      this.om[j] = 0; // steady preset fields
+    }
+    const nc = Math.max(1, this.params.centers | 0);
+    this.cvx = new Float64Array(nc); this.cvy = new Float64Array(nc); this.cvz = new Float64Array(nc);
+    this.nu = Math.max(0, this.params.decay);
+    this._beltrami = true;
+    this._tAmp = NaN;
+    this._buildStamp++;
+    this._scale = d.scale;
+    this._fixed = true;
   }
 
   private _alloc(N: number): void {
@@ -132,7 +183,15 @@ export class HelixField implements Field, ModeData {
     const cx = new Float64Array(nc), cy = new Float64Array(nc), cz = new Float64Array(nc);
     for (let m = 0; m < nc; m++) { cx[m] = rng() * TAU; cy[m] = rng() * TAU; cz[m] = rng() * TAU; }
     const fr = [0, 0, 0, 0, 0, 0];
-    const lam = Math.min(1, Math.max(0, p.coherence));
+    // coherence / helicity accept either a scalar or a pure per-wavenumber callable. Neither
+    // ever gates an rng() call — they only feed arithmetic and a comparison threshold — so the
+    // draw sequence is identical either way, and the scalar path keeps its exact expression tree.
+    const cohFn = typeof p.coherence === "function" ? p.coherence : null;
+    const helFn = typeof p.helicity === "function" ? p.helicity : null;
+    const helVal = helFn ? 0 : (p.helicity as number);
+    const lam = cohFn ? 0 : Math.min(1, Math.max(0, p.coherence as number));
+    // Per-mode λ has to survive into the (later) time-evolution loop.
+    const lamArr = cohFn ? new Float64Array(N) : null;
     const fib = p.layout !== "random";
     const ci = new Int32Array(N);
     const gam = Math.min(9, Math.max(-0.99, p.anisotropy));
@@ -194,7 +253,7 @@ export class HelixField implements Field, ModeData {
       frame(dx, dy, dz, fr);
       this.e1x[j] = fr[0]; this.e1y[j] = fr[1]; this.e1z[j] = fr[2];
       this.e2x[j] = fr[3]; this.e2y[j] = fr[4]; this.e2z[j] = fr[5];
-      this.s[j] = rng() < (1 + p.helicity) / 2 ? 1 : -1;
+      this.s[j] = rng() < (1 + (helFn ? helFn(km) : helVal)) / 2 ? 1 : -1;
       this.chi[j] = eps * this.s[j];
       this.a[j] = p.spectrum ? Math.max(0, p.spectrum(km)) : Math.pow(km, -p.slope);
       const phr = TAU * rng();
@@ -207,7 +266,9 @@ export class HelixField implements Field, ModeData {
       // and well-defined for every λ (no λ=½ antipodal singularity of the earlier
       // complex-plane "chord" blend). |a_j| is untouched, so the energy spectrum and
       // helicity bias are frozen at every λ; only the phase moves.
-      this.ph[j] = phc + (1 - lam) * phr;
+      const lamJ = cohFn ? Math.min(1, Math.max(0, cohFn(km))) : lam;
+      if (lamArr) lamArr[j] = lamJ;
+      this.ph[j] = phc + (1 - lamJ) * phr;
     }
 
     // Time evolution (all draws AFTER the spatial ones, so the t = 0 field is unchanged by the
@@ -228,9 +289,10 @@ export class HelixField implements Field, ModeData {
     for (let j = 0; j < N; j++) {
       const sgn = rng() < 0.5 ? -1 : 1;
       const c = ci[j];
+      const lamJ = lamArr ? lamArr[j] : lam;
       this.om[j] =
-        (1 - lam) * sgn * rate0 * Math.pow(this.km[j], 2 / 3) -
-        lam * (this.kx[j] * this.cvx[c] + this.ky[j] * this.cvy[c] + this.kz[j] * this.cvz[c]);
+        (1 - lamJ) * sgn * rate0 * Math.pow(this.km[j], 2 / 3) -
+        lamJ * (this.kx[j] * this.cvx[c] + this.ky[j] * this.cvy[c] + this.kz[j] * this.cvz[c]);
     }
 
     this.nu = Math.max(0, p.decay);
@@ -434,6 +496,7 @@ export class HelixField implements Field, ModeData {
   }
 
   set(opts: HelixNoiseOptions): Field {
+    if (this._fixed) throw new Error("helix-noise: this is a closed-form preset field — build a new one instead of set()");
     const reAlloc = !!opts && "modes" in opts && opts.modes !== this.params.modes;
     for (const k of Object.keys(opts) as (keyof HelixNoiseOptions)[]) {
       if ((k in DEFAULTS || k === "spectrum") && opts[k] !== undefined) {

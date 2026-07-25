@@ -113,6 +113,8 @@
       <button id="p-mirror" class="preset">◇ mirror</button>
       <button id="p-sheets" class="preset">◇ sheets</button>
       <button id="p-braid" class="preset">◇ braid</button>
+      <button id="p-rollers" class="preset">◇ rollers</button>
+      <button id="p-band" class="preset">◇ band</button>
     </div>
     <div class="bar" style="border-top:0;padding-top:2px;margin-top:8px">
       <div class="mini"><span>speed</span><input type="range" id="spd" min="0.2" max="3" step="0.1" value="1"><span id="v-spd" style="color:var(--teal)">1.0×</span></div>
@@ -218,7 +220,17 @@
   function prime(){for(var k=0;k<TRAIL;k++)advance();}
 
   var rho=0;
-  function rebuild(){ field.set({modes:params.modes, slope:params.slope, helicity:params.heli, coherence:params.coh, ellipticity:params.ell, seed:params.seed}); rho=field.relativeHelicity(10); updateBadge(); }
+  // Scale-dependent dials (helix-noise presets): when set, they override the plain sliders.
+  var scaleMode = null; // null | "rollers" | "band"
+  function dials(){
+    var o = {modes:params.modes, slope:params.slope, helicity:params.heli,
+             coherence:params.coh, ellipticity:params.ell, seed:params.seed,
+             spectrum:null, kmin:1, kmax:6.2};  // null clears a previously-set spectrum
+    if(scaleMode==="rollers"){ o.coherence = HelixNoise.rolloff(4); o.kmax = 10; }
+    if(scaleMode==="band"){ o.spectrum = HelixNoise.shellPeak(3.2); o.kmin = 1; o.kmax = 6.2; }
+    return o;
+  }
+  function rebuild(){ field.set(dials()); rho=field.relativeHelicity(10); updateBadge(); }
   function updateBadge(){
     $("badge").textContent="Helix Noise · "+params.modes+" modes · "+(NP/1000).toFixed(1)+"k particles";
     $("ro").innerHTML="p <b style=\"color:"+(params.heli>=0?"var(--teal)":"var(--amber)")+"\">"+(params.heli>0?"+":"")+params.heli.toFixed(2)+"</b><br>coherence <b>"+Math.round(params.coh*100)+"%</b><br>&#10216;u&#183;&#969;&#10217; <b style=\"color:var(--cyan)\">"+(rho>0?"+":"")+rho.toFixed(2)+"</b>";
@@ -242,6 +254,7 @@
   $("btn-seed").addEventListener("click",function(){params.seed=(params.seed*1103515245+12345)>>>0;rs=(rs+0x9E3779B9)>>>0;rebuild();});
   function preset(h,s,c,e){
     if(e===undefined)e=1;
+    scaleMode = null;
     params.heli=h;params.slope=s;params.coh=c;params.ell=e;
     $("heli").value=h;$("slope").value=s;$("coh").value=c;$("ell").value=e;
     $("v-heli").textContent=(h>0?"+":"")+h.toFixed(2);$("v-slope").textContent=s.toFixed(1);$("v-coh").textContent=Math.round(c*100)+"%";$("v-ell").textContent=e.toFixed(2);
@@ -252,6 +265,8 @@
   $("p-mirror").addEventListener("click",function(){preset(0.0,1.7,0.4,1);});
   $("p-sheets").addEventListener("click",function(){preset(0.0,1.9,0.5,0);});
   $("p-braid").addEventListener("click",function(){preset(0.6,1.6,0.4,0.5);});
+  $("p-rollers").addEventListener("click",function(){scaleMode = scaleMode==="rollers"?null:"rollers"; rebuild();});
+  $("p-band").addEventListener("click",function(){scaleMode = scaleMode==="band"?null:"band"; rebuild();});
 
   var lx=0,ly=0,pinchD=0,ptrs=new Map(),stage=$("stage");
   stage.addEventListener("pointerdown",function(e){ptrs.set(e.pointerId,{x:e.clientX,y:e.clientY});stage.setPointerCapture(e.pointerId);

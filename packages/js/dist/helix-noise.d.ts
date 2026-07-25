@@ -1,13 +1,27 @@
+/**
+ * A pure per-wavenumber dial, evaluated once per mode at its final |k| (after the `tileable`
+ * rounding) — exactly like the `spectrum` callable. Must be deterministic and must not draw
+ * randomness: the RNG sequence is unchanged whether you pass a number or a function.
+ */
+type ScaleFn = (k: number) => number;
 /** Options for {@link create}. All optional; see {@link DEFAULTS}. */
 interface HelixNoiseOptions {
     /** Number of helical modes. Cost of one sample is O(modes). Default 48. */
     modes?: number;
     /** Spectral slope s: mode amplitude ∝ |k|^-s. Default 1.6. */
     slope?: number;
-    /** Helicity p ∈ [-1, 1]: energy split between the two helical states. Default 0. */
-    helicity?: number;
-    /** Phase coherence λ ∈ [0, 1]: inter-mode phases random → structured. Default 0. */
-    coherence?: number;
+    /**
+     * Helicity p ∈ [-1, 1]: energy split between the two helical states. Default 0.
+     * May also be a per-wavenumber callable `(k) => p` — e.g. a strongly handed large-scale
+     * condensate over mirror-symmetric fine detail (see the `condensate` preset).
+     */
+    helicity?: number | ScaleFn;
+    /**
+     * Phase coherence λ ∈ [0, 1]: inter-mode phases random → structured. Default 0.
+     * May also be a per-wavenumber callable `(k) => λ` (clamped per mode) — e.g. organized
+     * large-scale rollers carrying incoherent fine detail (see the `rolloff` preset).
+     */
+    coherence?: number | ScaleFn;
     /** Smallest wavenumber (largest structures). Default 1. */
     kmin?: number;
     /** Largest wavenumber (finest detail). Default 6.2. */
@@ -279,6 +293,17 @@ interface ModeData {
 }
 
 /**
+ * An explicit, RNG-free mode table for closed-form preset fields (e.g. `abc()`).
+ * `e1`/`e2` are always recomputed with the engine's own `frame()`. @internal
+ */
+interface DirectModes {
+    k: [number, number, number][];
+    s: number[];
+    a: number[];
+    ph: number[];
+    scale: number;
+}
+/**
  * A divergence-free helical flow field, evaluatable at any point (grid-free) as an analytic sum
  * of Beltrami modes. Construct via {@link create}.
  */
@@ -322,7 +347,14 @@ declare class HelixField implements Field, ModeData {
     private _aT;
     private _tAmp;
     private _tile;
-    constructor(opts?: HelixNoiseOptions);
+    /**
+     * Set when the modes come from a closed-form preset instead of the RNG (see
+     * {@link DirectModes}); `set()` refuses to regenerate such a field. @internal
+     */
+    _fixed: boolean;
+    constructor(opts?: HelixNoiseOptions, direct?: DirectModes);
+    /** Install an explicit, closed-form mode table (no RNG draws at all). @internal */
+    private _installDirect;
     private _alloc;
     private _build;
     /** Mode amplitudes at time t: a·e^(−νk²t), cached per t (recomputed once per frame, not per sample). */
@@ -397,12 +429,75 @@ declare class HelixAtoms implements AtomField {
     bakePotential3D(n: number, t?: number): Bake3DResult;
 }
 
+/**
+ * Ready-made shapes for the per-wavenumber dials (`spectrum`, `coherence`, `helicity`) plus two
+ * field factories. Everything here is a pure function of `|k|` or a closed form — no RNG, so
+ * mixing presets in never disturbs a field's mode layout.
+ */
+/**
+ * Spectrum preset: a Gaussian shell bump `a(k) = exp(−(k−kPeak)²/(2·width²))` — an
+ * energy-containing band instead of a power law. Pair it with `kmin ≈ kPeak − 3·width` and
+ * `kmax ≈ kPeak + 3·width` so the discarded tails stay near 1%.
+ *
+ * ```js
+ * create({ spectrum: shellPeak(3), kmin: 1, kmax: 6 });
+ * ```
+ */
+declare function shellPeak(kPeak: number, width?: number): ScaleFn;
+/**
+ * Coherence preset: `λ(k) = clamp(1 − k/kc, 0, 1)` — organized structure at large scales,
+ * fading to uncorrelated noise above the cutoff `kc`. The "rollers carrying fine grain" look.
+ */
+declare function rolloff(kc: number): ScaleFn;
+/**
+ * Helicity preset: `p(k) = k <= kSplit ? pLarge : pSmall` — a handed large-scale condensate
+ * over a (near-)mirror-symmetric fine-scale background, the polarization profile measured on
+ * forced turbulence.
+ */
+declare function condensate(kSplit: number, pLarge: number, pSmall?: number): ScaleFn;
+/**
+ * The classical ABC (Arnold–Beltrami–Childress) cell field
+ * `u = (A sin z + C cos y, B sin x + A cos z, C sin y + B cos x)`,
+ * built as exactly three modes of the same engine — so `glsl()`, the bakes, `withBoundary`
+ * and every sampler work on it unchanged. Consumes no RNG, is exactly 2π-tileable, and is a
+ * pure Beltrami field (`∇×u = u`, potential `A = u`).
+ *
+ * By default this is the *literal* field (its amplitudes mean what they say). Pass
+ * `amplitude` to opt into the usual RMS normalization, or `decay: ν` for the exact viscous
+ * solution `u(t) = e^(−νt)·u(0)`.
+ */
+declare function abc(A?: number, B?: number, C?: number, opts?: {
+    amplitude?: number;
+    decay?: number;
+}): Field;
+/** Detail-amplitude constant for {@link twoScale}: `amplitude = C_TWO_SCALE / kDetail` holds the
+ *  detail layer's vorticity budget fixed as you move its wavenumber. */
+declare const C_TWO_SCALE = 1.6;
+/**
+ * The sum of two divergence-free fields — still divergence-free, and its potential is the sum
+ * of theirs, so `withBoundary` and the potential bakes keep working.
+ *
+ * The recipe it exists for: a coherent large-scale backbone plus incoherent broadband detail.
+ * Sizing the detail as `amplitude: C_TWO_SCALE / kDetail` keeps its vorticity budget constant
+ * while you slide the detail scale.
+ *
+ * ```js
+ * const kD = 8;
+ * const detail = create({ spectrum: shellPeak(kD), kmin: kD - 3, kmax: kD + 3,
+ *                         amplitude: C_TWO_SCALE / kD, seed: 2 });
+ * const storm = twoScale(abc(3, 3, 3), detail);
+ * ```
+ */
+declare function twoScale(base: FlowField, detail: FlowField, opts?: {
+    detailGain?: number;
+}): FlowField;
+
 /** Create a Helix Noise field. */
 declare function create(options?: HelixNoiseOptions): Field;
 /** Create a sparse-atom field: broadband, infinite, amortized O(1), spatially-varying params. */
 declare function createAtoms(options?: HelixAtomsOptions): AtomField;
 /** Library version. */
-declare const version = "1.2.0";
+declare const version = "1.3.0";
 /** Run the built-in validation (transversality, divergence, helicity tracking). */
 declare function selfTest(): SelfTestReport;
 /** Default export: the Helix Noise namespace (`HelixNoise.create(...)`). */
@@ -413,4 +508,4 @@ declare const HelixNoise: {
     version: string;
 };
 
-export { type AtomField, type Bake2DResult, type Bake3DResult, type BoundaryOptions, type BoundedField, type Field, type FlowField, type GlslOptions, HelixAtoms, type HelixAtomsOptions, HelixField, type HelixNoiseOptions, type Out6, type Sdf, type SelfTestReport, type Vec3, create, createAtoms, HelixNoise as default, selfTest, version };
+export { type AtomField, type Bake2DResult, type Bake3DResult, type BoundaryOptions, type BoundedField, C_TWO_SCALE, type Field, type FlowField, type GlslOptions, HelixAtoms, type HelixAtomsOptions, HelixField, type HelixNoiseOptions, type Out6, type ScaleFn, type Sdf, type SelfTestReport, type Vec3, abc, condensate, create, createAtoms, HelixNoise as default, rolloff, selfTest, shellPeak, twoScale, version };

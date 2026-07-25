@@ -1,6 +1,12 @@
 // Dump a canonical parity fixture from the JS reference implementation.
 // Consumed by the Python / Rust / shader ports' tests to prove numerical parity.
-import { create, createAtoms } from "../dist/helix-noise.js";
+import { create, createAtoms, abc, shellPeak, rolloff, condensate } from "../dist/helix-noise.js";
+
+// Callable options can't live in JSON, so the fixture stores them as named preset descriptors
+// ({"$preset": name, "args": [...]}) that every port maps through its own preset registry.
+const PRESETS = { shellPeak, rolloff, condensate };
+const resolve = (cfg) => Object.fromEntries(Object.entries(cfg).map(([k, v]) =>
+  [k, v && v.$preset ? PRESETS[v.$preset](...v.args) : v]));
 
 const CONFIGS = {
   A_default_small: { modes: 8, seed: 1 },
@@ -12,6 +18,10 @@ const CONFIGS = {
   // helicity), K a mixed chi = ±0.5 field — both exercise the general two-term curl/potential.
   J_elliptic_linear: { modes: 6, seed: 11, ellipticity: 0 },
   K_elliptic_half: { modes: 6, seed: 5, ellipticity: 0.5, helicity: 0.3, coherence: 0.25 },
+  // Scale-dependent dials (spec §10.1): the callables are named presets so ports can rebuild them.
+  M_coherence_k: { modes: 6, seed: 11, centers: 2, coherence: { $preset: "rolloff", args: [4] } },
+  N_helicity_k: { modes: 8, seed: 12, helicity: { $preset: "condensate", args: [3.0, 1, -1] } },
+  O_shellpeak: { modes: 8, seed: 13, spectrum: { $preset: "shellPeak", args: [3, 1] } },
 };
 
 const POINTS = [
@@ -26,7 +36,7 @@ const arr = (a) => Array.from(a);
 
 const out = {};
 for (const [name, cfg] of Object.entries(CONFIGS)) {
-  const f = create(cfg);
+  const f = create(resolve(cfg));
   const modes = {
     N: f.N,
     kx: arr(f.kx), ky: arr(f.ky), kz: arr(f.kz), km: arr(f.km),
@@ -52,6 +62,38 @@ for (const [name, cfg] of Object.entries(CONFIGS)) {
   out[name] = {
     config: cfg,
     modes,
+    samples,
+    relativeHelicity: f.relativeHelicity(8),
+    bake3d4_sum: bsum,
+  };
+}
+
+// The abc() factory: a closed-form, RNG-free 3-mode field (spec §10.2).
+{
+  const f = abc(1.5, 1.0, 0.5);
+  const samples = [];
+  for (const t of TIMES) {
+    for (const [x, y, z] of POINTS) {
+      const uw = [0, 0, 0, 0, 0, 0];
+      f.sampleUW(x, y, z, uw, t);
+      const ua = [0, 0, 0, 0, 0, 0];
+      f.sampleUA(x, y, z, ua, t);
+      samples.push({ x, y, z, t, u: uw.slice(0, 3), w: uw.slice(3, 6), A: ua.slice(3, 6) });
+    }
+  }
+  const bake = f.bake3D(4, 0);
+  let bsum = 0;
+  for (let i = 0; i < bake.data.length; i++) bsum += bake.data[i];
+  out.P_abc = {
+    factory: { $factory: "abc", args: [1.5, 1.0, 0.5] },
+    modes: {
+      N: f.N,
+      kx: arr(f.kx), ky: arr(f.ky), kz: arr(f.kz), km: arr(f.km),
+      e1x: arr(f.e1x), e1y: arr(f.e1y), e1z: arr(f.e1z),
+      e2x: arr(f.e2x), e2y: arr(f.e2y), e2z: arr(f.e2z),
+      s: arr(f.s), chi: arr(f.chi), a: arr(f.a), ph: arr(f.ph), om: arr(f.om),
+      scale: f._scale, nu: f.nu,
+    },
     samples,
     relativeHelicity: f.relativeHelicity(8),
     bake3d4_sum: bsum,

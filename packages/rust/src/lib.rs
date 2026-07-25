@@ -66,11 +66,13 @@ mod boundary;
 mod constants;
 mod field;
 mod glsl;
+mod presets;
 mod rng;
 
 pub use atoms::{AtomOptions, HelixAtoms, ScalarField3};
 pub use boundary::{BoundaryOptions, BoundedField, VectorPotential};
-pub use constants::{ga, HelixOptions, Layout, SpectrumFn, TAU, VERSION};
+pub use constants::{ga, HelixOptions, Layout, ScaleFn, SpectrumFn, TAU, VERSION};
 pub use field::{HelixField, ModeSnapshot};
 pub use glsl::GlslOptions;
+pub use presets::{abc, condensate, rolloff, shell_peak, AbcOptions, TwoScale, C_TWO_SCALE};
 pub use rng::Mulberry32;

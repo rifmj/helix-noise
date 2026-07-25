@@ -58,11 +58,53 @@ class HelixField:
     ``sample_many*`` methods are numpy-vectorized.
     """
 
+    #: Set when the modes come from a closed-form preset instead of the RNG;
+    #: ``set()`` then refuses to regenerate the field.
+    _fixed = False
+
     def __init__(self, **opts):
         self.params = dict(DEFAULTS)
         self.params["spectrum"] = None
         self._apply_opts(opts)
         self._build()
+
+    @classmethod
+    def _from_modes(cls, k, s, a, ph, scale, decay=0.0):
+        """Install an explicit, closed-form mode table (no RNG draws at all)."""
+        f = cls.__new__(cls)
+        f.params = dict(DEFAULTS)
+        f.params["spectrum"] = None
+        n = len(k)
+        f.params["modes"] = n
+        f.params["tileable"] = True
+        f.params["churn"] = 0.0
+        f.params["decay"] = decay
+        f.N = n
+        kx = np.zeros(n); ky = np.zeros(n); kz = np.zeros(n); km = np.zeros(n)
+        e1x = np.zeros(n); e1y = np.zeros(n); e1z = np.zeros(n)
+        e2x = np.zeros(n); e2y = np.zeros(n); e2z = np.zeros(n)
+        for j in range(n):
+            kxj, kyj, kzj = k[j]
+            kmj = math.hypot(kxj, kyj, kzj)
+            kx[j], ky[j], kz[j], km[j] = kxj, kyj, kzj, kmj
+            # the engine's own frame() -- never a hand-written one
+            f1x, f1y, f1z, f2x, f2y, f2z = _frame(kxj / kmj, kyj / kmj, kzj / kmj)
+            e1x[j], e1y[j], e1z[j] = f1x, f1y, f1z
+            e2x[j], e2y[j], e2z[j] = f2x, f2y, f2z
+        f.kx, f.ky, f.kz, f.km = kx, ky, kz, km
+        f.e1x, f.e1y, f.e1z = e1x, e1y, e1z
+        f.e2x, f.e2y, f.e2z = e2x, e2y, e2z
+        f.s = np.array(s, dtype=np.float64)
+        f.chi = np.array(s, dtype=np.float64)
+        f.a = np.array(a, dtype=np.float64)
+        f.ph = np.array(ph, dtype=np.float64)
+        f.om = np.zeros(n)  # steady preset fields
+        f.cvx = np.zeros(1); f.cvy = np.zeros(1); f.cvz = np.zeros(1)
+        f.nu = max(0.0, decay)
+        f._beltrami = True
+        f._scale = scale
+        f._fixed = True
+        return f
 
     # ------------------------------------------------------------------ setup
 
@@ -87,7 +129,13 @@ class HelixField:
             cy[m] = rng() * TAU
             cz[m] = rng() * TAU
 
-        lam = min(1.0, max(0.0, p["coherence"]))
+        # coherence / helicity accept either a scalar or a pure per-wavenumber callable.
+        # Neither ever gates an rng() call, so the draw sequence is identical either way.
+        coh_fn = p["coherence"] if callable(p["coherence"]) else None
+        hel_fn = p["helicity"] if callable(p["helicity"]) else None
+        hel_val = 0.0 if hel_fn else p["helicity"]
+        lam = 0.0 if coh_fn else min(1.0, max(0.0, p["coherence"]))
+        lam_arr = [0.0] * N if coh_fn else None
         fib = p["layout"] != "random"
         gam = min(9.0, max(-0.99, p["anisotropy"]))
         # Polarization ellipticity: chi_j = eps*s_j. Draw-free (a post-transform of the
@@ -196,7 +244,8 @@ class HelixField:
             e2y[j] = f2y
             e2z[j] = f2z
 
-            s[j] = 1.0 if rng() < (1.0 + p["helicity"]) / 2.0 else -1.0
+            p_j = hel_fn(kmj) if hel_fn else hel_val
+            s[j] = 1.0 if rng() < (1.0 + p_j) / 2.0 else -1.0
             chi[j] = eps * s[j]
             a[j] = max(0.0, spectrum(kmj)) if spectrum else math.pow(kmj, -slope)
             phr = TAU * rng()
@@ -208,7 +257,10 @@ class HelixField:
             # random at lam=0, locked to the reference at lam=1, well-defined for every
             # lam (no lam=1/2 antipodal singularity of the old complex-plane "chord"
             # blend). |a_j| untouched, so energy spectrum and helicity bias are frozen.
-            ph[j] = phc + (1.0 - lam) * phr
+            lam_j = min(1.0, max(0.0, coh_fn(kmj))) if coh_fn else lam
+            if lam_arr is not None:
+                lam_arr[j] = lam_j
+            ph[j] = phc + (1.0 - lam_j) * phr
 
         # Time evolution: all draws AFTER the spatial loop, so the t=0 field is
         # unchanged by the time knobs.
@@ -230,9 +282,10 @@ class HelixField:
         for j in range(N):
             sgn = -1.0 if rng() < 0.5 else 1.0
             c = ci[j]
+            lam_j = lam_arr[j] if lam_arr is not None else lam
             om[j] = (
-                (1.0 - lam) * sgn * rate0 * math.pow(km[j], 2.0 / 3.0)
-                - lam * (kx[j] * cvx[c] + ky[j] * cvy[c] + kz[j] * cvz[c])
+                (1.0 - lam_j) * sgn * rate0 * math.pow(km[j], 2.0 / 3.0)
+                - lam_j * (kx[j] * cvx[c] + ky[j] * cvy[c] + kz[j] * cvz[c])
             )
 
         self.kx, self.ky, self.kz, self.km = kx, ky, kz, km
@@ -509,6 +562,10 @@ class HelixField:
 
     def set(self, **opts):
         """Update options and rebuild in place; returns self."""
+        if self._fixed:
+            raise RuntimeError(
+                "helix-noise: this is a closed-form preset field -- build a new one instead of set()"
+            )
         self._apply_opts(opts)
         self._build()
         return self

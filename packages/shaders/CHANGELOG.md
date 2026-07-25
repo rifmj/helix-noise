@@ -3,6 +3,14 @@
 All notable changes to this project are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.3.0]
+
+- **Scale-dependent dials**: `helicity` and `coherence` accept a pure per-wavenumber callable
+  (spec §4), consuming no RNG draws — a constant callable reproduces the scalar config
+  bit-identically. New presets `shellPeak` / `rolloff` / `condensate` (spec §10.1), the closed-form
+  RNG-free `abc()` field (spec §10.2) and the `twoScale` composite (spec §10.3). New CLI flags
+  `--spectrum-preset`, `--coherence-preset`, `--helicity-preset` and `--abc`.
+
 ## [0.2.0]
 
 - **`ellipticity` (spec 1.1)**: per-mode chirality `chi = ellipticity * s` — `1` (default) keeps the

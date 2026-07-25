@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert";
-import HelixNoise, { create, createAtoms, HelixField } from "../src/index";
+import HelixNoise, { create, createAtoms, HelixField, abc, twoScale, shellPeak, rolloff, condensate, C_TWO_SCALE } from "../src/index";
+import type { Vec3 } from "../src/types";
 import { runWasm } from "../src/wasm";
 
 const TAU = 2 * Math.PI;
@@ -816,4 +817,136 @@ test("wasm mode block: a smaller field after a larger one is not read at the sta
     for (let c = 0; c < 3; c++) worst = Math.max(worst, Math.abs(batch[3 * i + c] - o[c]));
   }
   assert.ok(worst < 1e-12, `small-after-big batch mismatch ${worst}`);
+});
+
+// ---------------------------------------------------------------------------
+// Scale-dependent dials + preset factories
+// ---------------------------------------------------------------------------
+
+test("scale dials: a constant callable reproduces the scalar config bit-identically", () => {
+  const a = create({ modes: 12, seed: 42, helicity: 0.8, coherence: 0.5 }) as unknown as HelixField;
+  const b = create({ modes: 12, seed: 42, helicity: () => 0.8, coherence: () => 0.5 }) as unknown as HelixField;
+  const keys = ["kx", "ky", "kz", "km", "e1x", "e1y", "e1z", "e2x", "e2y", "e2z", "s", "chi", "a", "ph", "om"] as const;
+  for (const k of keys) {
+    for (let j = 0; j < a.N; j++) assert.equal(a[k][j], b[k][j], `${k}[${j}] must be bit-identical`);
+  }
+  assert.equal(a._scale, b._scale);
+});
+
+test("scale dials consume no RNG draws (the layout is untouched by the callables)", () => {
+  const scalar = create({ modes: 8, seed: 5, centers: 2 }) as unknown as HelixField;
+  const fn = create({
+    modes: 8, seed: 5, centers: 2,
+    coherence: rolloff(4),
+    helicity: condensate(3, 1, -1),
+  }) as unknown as HelixField;
+  for (const k of ["kx", "ky", "kz", "km", "a"] as const) {
+    for (let j = 0; j < 8; j++) assert.equal(scalar[k][j], fn[k][j], `${k}[${j}]: draw sequence must not shift`);
+  }
+  // condensate(3, +1, −1) is a known answer: p = +1 ⇒ every draw is < 1 ⇒ s = +1, and vice versa.
+  for (let j = 0; j < fn.N; j++) assert.equal(fn.s[j], fn.km[j] <= 3 ? 1 : -1, `mode ${j} sign follows p(k)`);
+});
+
+test("rolloff: large scales lock onto the coherent phase, small scales stay random", () => {
+  const kc = 4;
+  const f = create({ modes: 40, seed: 8, kmin: 1, kmax: 8, centers: 1, coherence: rolloff(kc) }) as unknown as HelixField;
+  // At λ = 1 the phase is exactly the center reference −k·c; at λ = 0 it carries the full
+  // random part. Modes above kc must therefore differ from the pure reference, and the
+  // lowest-k modes must sit much closer to it.
+  const dev = (j: number): number => {
+    const lam = Math.min(1, Math.max(0, 1 - f.km[j] / kc));
+    return 1 - lam; // the surviving fraction of the random phase
+  };
+  let lowMax = 0, highMin = 1;
+  for (let j = 0; j < f.N; j++) {
+    if (f.km[j] < 2) lowMax = Math.max(lowMax, dev(j));
+    if (f.km[j] > kc) highMin = Math.min(highMin, dev(j));
+  }
+  assert.ok(lowMax < 0.5, "large scales are mostly coherent");
+  assert.equal(highMin, 1, "above the cutoff the phase is fully random");
+});
+
+test("shellPeak: the amplitude law peaks at kPeak and falls off like a Gaussian", () => {
+  const s = shellPeak(3, 1);
+  assert.ok(Math.abs(s(3) - 1) < 1e-15, "unit at the peak");
+  assert.ok(Math.abs(s(4) - Math.exp(-0.5)) < 1e-15, "one width out");
+  const f = create({ modes: 40, seed: 3, spectrum: shellPeak(3), kmin: 1, kmax: 6 }) as unknown as HelixField;
+  let bestK = 0, bestA = -1;
+  for (let j = 0; j < f.N; j++) if (f.a[j] > bestA) { bestA = f.a[j]; bestK = f.km[j]; }
+  assert.ok(Math.abs(bestK - 3) < 0.3, `the strongest mode sits at the peak (got k=${bestK})`);
+});
+
+test("abc(): three modes reproducing the closed-form ABC field, with no RNG", () => {
+  for (const [A, B, C] of [[1, 1, 1], [3, 3, 3], [1, 0.7, 0.3], [2.5, -1.2, 0]] as const) {
+    const f = abc(A, B, C);
+    assert.equal((f as unknown as HelixField).N, 3, "exactly three modes");
+    let uErr = 0, wErr = 0, pErr = 0;
+    for (let i = 0; i < 50; i++) {
+      const x = Math.sin(i * 1.3) * 7, y = Math.cos(i * 2.1) * 5, z = Math.sin(i * 0.7) * 9;
+      const want = [
+        A * Math.sin(z) + C * Math.cos(y),
+        B * Math.sin(x) + A * Math.cos(z),
+        C * Math.sin(y) + B * Math.cos(x),
+      ];
+      const u = f.sample(x, y, z), w = f.vorticity(x, y, z), p = f.potential(x, y, z);
+      for (let c = 0; c < 3; c++) {
+        uErr = Math.max(uErr, Math.abs(u[c] - want[c]));
+        wErr = Math.max(wErr, Math.abs(w[c] - want[c])); // Beltrami: ∇×u = u
+        pErr = Math.max(pErr, Math.abs(p[c] - want[c])); // and the potential is u itself
+      }
+    }
+    assert.ok(uErr < 1e-13, `abc(${A},${B},${C}) velocity: ${uErr}`);
+    assert.ok(wErr < 1e-13, `abc(${A},${B},${C}) is Beltrami: ${wErr}`);
+    assert.ok(pErr < 1e-13, `abc(${A},${B},${C}) potential: ${pErr}`);
+  }
+});
+
+test("abc(): amplitude normalizes through the closed form; decay is the exact viscous solution", () => {
+  const f = abc(3, 3, 3, { amplitude: 2 }) as unknown as HelixField;
+  assert.equal(f._scale, 2 / Math.sqrt(27), "scale must be amplitude/√(A²+B²+C²), not rms()");
+  assert.throws(() => f.set({ modes: 5 }), /closed-form preset field/);
+
+  const nu = 0.3, g = abc(1, 1, 1, { decay: nu });
+  const u0 = g.sample(1, 2, 3, 0), ut = g.sample(1, 2, 3, 1.5);
+  assert.ok(Math.abs(ut[0] / u0[0] - Math.exp(-nu * 1.5)) < 1e-12, "u(t) = e^(−νt)·u(0)");
+});
+
+test("twoScale: exact sum, still divergence-free, potential still exact", () => {
+  const kD = 8;
+  const detail = create({ spectrum: shellPeak(kD), kmin: kD - 3, kmax: kD + 3, amplitude: C_TWO_SCALE / kD, seed: 2 });
+  const base = abc(3, 3, 3);
+  const storm = twoScale(base, detail);
+
+  let sumErr = 0;
+  for (let i = 0; i < 20; i++) {
+    const x = i * 0.6, y = i * 1.1, z = i * 0.3;
+    const s = storm.sample(x, y, z), b = base.sample(x, y, z), d = detail.sample(x, y, z);
+    for (let c = 0; c < 3; c++) sumErr = Math.max(sumErr, Math.abs(s[c] - (b[c] + d[c])));
+  }
+  assert.equal(sumErr, 0, "the composite is exactly base + detail");
+
+  const h = 1e-3;
+  let divMax = 0, potErr = 0;
+  for (const [x, y, z] of [[0.9, 1.7, 0.4], [3.1, 2.2, 5.0]] as const) {
+    const dx = (storm.sample(x + h, y, z)[0] - storm.sample(x - h, y, z)[0]) / (2 * h);
+    const dy = (storm.sample(x, y + h, z)[1] - storm.sample(x, y - h, z)[1]) / (2 * h);
+    const dz = (storm.sample(x, y, z + h)[2] - storm.sample(x, y, z - h)[2]) / (2 * h);
+    divMax = Math.max(divMax, Math.abs(dx + dy + dz));
+    const pf = (a: number, b: number, c: number): Vec3 => storm.potential(a, b, c);
+    const curl = [
+      (pf(x, y + h, z)[2] - pf(x, y - h, z)[2]) / (2 * h) - (pf(x, y, z + h)[1] - pf(x, y, z - h)[1]) / (2 * h),
+      (pf(x, y, z + h)[0] - pf(x, y, z - h)[0]) / (2 * h) - (pf(x + h, y, z)[2] - pf(x - h, y, z)[2]) / (2 * h),
+      (pf(x + h, y, z)[1] - pf(x - h, y, z)[1]) / (2 * h) - (pf(x, y + h, z)[0] - pf(x, y - h, z)[0]) / (2 * h),
+    ];
+    const u = storm.sample(x, y, z);
+    for (let c = 0; c < 3; c++) potErr = Math.max(potErr, Math.abs(curl[c] - u[c]));
+  }
+  assert.ok(divMax < 1e-4, `FD divergence of the composite: ${divMax}`);
+  assert.ok(potErr < 1e-4, `curl of the composite potential vs its velocity: ${potErr}`);
+
+  // the shared surface still gives boundaries and bakes
+  const bnd = storm.withBoundary((x, y, z) => Math.hypot(x - 3, y - 3, z - 3) - 1.2, { thickness: 0.9 });
+  const inside = bnd.sample(3, 3, 3);
+  assert.deepEqual(inside, [0, 0, 0], "flow is zero inside the obstacle");
+  assert.equal(storm.bake3D(4).data.length, 4 * 4 * 4 * 4);
 });

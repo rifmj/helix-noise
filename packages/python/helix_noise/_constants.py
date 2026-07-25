@@ -7,7 +7,7 @@ TAU = 2.0 * math.pi
 # Golden angle (radians) — the Fibonacci-sphere azimuth increment.
 GA = math.pi * (3.0 - math.sqrt(5.0))
 
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 
 # Default options, filled in for every field. ``spectrum`` stays optional
 # (there is no default spectral-law callable).

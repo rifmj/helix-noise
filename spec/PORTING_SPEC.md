@@ -19,18 +19,19 @@ JS reference to ~1e-12 relative, NOT bit-for-bit. Parity tests must use a tolera
 ```
 TAU  = 2*pi
 GA   = pi * (3 - sqrt(5))     # golden angle (Fibonacci sphere azimuth step)
-VERSION = "1.1.0"
+VERSION = "1.3.0"
 ```
 
 Defaults (every option):
 ```
-modes=48, slope=1.6, helicity=0.0, coherence=0.0, kmin=1.0, kmax=6.2,
+modes=48, slope=1.6, helicity=0.0, coherence=0.0, kmin=1.0, kmax=6.2,   # helicity/coherence:
+                                                                       #   number OR pure (k)->value
 centers=3, amplitude=1.0, tileable=false, seed=1, layout="fibonacci",
 churn=1.0, decay=0.0, anisotropy=0.0, axis=[0,0,1], ellipticity=1.0
 spectrum = optional callable (k:float)->float, no default
 ```
 
-**Spec version: 1.1** (adds `ellipticity`; spec-1.0 fields are the `ellipticity=1.0` special case,
+**Spec version: 1.1** (adds `ellipticity` and the §10 presets; spec-1.0 fields are the `ellipticity=1.0` special case,
 bit-identical — see the normative shortcut note in §5).
 
 ## 2. mulberry32 (VERIFIED bit-exact — do NOT change the integer ops)
@@ -97,6 +98,13 @@ R = [ 1-2(yy+zz),  2(xy-wz),    2(xz+wy),
 
 ## 4. Build (EXACT order of rng() draws — this order is load-bearing)
 
+The number and order of `rng()` draws is a function of `(modes, centers, layout)` only:
+`7*nc + 6N + 2` (fibonacci), `7*nc + 7N` (random). `helicity` and `coherence` never gate a
+draw — `helicity` is only the comparison threshold of an always-executed draw, `coherence`
+only a blend weight in arithmetic on already-drawn values. Scalar and callable forms are
+therefore draw-sequence-identical, and a constant callable MUST reproduce the scalar config
+bit-identically within a port.
+
 Given resolved params `p` and `N = modes`:
 
 ```
@@ -104,7 +112,9 @@ rng = mulberry32((seed>>>0)||1)
 nc  = max(1, floor(centers))
 # centers: nc points, each 3 draws
 for m in 0..nc:  cx[m]=rng()*TAU; cy[m]=rng()*TAU; cz[m]=rng()*TAU
-lam = clamp(coherence, 0, 1)
+lamFn = coherence callable if provided else (k -> clamp(coherence, 0, 1))
+      # per-mode lam_j = clamp(lamFn(km[j]), 0, 1), at the FINAL km[j] (post tileable
+      # rounding), like the spectrum callable. Consumes NO draws.
 fib = (layout != "random")
 gam = clamp(anisotropy, -0.99, 9)
 an  = hypot(axis) or 1 ; (anx,any,anz) = axis/an
@@ -135,7 +145,8 @@ for j in 0..N:
         km=hypot(kxc,kyc,kzc); d=(kxc,kyc,kzc)/km
     store kx[j],ky[j],kz[j]=kxc,kyc,kzc ; km[j]=km
     (e1,e2) = frame(d)
-    s[j]   = (rng() < (1+helicity)/2) ? 1 : -1               # 1 draw
+    p_j    = helicity callable ? helicity(km[j]) : helicity   # NO draw
+    s[j]   = (rng() < (1+p_j)/2) ? 1 : -1                     # 1 draw
     chi[j] = clamp(ellipticity, 0, 1) * s[j]                 # NO draw — deterministic post-transform
     a[j] = spectrum ? max(0, spectrum(km)) : pow(km, -slope)
     phr = TAU*rng()                                          # 1 draw
@@ -144,7 +155,8 @@ for j in 0..N:
     # additive phase interpolation (helical-fields Eq. 9): reference at full weight,
     # random part fades as lam->1. Well-defined for every lam (no lam=1/2 antipodal
     # singularity of the old complex-plane "chord" blend atan2((1-lam)e^iphr+lam e^iphc)).
-    ph[j] = phc + (1-lam)*phr                                # lam=0 -> uniform random ; lam=1 -> phc
+    lam_j = clamp(lamFn(km[j]), 0, 1)                        # NO draw ; store for the om loop
+    ph[j] = phc + (1-lam_j)*phr                              # lam=0 -> uniform random ; lam=1 -> phc
 
 # --- time evolution: ALL draws happen AFTER the spatial loop above ---
 churn_rate = max(0, churn)          # NB: the symbol `chi` is reserved for chirality (above)
@@ -157,7 +169,7 @@ rate0 = churn_rate * cbrt(max(kmin, 1e-9))
 for j in 0..N:                # 1 draw each
     sgn = (rng() < 0.5) ? -1 : 1
     c = ci[j]
-    om[j] = (1-lam)*sgn*rate0*pow(km[j], 2/3) - lam*(kx[j]*cvx[c] + ky[j]*cvy[c] + kz[j]*cvz[c])
+    om[j] = (1-lam_j)*sgn*rate0*pow(km[j], 2/3) - lam_j*(kx[j]*cvx[c] + ky[j]*cvy[c] + kz[j]*cvz[c])
 
 nu = max(0, decay)
 scale = 1
@@ -282,6 +294,50 @@ Float literals must always contain `.` or `e`. Prefix `P_` = `<name>_`. Sanitize
 - `samples`: list of {x,y,z,t, u:[3], w:[3], A:[3]}
 - `relativeHelicity` (ng=8), `bake3d4_sum` (sum of all bake3D(4,0) floats)
 
+Callable options are stored as named preset descriptors `{"$preset": name, "args": [...]}`,
+which each port maps through its own §10.1 preset registry; `P_abc` carries
+`{"$factory": "abc", "args": [...]}` instead of a config. Only preset-built callables are
+covered by cross-port parity — free-form user callables are out of fixture scope by
+construction.
+
 Each port MUST include a test that loads this fixture, rebuilds each config, and asserts:
 modes arrays, sample u/w/A, relativeHelicity, and bake sum all match within abs+rel 1e-9
 (use 1e-7 for the bake sum which accumulates float32). Copy the fixture into the package's test dir.
+
+## 10. Presets (normative)
+
+### 10.1 Scale-function presets
+
+Pure functions of `|k|`; the fixture references them by name.
+
+```
+shellPeak(kPeak, width=1):      a(k)   = exp(-(k-kPeak)^2 / (2*width^2))
+rolloff(kc):                    lam(k) = clamp(1 - k/kc, 0, 1)
+condensate(kSplit, pL, pS=0):   p(k)   = (k <= kSplit) ? pL : pS
+```
+
+### 10.2 abc(A=1, B=1, C=1) — direct-mode field, NO RNG
+
+Exactly these three modes (`e1`/`e2` are what `frame()` from §3 produces for these
+directions — listed so a port can verify its frame implementation):
+
+```
+j=0: k=(0,0,1), e1=(1,0,0),  e2=(0,1,0), s=+1, a=A, ph=-pi/2
+j=1: k=(1,0,0), e1=(0,1,0),  e2=(0,0,1), s=+1, a=B, ph=-pi/2
+j=2: k=(0,1,0), e1=(-1,0,0), e2=(0,0,1), s=+1, a=C, ph=+pi
+```
+
+`om = (0,0,0)` (steady); `nu` = the `decay` option; `scale = 1` unless an `amplitude` is
+given, in which case `scale = amplitude / sqrt(A^2+B^2+C^2)`.
+
+**NOTE (normative):** that closed form equals `rms()` in exact arithmetic but differs by
+~1 ulp in IEEE-754 depending on summation order — ports MUST use the closed form, never
+`rms()`.
+
+Field identity: `u = (A sin z + C cos y, B sin x + A cos z, C sin y + B cos x)`, with
+`curl u = u` and `potential = u` (a pure Beltrami field), exactly `2*pi`-tileable.
+
+### 10.3 twoScale(base, detail, detailGain=1)
+
+`u`, `w` and `A_pot` are the componentwise sums `base + detailGain * detail`.
+Divergence-free and potential-exact by linearity.

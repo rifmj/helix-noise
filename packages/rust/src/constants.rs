@@ -65,6 +65,11 @@ impl fmt::Display for Layout {
 /// ergonomic. When present it overrides the default power law `|k|^-slope`.
 pub type SpectrumFn = Box<dyn Fn(f64) -> f64>;
 
+/// A pure per-wavenumber dial, evaluated once per mode at its final `|k|` (after the
+/// `tileable` rounding) — exactly like [`SpectrumFn`]. Must be deterministic and must not
+/// draw randomness: the RNG sequence is unchanged whether you set the scalar or the callable.
+pub type ScaleFn = Box<dyn Fn(f64) -> f64>;
+
 /// Options for constructing a [`crate::HelixField`].
 ///
 /// Every field has a sensible default; build one with `HelixOptions::default()` and override
@@ -112,6 +117,10 @@ pub struct HelixOptions {
     pub ellipticity: f64,
     /// Optional spectral amplitude law. When set, overrides the default `|k|^-slope`.
     pub spectrum: Option<SpectrumFn>,
+    /// Optional per-wavenumber coherence `(k) -> lambda`. When set, overrides `coherence`.
+    pub coherence_fn: Option<ScaleFn>,
+    /// Optional per-wavenumber helicity `(k) -> p`. When set, overrides `helicity`.
+    pub helicity_fn: Option<ScaleFn>,
 }
 
 impl Default for HelixOptions {
@@ -134,6 +143,8 @@ impl Default for HelixOptions {
             axis: [0.0, 0.0, 1.0],
             ellipticity: 1.0,
             spectrum: None,
+            coherence_fn: None,
+            helicity_fn: None,
         }
     }
 }
@@ -158,6 +169,8 @@ impl fmt::Debug for HelixOptions {
             .field("axis", &self.axis)
             .field("ellipticity", &self.ellipticity)
             .field("spectrum", &self.spectrum.as_ref().map(|_| "<fn>"))
+            .field("coherence_fn", &self.coherence_fn.as_ref().map(|_| "<fn>"))
+            .field("helicity_fn", &self.helicity_fn.as_ref().map(|_| "<fn>"))
             .finish()
     }
 }

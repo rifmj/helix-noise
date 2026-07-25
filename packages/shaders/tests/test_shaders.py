@@ -244,6 +244,32 @@ def test_numeric_self_check():
     print("  [ok] numeric self-check: %d sample points, u/w/A within 1e-6 (full-precision constants)" % n)
 
 
+def test_preset_configs():
+    """Preset-driven configs (spec §10) reproduce the reference fixture through the CLI."""
+    with open(FIXTURE) as fh:
+        fixture = json.load(fh)
+
+    cases = [
+        ("M_coherence_k", ["--modes", "6", "--seed", "11", "--centers", "2",
+                           "--coherence-preset", "rolloff:4"]),
+        ("N_helicity_k", ["--modes", "8", "--seed", "12",
+                          "--helicity-preset", "condensate:3.0,1,-1"]),
+        ("O_shellpeak", ["--modes", "8", "--seed", "13",
+                         "--spectrum-preset", "shellPeak:3,1"]),
+        ("P_abc", ["--abc", "1.5,1.0,0.5"]),
+    ]
+    for label, extra in cases:
+        glsl = run_gen(["--target", "glsl", "--potential", "--precision", "17"] + extra)
+        consts = parse_glsl_constants(glsl)
+        for smp in fixture[label]["samples"]:
+            u, w, apot = eval_field(consts, smp["x"], smp["y"], smp["z"], smp.get("t", 0.0))
+            for i in range(3):
+                assert_close(u[i], smp["u"][i], 1e-6, "%s u[%d]" % (label, i))
+                assert_close(w[i], smp["w"][i], 1e-6, "%s w[%d]" % (label, i))
+                assert_close(apot[i], smp["A"][i], 1e-6, "%s A[%d]" % (label, i))
+        print("  [ok] %s: samples match the reference within 1e-6" % label)
+
+
 def main():
     print("test_glsl_parity")
     test_glsl_parity()
@@ -251,6 +277,8 @@ def main():
     test_structural_targets()
     print("test_numeric_self_check")
     test_numeric_self_check()
+    print("test_preset_configs")
+    test_preset_configs()
     print("\nALL TESTS PASSED")
 
 

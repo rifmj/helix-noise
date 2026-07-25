@@ -1,13 +1,28 @@
+/**
+ * A pure per-wavenumber dial, evaluated once per mode at its final |k| (after the `tileable`
+ * rounding) — exactly like the `spectrum` callable. Must be deterministic and must not draw
+ * randomness: the RNG sequence is unchanged whether you pass a number or a function.
+ */
+export type ScaleFn = (k: number) => number;
+
 /** Options for {@link create}. All optional; see {@link DEFAULTS}. */
 export interface HelixNoiseOptions {
   /** Number of helical modes. Cost of one sample is O(modes). Default 48. */
   modes?: number;
   /** Spectral slope s: mode amplitude ∝ |k|^-s. Default 1.6. */
   slope?: number;
-  /** Helicity p ∈ [-1, 1]: energy split between the two helical states. Default 0. */
-  helicity?: number;
-  /** Phase coherence λ ∈ [0, 1]: inter-mode phases random → structured. Default 0. */
-  coherence?: number;
+  /**
+   * Helicity p ∈ [-1, 1]: energy split between the two helical states. Default 0.
+   * May also be a per-wavenumber callable `(k) => p` — e.g. a strongly handed large-scale
+   * condensate over mirror-symmetric fine detail (see the `condensate` preset).
+   */
+  helicity?: number | ScaleFn;
+  /**
+   * Phase coherence λ ∈ [0, 1]: inter-mode phases random → structured. Default 0.
+   * May also be a per-wavenumber callable `(k) => λ` (clamped per mode) — e.g. organized
+   * large-scale rollers carrying incoherent fine detail (see the `rolloff` preset).
+   */
+  coherence?: number | ScaleFn;
   /** Smallest wavenumber (largest structures). Default 1. */
   kmin?: number;
   /** Largest wavenumber (finest detail). Default 6.2. */
