@@ -13,6 +13,7 @@ use serde_json::Value;
 const FIXTURE: &str = include_str!("parity_fixture.json");
 const REF_GLSL_A: &str = include_str!("ref_glsl_A.glsl");
 const REF_GLSL_K: &str = include_str!("ref_glsl_K_elliptic.glsl");
+const REF_GLSL_Q: &str = include_str!("ref_glsl_Q_grain.glsl");
 
 /// Absolute+relative closeness, matching the spec tolerance (abs+rel 1e-9).
 fn close(got: f64, exp: f64, atol: f64, rtol: f64) -> bool {
@@ -91,6 +92,16 @@ fn build_from_config(cfg: &Value) -> HelixField {
     if let Some(v) = m.get("spectrum").and_then(|v| v.as_object()) {
         o.spectrum = Some(preset_from(v));
     }
+    if let Some(v) = m.get("polarizationAxis").and_then(|v| v.as_array()) {
+        o.polarization_axis = Some([
+            v[0].as_f64().unwrap(),
+            v[1].as_f64().unwrap(),
+            v[2].as_f64().unwrap(),
+        ]);
+    }
+    if let Some(v) = m.get("polarizationBias") {
+        o.polarization_bias = v.as_f64().unwrap();
+    }
     if let Some(v) = m.get("ellipticity") {
         o.ellipticity = v.as_f64().unwrap();
     }
@@ -136,6 +147,7 @@ fn spectral_configs_match_fixture() {
         "M_coherence_k",
         "N_helicity_k",
         "O_shellpeak",
+        "Q_grain",
     ] {
         let entry = &root[name];
         let f = build_from_config(&entry["config"]);
@@ -444,4 +456,19 @@ fn abc_factory_matches_fixture() {
         AbcOptions::default(),
     );
     check_field_against("P_abc", &f, entry);
+}
+
+/// The grain-axis (general) curl/potential bodies match the JS emitter.
+#[test]
+fn glsl_config_q_grain_matches_reference() {
+    let root: Value = serde_json::from_str(FIXTURE).unwrap();
+    let f = build_from_config(&root["Q_grain"]["config"]);
+    let src = f.glsl(&GlslOptions { potential: true, ..Default::default() });
+    assert!(src.contains("cross("), "grain-axis curl must use the cross-product body");
+    let got = glsl_floats(&src);
+    let exp = glsl_floats(REF_GLSL_Q);
+    assert_eq!(got.len(), exp.len(), "GLSL float count differs\n--- got ---\n{src}");
+    for (i, (&g, &e)) in got.iter().zip(exp.iter()).enumerate() {
+        assert!(close(g, e, 1e-6, 1e-6), "GLSL float #{i}: got {g}, expected {e}");
+    }
 }

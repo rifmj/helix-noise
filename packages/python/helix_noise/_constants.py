@@ -7,7 +7,12 @@ TAU = 2.0 * math.pi
 # Golden angle (radians) — the Fibonacci-sphere azimuth increment.
 GA = math.pi * (3.0 - math.sqrt(5.0))
 
-VERSION = "0.3.0"
+#: Seed salt for the polarization channel's second RNG stream (32-bit wrapping add).
+POLAR_SALT = 0x9E3779B9
+#: Polarization-degree ball radius: sqrt(d^2 + chi^2) is clamped to this (PSD of the covariance).
+POLAR_DEG_MAX = 0.97
+
+VERSION = "0.4.0"
 
 # Default options, filled in for every field. ``spectrum`` stays optional
 # (there is no default spectral-law callable).
@@ -27,5 +32,7 @@ DEFAULTS = {
     "decay": 0.0,       # viscosity nu >= 0: mode amplitudes decay as e^(-nu k^2 t)
     "anisotropy": 0.0,  # direction stretch along `axis`
     "axis": [0.0, 0.0, 1.0],  # anisotropy axis
+    "polarizationAxis": None,  # world grain axis for linear polarization; None = channel off
+    "polarizationBias": 0.0,   # linear-polarization strength d along that axis
     "ellipticity": 1.0,  # eps in [0,1]: per-mode chirality chi = eps*s (1 = circular, 0 = linear)
 }

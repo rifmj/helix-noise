@@ -8,7 +8,7 @@ import math
 
 import numpy as np
 
-from ._constants import DEFAULTS, GA, TAU
+from ._constants import DEFAULTS, GA, POLAR_DEG_MAX, POLAR_SALT, TAU
 from ._rng import mulberry32
 from .glsl import to_glsl
 
@@ -57,6 +57,9 @@ class HelixField:
     arrays; per-point sampling returns plain Python tuples/floats, and the
     ``sample_many*`` methods are numpy-vectorized.
     """
+
+    #: Set when the grain-axis channel folded a general transverse amplitude into the frame.
+    _general = False
 
     #: Set when the modes come from a closed-form preset instead of the RNG;
     #: ``set()`` then refuses to regenerate the field.
@@ -297,9 +300,92 @@ class HelixField:
         self.cvy = np.array(cvy)
         self.cvz = np.array(cvz)
         self.nu = max(0.0, p["decay"])
+        self._polarize()
 
         self._scale = 1.0
         self._scale = (p["amplitude"] or 1.0) / (self._rms() or 1.0)
+
+    def _polarize(self):
+        """Grain-axis channel: fold a Gaussian transverse amplitude into the stored frame.
+
+        Draws come from a *second*, independent mulberry32 stream, so every draw of the main
+        build happens in the same order with the same use -- a field with the channel off is
+        bit-identical to one built before the channel existed. See spec section 4b.
+        """
+        p = self.params
+        ax = p["polarizationAxis"]
+        self._general = False
+        if not ax:
+            return
+        an = math.hypot(ax[0], ax[1], ax[2]) or 1.0
+        nx, ny, nz = ax[0] / an, ax[1] / an, ax[2] / an
+        d0 = min(0.95, max(0.0, p["polarizationBias"]))
+        seed_eff = (int(p["seed"]) & 0xFFFFFFFF) or 1
+        rng2 = mulberry32(((seed_eff + POLAR_SALT) & 0xFFFFFFFF) or 1)
+        n = self.N
+        w1 = np.zeros((n, 3))
+        w2 = np.zeros((n, 3))
+        for j in range(n):
+            # Complex standard normals (E|z|^2 = 1): no factor 2 under the sqrt.
+            r1 = math.sqrt(-math.log(1.0 - rng2()))
+            t1 = TAU * rng2()
+            z1r, z1i = r1 * math.cos(t1), r1 * math.sin(t1)
+            r2 = math.sqrt(-math.log(1.0 - rng2()))
+            t2 = TAU * rng2()
+            z2r, z2i = r2 * math.cos(t2), r2 * math.sin(t2)
+
+            km = self.km[j]
+            dx, dy, dz = self.kx[j] / km, self.ky[j] / km, self.kz[j] / km
+            e1 = (self.e1x[j], self.e1y[j], self.e1z[j])
+            e2 = (self.e2x[j], self.e2y[j], self.e2z[j])
+
+            ndk = nx * dx + ny * dy + nz * dz
+            tx, ty, tz = nx - ndk * dx, ny - ndk * dy, nz - ndk * dz
+            tl = math.hypot(tx, ty, tz)
+            c2, s2 = 1.0, 0.0
+            if tl > 1e-6:
+                tx, ty, tz = tx / tl, ty / tl, tz / tl
+                ct = tx * e1[0] + ty * e1[1] + tz * e1[2]
+                st = tx * e2[0] + ty * e2[1] + tz * e2[2]
+                psi = math.atan2(st, ct)
+                c2, s2 = math.cos(2.0 * psi), math.sin(2.0 * psi)
+
+            dd, pp = d0, self.chi[j]
+            deg = math.hypot(dd, pp)
+            if deg > POLAR_DEG_MAX:
+                f = POLAR_DEG_MAX / deg
+                dd, pp = dd * f, pp * f
+            j11, j22 = 1.0 + dd * c2, 1.0 - dd * c2
+            j21r, j21i = dd * s2, pp
+            l11 = math.sqrt(max(j11, 1e-12))
+            l21r, l21i = j21r / l11, j21i / l11
+            l22 = math.sqrt(max(j22 - (j21r * j21r + j21i * j21i) / j11, 0.0))
+
+            a1r, a1i = l11 * z1r, l11 * z1i
+            a2r = l21r * z1r - l21i * z1i + l22 * z2r
+            a2i = l21r * z1i + l21i * z1r + l22 * z2i
+            f1 = tuple(a1r * e1[c] + a2r * e2[c] for c in range(3))
+            f2 = tuple(a1i * e1[c] + a2i * e2[c] for c in range(3))
+            self.e1x[j], self.e1y[j], self.e1z[j] = f1
+            self.e2x[j], self.e2y[j], self.e2z[j] = f2
+            self.s[j] = 1.0
+            self.chi[j] = 1.0
+
+            kx, ky, kz = self.kx[j], self.ky[j], self.kz[j]
+            w1[j] = (
+                -(ky * f2[2] - kz * f2[1]),
+                -(kz * f2[0] - kx * f2[2]),
+                -(kx * f2[1] - ky * f2[0]),
+            )
+            w2[j] = (
+                ky * f1[2] - kz * f1[1],
+                kz * f1[0] - kx * f1[2],
+                kx * f1[1] - ky * f1[0],
+            )
+        self.w1 = w1
+        self.w2 = w2
+        self._beltrami = False
+        self._general = True
 
     # ------------------------------------------------------------ amplitudes
 
@@ -324,7 +410,15 @@ class HelixField:
             c = math.cos(phi)
             sn = math.sin(phi)
             aj = A[j]
-            if beltrami:
+            if self._general:
+                # Grain-axis modes: folded (non-orthonormal) frame, curl from the precomputed frame.
+                ux += aj * (c * e1x[j] - sn * e2x[j])
+                uy += aj * (c * e1y[j] - sn * e2y[j])
+                uz += aj * (c * e1z[j] - sn * e2z[j])
+                wx += aj * (c * self.w1[j][0] - sn * self.w2[j][0])
+                wy += aj * (c * self.w1[j][1] - sn * self.w2[j][1])
+                wz += aj * (c * self.w1[j][2] - sn * self.w2[j][2])
+            elif beltrami:
                 # Legacy Beltrami path: bit-compatible with spec 1.0 (w = s*k * u).
                 sj = s[j]
                 tx = aj * (c * e1x[j] - sj * sn * e2x[j])
@@ -366,7 +460,16 @@ class HelixField:
             c = math.cos(phi)
             sn = math.sin(phi)
             aj = A[j]
-            if beltrami:
+            if self._general:
+                # A_j = w_j / k^2, same cross-product curl frame.
+                ux += aj * (c * e1x[j] - sn * e2x[j])
+                uy += aj * (c * e1y[j] - sn * e2y[j])
+                uz += aj * (c * e1z[j] - sn * e2z[j])
+                ga = aj / (km[j] * km[j])
+                ax += ga * (c * self.w1[j][0] - sn * self.w2[j][0])
+                ay += ga * (c * self.w1[j][1] - sn * self.w2[j][1])
+                az += ga * (c * self.w1[j][2] - sn * self.w2[j][2])
+            elif beltrami:
                 sj = s[j]
                 tx = aj * (c * e1x[j] - sj * sn * e2x[j])
                 ty = aj * (c * e1y[j] - sj * sn * e2y[j])
@@ -438,7 +541,11 @@ class HelixField:
         u[:, 1] = ty.sum(axis=1) * sc
         u[:, 2] = tz.sum(axis=1) * sc
         w = np.empty((pos.shape[0], 3))
-        if self._beltrami:
+        if self._general:
+            # Grain-axis modes: folded frame, curl from the precomputed cross-product frame.
+            for cc in range(3):
+                w[:, cc] = (A * (c * self.w1[:, cc] - sn * self.w2[:, cc])).sum(axis=1) * sc
+        elif self._beltrami:
             g = s * self.km
             w[:, 0] = (g * tx).sum(axis=1) * sc
             w[:, 1] = (g * ty).sum(axis=1) * sc

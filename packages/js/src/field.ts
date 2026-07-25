@@ -1,4 +1,4 @@
-import { DEFAULTS, TAU } from "./constants";
+import { DEFAULTS, POLAR_DEG_MAX, POLAR_SALT, TAU } from "./constants";
 import { mulberry32 } from "./rng";
 import { toGLSL } from "./glsl";
 import { BoundedFieldImpl } from "./boundary";
@@ -105,6 +105,11 @@ export class HelixField implements Field, ModeData {
    * rounds differently — the parity fixture pins the shortcut's bits. @internal
    */
   _beltrami = true;
+  /** True when the grain-axis channel folded a general transverse amplitude into the frame. */
+  _general = false;
+  /** Curl frame for general modes: w = A·(cos φ·w1 − sin φ·w2). Allocated only when needed. */
+  w1x?: Float64Array; w1y?: Float64Array; w1z?: Float64Array;
+  w2x?: Float64Array; w2y?: Float64Array; w2z?: Float64Array;
   /** Bumped on every rebuild — the wasm backend uses it to re-upload mode data. @internal */
   _buildStamp = 0;
   /** Test/bench escape hatch: set true to force the JS batch kernel. @internal */
@@ -296,10 +301,104 @@ export class HelixField implements Field, ModeData {
     }
 
     this.nu = Math.max(0, p.decay);
+    this._polarize(); // grain-axis channel (no-op unless polarizationAxis is set)
     this._tAmp = NaN; // invalidate the decayed-amplitude cache
     this._buildStamp++;
     this._scale = 1;
     this._scale = (p.amplitude || 1) / (this._rms() || 1);
+  }
+
+  /**
+   * Linear-polarization ("grain axis") post-pass. Each mode's circular amplitude is replaced by a
+   * Gaussian sample with the requested 2×2 transverse covariance `J = I + d·R(2ψ) + χ·N`, drawn
+   * from a **second, independent** RNG stream — so every draw of the main build above happens in
+   * the same order with the same use, and a field with the channel off is bit-identical to one
+   * built before the channel existed.
+   *
+   * The sampled amplitude is folded straight into the stored frame (`e1`, `e2` stop being
+   * orthonormal, `s` becomes 1), which leaves the velocity formula untouched; only the curl and
+   * potential need the general cross-product form, precomputed here as `w1`/`w2`.
+   */
+  private _polarize(): void {
+    const p = this.params;
+    const ax = p.polarizationAxis;
+    this._general = false;
+    if (!ax) return;
+
+    const an = Math.hypot(ax[0], ax[1], ax[2]) || 1;
+    const nx = ax[0] / an, ny = ax[1] / an, nz = ax[2] / an;
+    const d0 = Math.min(0.95, Math.max(0, p.polarizationBias));
+    // Second stream: an additive salt puts it ~6·10⁸ draws down the same mulberry32 orbit, far
+    // beyond any build's consumption, so the two streams never overlap.
+    const seedEff = (p.seed >>> 0) || 1;
+    const rng2 = mulberry32(((seedEff + POLAR_SALT) >>> 0) || 1);
+    const N = this.N;
+    this._allocGeneral(N);
+
+    for (let j = 0; j < N; j++) {
+      // Two complex standard normals (E|z|² = 1) — note there is no factor 2 under the sqrt,
+      // unlike the real Box–Muller above: each real component must be N(0, ½).
+      const r1 = Math.sqrt(-Math.log(1 - rng2())), t1 = TAU * rng2();
+      const z1r = r1 * Math.cos(t1), z1i = r1 * Math.sin(t1);
+      const r2 = Math.sqrt(-Math.log(1 - rng2())), t2 = TAU * rng2();
+      const z2r = r2 * Math.cos(t2), z2i = r2 * Math.sin(t2);
+
+      const km = this.km[j];
+      const dx = this.kx[j] / km, dy = this.ky[j] / km, dz = this.kz[j] / km;
+      const e1x = this.e1x[j], e1y = this.e1y[j], e1z = this.e1z[j];
+      const e2x = this.e2x[j], e2y = this.e2y[j], e2z = this.e2z[j];
+
+      // Project the world grain axis into this mode's transverse plane; ψ is its frame angle.
+      const ndk = nx * dx + ny * dy + nz * dz;
+      let tx = nx - ndk * dx, ty = ny - ndk * dy, tz = nz - ndk * dz;
+      const tl = Math.hypot(tx, ty, tz);
+      let c2 = 1, s2 = 0;
+      if (tl > 1e-6) {
+        tx /= tl; ty /= tl; tz /= tl;
+        const ct = tx * e1x + ty * e1y + tz * e1z;
+        const st = tx * e2x + ty * e2y + tz * e2z;
+        const psi = Math.atan2(st, ct);
+        c2 = Math.cos(2 * psi); s2 = Math.sin(2 * psi);
+      } // else k ∥ axis: the grain direction is undefined there, fall back to the mode's own e1
+
+      // Covariance + its Cholesky factor. The degree ball is the PSD condition, not a fudge:
+      // circular and linear polarization genuinely compete for the same budget.
+      let dd = d0, pp = this.chi[j];
+      const deg = Math.hypot(dd, pp);
+      if (deg > POLAR_DEG_MAX) { const f = POLAR_DEG_MAX / deg; dd *= f; pp *= f; }
+      const J11 = 1 + dd * c2, J22 = 1 - dd * c2;
+      const J21r = dd * s2, J21i = pp;
+      const L11 = Math.sqrt(Math.max(J11, 1e-12));
+      const L21r = J21r / L11, L21i = J21i / L11;
+      const L22 = Math.sqrt(Math.max(J22 - (J21r * J21r + J21i * J21i) / J11, 0));
+
+      // α = L·z, then fold the complex amplitude into the frame: u = Re[(α₁e1 + α₂e2)·e^{iφ}]
+      const a1r = L11 * z1r, a1i = L11 * z1i;
+      const a2r = L21r * z1r - L21i * z1i + L22 * z2r;
+      const a2i = L21r * z1i + L21i * z1r + L22 * z2i;
+      const f1x = a1r * e1x + a2r * e2x, f1y = a1r * e1y + a2r * e2y, f1z = a1r * e1z + a2r * e2z;
+      const f2x = a1i * e1x + a2i * e2x, f2y = a1i * e1y + a2i * e2y, f2z = a1i * e1z + a2i * e2z;
+      this.e1x[j] = f1x; this.e1y[j] = f1y; this.e1z[j] = f1z;
+      this.e2x[j] = f2x; this.e2y[j] = f2y; this.e2z[j] = f2z;
+      this.s[j] = 1; this.chi[j] = 1;
+
+      // Curl frame: w = A(c·w1 − sn·w2) with w1 = −k×e2′, w2 = k×e1′.
+      const kx = this.kx[j], ky = this.ky[j], kz = this.kz[j];
+      this.w1x![j] = -(ky * f2z - kz * f2y);
+      this.w1y![j] = -(kz * f2x - kx * f2z);
+      this.w1z![j] = -(kx * f2y - ky * f2x);
+      this.w2x![j] = ky * f1z - kz * f1y;
+      this.w2y![j] = kz * f1x - kx * f1z;
+      this.w2z![j] = kx * f1y - ky * f1x;
+    }
+    this._beltrami = false;
+    this._general = true;
+  }
+
+  private _allocGeneral(N: number): void {
+    if (this.w1x && this.w1x.length === N) return;
+    this.w1x = new Float64Array(N); this.w1y = new Float64Array(N); this.w1z = new Float64Array(N);
+    this.w2x = new Float64Array(N); this.w2y = new Float64Array(N); this.w2z = new Float64Array(N);
   }
 
   /** Mode amplitudes at time t: a·e^(−νk²t), cached per t (recomputed once per frame, not per sample). */
@@ -327,6 +426,21 @@ export class HelixField implements Field, ModeData {
         ux += tx; uy += ty; uz += tz;
         const g = s * this.km[j];
         wx += g * tx; wy += g * ty; wz += g * tz;
+      }
+    } else if (this._general) {
+      // Grain-axis modes: the frame is folded and no longer orthonormal, so the curl comes from
+      // the precomputed cross-product frame w1 = −k×e2, w2 = k×e1.
+      const w1x = this.w1x!, w1y = this.w1y!, w1z = this.w1z!;
+      const w2x = this.w2x!, w2y = this.w2y!, w2z = this.w2z!;
+      for (let j = 0; j < N; j++) {
+        const phi = this.kx[j] * x + this.ky[j] * y + this.kz[j] * z + this.ph[j] + this.om[j] * t;
+        const c = Math.cos(phi), sn = Math.sin(phi), a = A[j];
+        ux += a * (c * this.e1x[j] - sn * this.e2x[j]);
+        uy += a * (c * this.e1y[j] - sn * this.e2y[j]);
+        uz += a * (c * this.e1z[j] - sn * this.e2z[j]);
+        wx += a * (c * w1x[j] - sn * w2x[j]);
+        wy += a * (c * w1y[j] - sn * w2y[j]);
+        wz += a * (c * w1z[j] - sn * w2z[j]);
       }
     } else {
       // Elliptic modes: u_j = a(c·e1 − χ·sn·e2), w_j = aκ(χ·c·e1 − sn·e2) — the general two-term
@@ -360,6 +474,21 @@ export class HelixField implements Field, ModeData {
         ux += tx; uy += ty; uz += tz;
         const g = s / this.km[j]; // A_j = u_j / (s·k) = (s/k)·u_j — exact vector potential per mode
         ax += g * tx; ay += g * ty; az += g * tz;
+      }
+    } else if (this._general) {
+      // A_j = w_j/κ² with the same cross-product curl frame.
+      const w1x = this.w1x!, w1y = this.w1y!, w1z = this.w1z!;
+      const w2x = this.w2x!, w2y = this.w2y!, w2z = this.w2z!;
+      for (let j = 0; j < N; j++) {
+        const phi = this.kx[j] * x + this.ky[j] * y + this.kz[j] * z + this.ph[j] + this.om[j] * t;
+        const c = Math.cos(phi), sn = Math.sin(phi), a = A[j];
+        ux += a * (c * this.e1x[j] - sn * this.e2x[j]);
+        uy += a * (c * this.e1y[j] - sn * this.e2y[j]);
+        uz += a * (c * this.e1z[j] - sn * this.e2z[j]);
+        const ga = a / (this.km[j] * this.km[j]);
+        ax += ga * (c * w1x[j] - sn * w2x[j]);
+        ay += ga * (c * w1y[j] - sn * w2y[j]);
+        az += ga * (c * w1z[j] - sn * w2z[j]);
       }
     } else {
       // A_j = w_j/κ² = (a/κ)(χ·c·e1 − sn·e2) — same Coulomb gauge, ∇×A_j = u_j for every χ.
@@ -442,10 +571,16 @@ export class HelixField implements Field, ModeData {
         const as = bel ? a * s : a * this.chi[j];
         const b2x = as * this.e2x[j], b2y = as * this.e2y[j], b2z = as * this.e2z[j];
         const g = s * this.km[j];
-        // General-χ vorticity fold: w_j = c·(aκχ)·e1 − sn·(aκ)·e2 (unused on the Beltrami path).
+        // Vorticity fold for the non-Beltrami paths. Grain-axis modes use the precomputed
+        // cross-product frame; elliptic modes the two-term χ form w_j = aκ(χ·c·e1 − sn·e2).
+        const gen = this._general;
         const ak = a * this.km[j], akx = ak * this.chi[j];
-        const c1x = akx * this.e1x[j], c1y = akx * this.e1y[j], c1z = akx * this.e1z[j];
-        const c2x = ak * this.e2x[j], c2y = ak * this.e2y[j], c2z = ak * this.e2z[j];
+        const c1x = gen ? a * this.w1x![j] : akx * this.e1x[j];
+        const c1y = gen ? a * this.w1y![j] : akx * this.e1y[j];
+        const c1z = gen ? a * this.w1z![j] : akx * this.e1z[j];
+        const c2x = gen ? a * this.w2x![j] : ak * this.e2x[j];
+        const c2y = gen ? a * this.w2y![j] : ak * this.e2y[j];
+        const c2z = gen ? a * this.w2z![j] : ak * this.e2z[j];
         for (let i = 0; i < m; i++) {
           const q = 3 * (i0 + i);
           const phi = kx * pos[q] + ky * pos[q + 1] + kz * pos[q + 2] + ph + omt;

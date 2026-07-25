@@ -22,11 +22,11 @@ algorithm once and re-verify every language in one CI run.
 
 | Package | Language | Registry | Version | Status |
 |---|---|---|---|---|
-| [`packages/js`](packages/js) | TypeScript / JS | npm `helix-noise` | `1.3.0` | reference implementation (spectral + atom engines, boundaries, GLSL, WASM batch kernel) |
-| [`packages/python`](packages/python) | Python 3 + numpy | PyPI `helix-noise` | `0.3.0` | spectral engine + boundary + GLSL; vectorized `sample_many` |
-| [`packages/rust`](packages/rust) | Rust | crates.io `helix-noise` | `0.4.0` | spectral **+ atom** engines + boundary (wraps either) + GLSL; zero runtime deps, WASM-friendly |
-| [`packages/wasm`](packages/wasm) | Rust → WebAssembly | npm `helix-noise-wasm` | `0.3.0` | `wasm-bindgen` build of the Rust core; both engines, native-speed sampling in the browser |
-| [`packages/shaders`](packages/shaders) | GLSL · HLSL · WGSL · Godot | — | `0.3.0` | code generator + ready-to-paste shaders for Shadertoy / Unity / Unreal / Godot / WebGPU |
+| [`packages/js`](packages/js) | TypeScript / JS | npm `helix-noise` | `1.4.0` | reference implementation (spectral + atom engines, boundaries, GLSL, WASM batch kernel) |
+| [`packages/python`](packages/python) | Python 3 + numpy | PyPI `helix-noise` | `0.4.0` | spectral engine + boundary + GLSL; vectorized `sample_many` |
+| [`packages/rust`](packages/rust) | Rust | crates.io `helix-noise` | `0.5.0` | spectral **+ atom** engines + boundary (wraps either) + GLSL; zero runtime deps, WASM-friendly |
+| [`packages/wasm`](packages/wasm) | Rust → WebAssembly | npm `helix-noise-wasm` | `0.4.0` | `wasm-bindgen` build of the Rust core; both engines, native-speed sampling in the browser |
+| [`packages/shaders`](packages/shaders) | GLSL · HLSL · WGSL · Godot | — | `0.4.0` | code generator + ready-to-paste shaders for Shadertoy / Unity / Unreal / Godot / WebGPU |
 | [`packages/r3f`](packages/r3f) | TypeScript / React | npm `helix-noise-r3f` | `0.1.0` | react-three-fiber components (declarative particles + material); CPU + GPU engines, SDF obstacles |
 | [`packages/gpu`](packages/gpu) | TypeScript / WebGL2 | npm `helix-noise-gpu` | `0.1.0` | framework-agnostic GPU particle engine (transform-feedback advection via injected `field.glsl()`, ~10⁶ particles); no three.js/React |
 

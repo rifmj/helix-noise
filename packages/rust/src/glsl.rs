@@ -185,7 +185,8 @@ pub fn to_glsl(f: &HelixField, opts: &GlslOptions) -> String {
     l.push(format!("const float {pfx}S[{n}] = {};", fa(&f.chi)));
     // P_S carries chi = ellipticity*s. The curl/potential shortcuts below are Beltrami-only;
     // emit them iff every |chi| == 1 (then the text is byte-identical to spec 1.0 output).
-    let beltrami = f.chi.iter().all(|x| x.abs() == 1.0);
+    let general = f.general;
+    let beltrami = !general && f.chi.iter().all(|x| x.abs() == 1.0);
     l.push(format!("const float {pfx}A[{n}] = {};", fa(&f.a)));
     l.push(format!("const float {pfx}PH[{n}] = {};", fa(&f.ph)));
     l.push(format!("const float {pfx}OM[{n}] = {};", fa(&f.om)));
@@ -221,6 +222,12 @@ pub fn to_glsl(f: &HelixField, opts: &GlslOptions) -> String {
                 "    vec3 tv = ({amp}) * (cos(phi) * {pfx}E1[j] - {pfx}S[j] * sin(phi) * {pfx}E2[j]);"
             ));
             l.push(format!("    w += {pfx}S[j] * length({pfx}K[j]) * tv;"));
+        } else if general {
+            // Folded (grain-axis) frames: w = k x (-sin(phi)*e1 - cos(phi)*e2)*a.
+            l.push(format!(
+                "    vec3 tv2 = ({amp}) * (-sin(phi) * {pfx}E1[j] - cos(phi) * {pfx}E2[j]);"
+            ));
+            l.push(format!("    w += cross({pfx}K[j], tv2);"));
         } else {
             // Elliptic modes: w_j = a*k*(chi*cos(phi)*e1 - sin(phi)*e2).
             l.push(format!(
@@ -248,6 +255,13 @@ pub fn to_glsl(f: &HelixField, opts: &GlslOptions) -> String {
                 "    vec3 tv = ({amp}) * (cos(phi) * {pfx}E1[j] - {pfx}S[j] * sin(phi) * {pfx}E2[j]);"
             ));
             l.push(format!("    A += ({pfx}S[j] / length({pfx}K[j])) * tv;"));
+        } else if general {
+            l.push(format!(
+                "    vec3 tv2 = ({amp}) * (-sin(phi) * {pfx}E1[j] - cos(phi) * {pfx}E2[j]);"
+            ));
+            l.push(format!(
+                "    A += cross({pfx}K[j], tv2) / dot({pfx}K[j], {pfx}K[j]);"
+            ));
         } else {
             // A_j = w_j / k^2 -- same combine as the elliptic curl, divided by |k|.
             l.push(format!(

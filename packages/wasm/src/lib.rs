@@ -90,6 +90,12 @@ fn field_options(opts: &JsValue) -> HelixOptions {
     if let Some(v) = num(opts, "ellipticity") {
         o.ellipticity = v;
     }
+    if let Some(a) = vec3(opts, "polarizationAxis") {
+        o.polarization_axis = Some(a);
+    }
+    if let Some(v) = num(opts, "polarizationBias") {
+        o.polarization_bias = v;
+    }
     if let Some(v) = boolean(opts, "tileable") {
         o.tileable = v;
     }

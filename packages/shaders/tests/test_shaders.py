@@ -25,6 +25,7 @@ FIXTURE = os.path.join(HERE, "parity_fixture.json")
 REF_A = os.path.join(HERE, "ref_glsl_A.glsl")
 REF_D = os.path.join(HERE, "ref_glsl_D_decay.glsl")
 REF_K = os.path.join(HERE, "ref_glsl_K_elliptic.glsl")
+REF_Q = os.path.join(HERE, "ref_glsl_Q_grain.glsl")
 
 FLOAT_RE = re.compile(r"[-+]?(?:\d+\.\d*|\.\d+|\d+)(?:[eE][-+]?\d+)?")
 
@@ -67,6 +68,10 @@ def test_glsl_parity():
         # switch to the general two-term form.
         (["--target", "glsl", "--modes", "6", "--seed", "5", "--ellipticity", "0.5",
           "--helicity", "0.3", "--coherence", "0.25", "--potential"], REF_K, "K"),
+        # Grain axis: the second RNG stream folds a general transverse amplitude into the frame,
+        # so the curl/potential bodies switch to the cross-product form.
+        (["--target", "glsl", "--modes", "6", "--seed", "9", "--ellipticity", "0.4",
+          "--polarization-axis", "0,1,0", "--polarization-bias", "0.6", "--potential"], REF_Q, "Q"),
     ]
     for args, ref_path, label in cases:
         gen = run_gen(args)
@@ -182,8 +187,13 @@ def parse_glsl_constants(glsl):
     return dict(K=K, E1=E1, E2=E2, S=S, A=A, PH=PH, OM=OM, SCALE=SCALE, NU=NU)
 
 
-def eval_field(consts, x, y, z, t):
-    """Evaluate u, w, A_pot from baked constants — the exact shader formula."""
+def eval_field(consts, x, y, z, t, mode="beltrami"):
+    """Evaluate u, w, A_pot from baked constants — the exact shader formula.
+
+    ``mode`` selects the curl/potential body the emitter would have written:
+    ``"beltrami"`` (w = s*k*u), ``"elliptic"`` (two-term, S carries chi) or
+    ``"general"`` (folded frame, cross-product form).
+    """
     K, E1, E2, S, A, PH, OM = (
         consts["K"], consts["E1"], consts["E2"], consts["S"],
         consts["A"], consts["PH"], consts["OM"],
@@ -208,10 +218,28 @@ def eval_field(consts, x, y, z, t):
             amp * (c * E1[j][2] - s * sn * E2[j][2]),
         ]
         km = math.sqrt(kx * kx + ky * ky + kz * kz)
-        for i in range(3):
-            u[i] += tv[i]
-            w[i] += s * km * tv[i]
-            apot[i] += (s / km) * tv[i]
+        if mode == "general":
+            tv2 = [amp * (-sn * E1[j][i] - c * E2[j][i]) for i in range(3)]
+            cr = [
+                ky * tv2[2] - kz * tv2[1],
+                kz * tv2[0] - kx * tv2[2],
+                kx * tv2[1] - ky * tv2[0],
+            ]
+            for i in range(3):
+                u[i] += tv[i]
+                w[i] += cr[i]
+                apot[i] += cr[i] / (km * km)
+        elif mode == "elliptic":
+            tw = [amp * (s * c * E1[j][i] - sn * E2[j][i]) for i in range(3)]
+            for i in range(3):
+                u[i] += tv[i]
+                w[i] += km * tw[i]
+                apot[i] += tw[i] / km
+        else:
+            for i in range(3):
+                u[i] += tv[i]
+                w[i] += s * km * tv[i]
+                apot[i] += (s / km) * tv[i]
     return (
         [c * scale for c in u],
         [c * scale for c in w],
@@ -257,12 +285,16 @@ def test_preset_configs():
         ("O_shellpeak", ["--modes", "8", "--seed", "13",
                          "--spectrum-preset", "shellPeak:3,1"]),
         ("P_abc", ["--abc", "1.5,1.0,0.5"]),
+        ("Q_grain", ["--modes", "6", "--seed", "9", "--ellipticity", "0.4",
+                     "--polarization-axis", "0,1,0", "--polarization-bias", "0.6"], "general"),
     ]
-    for label, extra in cases:
+    for case in cases:
+        label, extra = case[0], case[1]
+        mode = case[2] if len(case) > 2 else "beltrami"
         glsl = run_gen(["--target", "glsl", "--potential", "--precision", "17"] + extra)
         consts = parse_glsl_constants(glsl)
         for smp in fixture[label]["samples"]:
-            u, w, apot = eval_field(consts, smp["x"], smp["y"], smp["z"], smp.get("t", 0.0))
+            u, w, apot = eval_field(consts, smp["x"], smp["y"], smp["z"], smp.get("t", 0.0), mode)
             for i in range(3):
                 assert_close(u[i], smp["u"][i], 1e-6, "%s u[%d]" % (label, i))
                 assert_close(w[i], smp["w"][i], 1e-6, "%s w[%d]" % (label, i))

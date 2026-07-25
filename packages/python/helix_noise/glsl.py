@@ -94,7 +94,8 @@ def to_glsl(f, name="helixNoise", precision=7, curl=True, potential=False):
         L.append("const float {P}NU = {v};".format(P=P, v=_fl(f.nu, pr)))
     # P_S carries chi = ellipticity*s. The curl/potential shortcuts below are Beltrami-only;
     # emit them iff every |chi| == 1 (then the text is byte-identical to spec 1.0 output).
-    beltrami = all(abs(x) == 1.0 for x in f.chi)
+    general = getattr(f, "_general", False)
+    beltrami = (not general) and all(abs(x) == 1.0 for x in f.chi)
     L += [
         "",
         "vec3 {name}(vec3 p, float t) {{".format(name=name),
@@ -121,13 +122,19 @@ def to_glsl(f, name="helixNoise", precision=7, curl=True, potential=False):
                 amp=amp, P=P
             ),
             "    w += {P}S[j] * length({P}K[j]) * tv;".format(P=P),
-        ] if beltrami else [
+        ] if beltrami else ([
+            # Folded (grain-axis) frames: w = k x (-sin(phi)*e1 - cos(phi)*e2)*a.
+            "    vec3 tv2 = ({amp}) * (-sin(phi) * {P}E1[j] - cos(phi) * {P}E2[j]);".format(
+                amp=amp, P=P
+            ),
+            "    w += cross({P}K[j], tv2);".format(P=P),
+        ] if general else [
             # Elliptic modes: w_j = a*k*(chi*cos(phi)*e1 - sin(phi)*e2).
             "    vec3 tw = ({amp}) * ({P}S[j] * cos(phi) * {P}E1[j] - sin(phi) * {P}E2[j]);".format(
                 amp=amp, P=P
             ),
             "    w += length({P}K[j]) * tw;".format(P=P),
-        ]) + [
+        ])) + [
             "  }",
             "  return w * {P}SCALE;".format(P=P),
             "}",
@@ -145,13 +152,18 @@ def to_glsl(f, name="helixNoise", precision=7, curl=True, potential=False):
                 amp=amp, P=P
             ),
             "    A += ({P}S[j] / length({P}K[j])) * tv;".format(P=P),
-        ] if beltrami else [
+        ] if beltrami else ([
+            "    vec3 tv2 = ({amp}) * (-sin(phi) * {P}E1[j] - cos(phi) * {P}E2[j]);".format(
+                amp=amp, P=P
+            ),
+            "    A += cross({P}K[j], tv2) / dot({P}K[j], {P}K[j]);".format(P=P),
+        ] if general else [
             # A_j = w_j / k^2 -- same combine as the elliptic curl, divided by |k|.
             "    vec3 tw = ({amp}) * ({P}S[j] * cos(phi) * {P}E1[j] - sin(phi) * {P}E2[j]);".format(
                 amp=amp, P=P
             ),
             "    A += tw / length({P}K[j]);".format(P=P),
-        ]) + [
+        ])) + [
             "  }",
             "  return A * {P}SCALE;".format(P=P),
             "}",

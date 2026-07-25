@@ -1,6 +1,8 @@
 // src/constants.ts
 var TAU = 2 * Math.PI;
-var VERSION = "1.3.0";
+var POLAR_SALT = 2654435769;
+var POLAR_DEG_MAX = 0.97;
+var VERSION = "1.4.0";
 var DEFAULTS = {
   modes: 48,
   // number of helical modes (cost of one sample is O(modes))
@@ -31,6 +33,10 @@ var DEFAULTS = {
   // direction stretch along `axis`: < 0 streaks along it, > 0 layers across it
   axis: [0, 0, 1],
   // anisotropy axis
+  polarizationAxis: null,
+  // world grain axis for linear polarization; null = channel off
+  polarizationBias: 0,
+  // linear-polarization strength d along that axis
   ellipticity: 1
   // eps in [0, 1]: per-mode chirality chi = eps*s — 1 = circular (tubes), 0 = linear (sheets)
 };
@@ -59,10 +65,13 @@ function toGLSL(f, opts = {}) {
   const N = f.N;
   const P = name + "_";
   const decay = f.nu > 0;
-  let beltrami = true;
-  for (let j = 0; j < N; j++) if (Math.abs(f.chi[j]) !== 1) {
-    beltrami = false;
-    break;
+  const general = f._general === true;
+  let beltrami = !general;
+  if (beltrami) {
+    for (let j = 0; j < N; j++) if (Math.abs(f.chi[j]) !== 1) {
+      beltrami = false;
+      break;
+    }
   }
   const v3 = (cx, cy, cz) => {
     const ax = f[cx], ay = f[cy], az = f[cz];
@@ -111,6 +120,10 @@ function toGLSL(f, opts = {}) {
       ...beltrami ? [
         `    vec3 tv = (${amp}) * (cos(phi) * ${P}E1[j] - ${P}S[j] * sin(phi) * ${P}E2[j]);`,
         `    w += ${P}S[j] * length(${P}K[j]) * tv;`
+      ] : general ? [
+        // Folded (grain-axis) frames: w = k × (−sin φ·e1 − cos φ·e2)·a.
+        `    vec3 tv2 = (${amp}) * (-sin(phi) * ${P}E1[j] - cos(phi) * ${P}E2[j]);`,
+        `    w += cross(${P}K[j], tv2);`
       ] : [
         // Elliptic modes: w_j = a·κ·(chi·cos φ·e1 − sin φ·e2). The Beltrami shortcut
         // w = chi·κ·u only holds at |chi| = 1.
@@ -133,6 +146,9 @@ function toGLSL(f, opts = {}) {
       ...beltrami ? [
         `    vec3 tv = (${amp}) * (cos(phi) * ${P}E1[j] - ${P}S[j] * sin(phi) * ${P}E2[j]);`,
         `    A += (${P}S[j] / length(${P}K[j])) * tv;`
+      ] : general ? [
+        `    vec3 tv2 = (${amp}) * (-sin(phi) * ${P}E1[j] - cos(phi) * ${P}E2[j]);`,
+        `    A += cross(${P}K[j], tv2) / dot(${P}K[j], ${P}K[j]);`
       ] : [
         // A_j = w_j/κ²: same combine as the elliptic curl, divided by |k|.
         `    vec3 tw = (${amp}) * (${P}S[j] * cos(phi) * ${P}E1[j] - sin(phi) * ${P}E2[j]);`,
@@ -494,6 +510,8 @@ var HelixField = class {
      * rounds differently — the parity fixture pins the shortcut's bits. @internal
      */
     this._beltrami = true;
+    /** True when the grain-axis channel folded a general transverse amplitude into the frame. */
+    this._general = false;
     /** Bumped on every rebuild — the wasm backend uses it to re-upload mode data. @internal */
     this._buildStamp = 0;
     /** Test/bench escape hatch: set true to force the JS batch kernel. @internal */
@@ -698,10 +716,102 @@ var HelixField = class {
       this.om[j] = (1 - lamJ) * sgn * rate0 * Math.pow(this.km[j], 2 / 3) - lamJ * (this.kx[j] * this.cvx[c] + this.ky[j] * this.cvy[c] + this.kz[j] * this.cvz[c]);
     }
     this.nu = Math.max(0, p.decay);
+    this._polarize();
     this._tAmp = NaN;
     this._buildStamp++;
     this._scale = 1;
     this._scale = (p.amplitude || 1) / (this._rms() || 1);
+  }
+  /**
+   * Linear-polarization ("grain axis") post-pass. Each mode's circular amplitude is replaced by a
+   * Gaussian sample with the requested 2×2 transverse covariance `J = I + d·R(2ψ) + χ·N`, drawn
+   * from a **second, independent** RNG stream — so every draw of the main build above happens in
+   * the same order with the same use, and a field with the channel off is bit-identical to one
+   * built before the channel existed.
+   *
+   * The sampled amplitude is folded straight into the stored frame (`e1`, `e2` stop being
+   * orthonormal, `s` becomes 1), which leaves the velocity formula untouched; only the curl and
+   * potential need the general cross-product form, precomputed here as `w1`/`w2`.
+   */
+  _polarize() {
+    const p = this.params;
+    const ax = p.polarizationAxis;
+    this._general = false;
+    if (!ax) return;
+    const an = Math.hypot(ax[0], ax[1], ax[2]) || 1;
+    const nx = ax[0] / an, ny = ax[1] / an, nz = ax[2] / an;
+    const d0 = Math.min(0.95, Math.max(0, p.polarizationBias));
+    const seedEff = p.seed >>> 0 || 1;
+    const rng2 = mulberry32(seedEff + POLAR_SALT >>> 0 || 1);
+    const N = this.N;
+    this._allocGeneral(N);
+    for (let j = 0; j < N; j++) {
+      const r1 = Math.sqrt(-Math.log(1 - rng2())), t1 = TAU * rng2();
+      const z1r = r1 * Math.cos(t1), z1i = r1 * Math.sin(t1);
+      const r2 = Math.sqrt(-Math.log(1 - rng2())), t2 = TAU * rng2();
+      const z2r = r2 * Math.cos(t2), z2i = r2 * Math.sin(t2);
+      const km = this.km[j];
+      const dx = this.kx[j] / km, dy = this.ky[j] / km, dz = this.kz[j] / km;
+      const e1x = this.e1x[j], e1y = this.e1y[j], e1z = this.e1z[j];
+      const e2x = this.e2x[j], e2y = this.e2y[j], e2z = this.e2z[j];
+      const ndk = nx * dx + ny * dy + nz * dz;
+      let tx = nx - ndk * dx, ty = ny - ndk * dy, tz = nz - ndk * dz;
+      const tl = Math.hypot(tx, ty, tz);
+      let c2 = 1, s2 = 0;
+      if (tl > 1e-6) {
+        tx /= tl;
+        ty /= tl;
+        tz /= tl;
+        const ct = tx * e1x + ty * e1y + tz * e1z;
+        const st = tx * e2x + ty * e2y + tz * e2z;
+        const psi = Math.atan2(st, ct);
+        c2 = Math.cos(2 * psi);
+        s2 = Math.sin(2 * psi);
+      }
+      let dd = d0, pp = this.chi[j];
+      const deg = Math.hypot(dd, pp);
+      if (deg > POLAR_DEG_MAX) {
+        const f = POLAR_DEG_MAX / deg;
+        dd *= f;
+        pp *= f;
+      }
+      const J11 = 1 + dd * c2, J22 = 1 - dd * c2;
+      const J21r = dd * s2, J21i = pp;
+      const L11 = Math.sqrt(Math.max(J11, 1e-12));
+      const L21r = J21r / L11, L21i = J21i / L11;
+      const L22 = Math.sqrt(Math.max(J22 - (J21r * J21r + J21i * J21i) / J11, 0));
+      const a1r = L11 * z1r, a1i = L11 * z1i;
+      const a2r = L21r * z1r - L21i * z1i + L22 * z2r;
+      const a2i = L21r * z1i + L21i * z1r + L22 * z2i;
+      const f1x = a1r * e1x + a2r * e2x, f1y = a1r * e1y + a2r * e2y, f1z = a1r * e1z + a2r * e2z;
+      const f2x = a1i * e1x + a2i * e2x, f2y = a1i * e1y + a2i * e2y, f2z = a1i * e1z + a2i * e2z;
+      this.e1x[j] = f1x;
+      this.e1y[j] = f1y;
+      this.e1z[j] = f1z;
+      this.e2x[j] = f2x;
+      this.e2y[j] = f2y;
+      this.e2z[j] = f2z;
+      this.s[j] = 1;
+      this.chi[j] = 1;
+      const kx = this.kx[j], ky = this.ky[j], kz = this.kz[j];
+      this.w1x[j] = -(ky * f2z - kz * f2y);
+      this.w1y[j] = -(kz * f2x - kx * f2z);
+      this.w1z[j] = -(kx * f2y - ky * f2x);
+      this.w2x[j] = ky * f1z - kz * f1y;
+      this.w2y[j] = kz * f1x - kx * f1z;
+      this.w2z[j] = kx * f1y - ky * f1x;
+    }
+    this._beltrami = false;
+    this._general = true;
+  }
+  _allocGeneral(N) {
+    if (this.w1x && this.w1x.length === N) return;
+    this.w1x = new Float64Array(N);
+    this.w1y = new Float64Array(N);
+    this.w1z = new Float64Array(N);
+    this.w2x = new Float64Array(N);
+    this.w2y = new Float64Array(N);
+    this.w2z = new Float64Array(N);
   }
   /** Mode amplitudes at time t: a·e^(−νk²t), cached per t (recomputed once per frame, not per sample). */
   _amps(t) {
@@ -731,6 +841,19 @@ var HelixField = class {
         wx += g * tx;
         wy += g * ty;
         wz += g * tz;
+      }
+    } else if (this._general) {
+      const w1x = this.w1x, w1y = this.w1y, w1z = this.w1z;
+      const w2x = this.w2x, w2y = this.w2y, w2z = this.w2z;
+      for (let j = 0; j < N; j++) {
+        const phi = this.kx[j] * x + this.ky[j] * y + this.kz[j] * z + this.ph[j] + this.om[j] * t;
+        const c = Math.cos(phi), sn = Math.sin(phi), a = A[j];
+        ux += a * (c * this.e1x[j] - sn * this.e2x[j]);
+        uy += a * (c * this.e1y[j] - sn * this.e2y[j]);
+        uz += a * (c * this.e1z[j] - sn * this.e2z[j]);
+        wx += a * (c * w1x[j] - sn * w2x[j]);
+        wy += a * (c * w1y[j] - sn * w2y[j]);
+        wz += a * (c * w1z[j] - sn * w2z[j]);
       }
     } else {
       for (let j = 0; j < N; j++) {
@@ -773,6 +896,20 @@ var HelixField = class {
         ax += g * tx;
         ay += g * ty;
         az += g * tz;
+      }
+    } else if (this._general) {
+      const w1x = this.w1x, w1y = this.w1y, w1z = this.w1z;
+      const w2x = this.w2x, w2y = this.w2y, w2z = this.w2z;
+      for (let j = 0; j < N; j++) {
+        const phi = this.kx[j] * x + this.ky[j] * y + this.kz[j] * z + this.ph[j] + this.om[j] * t;
+        const c = Math.cos(phi), sn = Math.sin(phi), a = A[j];
+        ux += a * (c * this.e1x[j] - sn * this.e2x[j]);
+        uy += a * (c * this.e1y[j] - sn * this.e2y[j]);
+        uz += a * (c * this.e1z[j] - sn * this.e2z[j]);
+        const ga = a / (this.km[j] * this.km[j]);
+        ax += ga * (c * w1x[j] - sn * w2x[j]);
+        ay += ga * (c * w1y[j] - sn * w2y[j]);
+        az += ga * (c * w1z[j] - sn * w2z[j]);
       }
     } else {
       for (let j = 0; j < N; j++) {
@@ -850,9 +987,14 @@ var HelixField = class {
         const as = bel ? a * s : a * this.chi[j];
         const b2x = as * this.e2x[j], b2y = as * this.e2y[j], b2z = as * this.e2z[j];
         const g = s * this.km[j];
+        const gen = this._general;
         const ak = a * this.km[j], akx = ak * this.chi[j];
-        const c1x = akx * this.e1x[j], c1y = akx * this.e1y[j], c1z = akx * this.e1z[j];
-        const c2x = ak * this.e2x[j], c2y = ak * this.e2y[j], c2z = ak * this.e2z[j];
+        const c1x = gen ? a * this.w1x[j] : akx * this.e1x[j];
+        const c1y = gen ? a * this.w1y[j] : akx * this.e1y[j];
+        const c1z = gen ? a * this.w1z[j] : akx * this.e1z[j];
+        const c2x = gen ? a * this.w2x[j] : ak * this.e2x[j];
+        const c2y = gen ? a * this.w2y[j] : ak * this.e2y[j];
+        const c2z = gen ? a * this.w2z[j] : ak * this.e2z[j];
         for (let i = 0; i < m; i++) {
           const q = 3 * (i0 + i);
           const phi = kx * pos[q] + ky * pos[q + 1] + kz * pos[q + 2] + ph + omt;

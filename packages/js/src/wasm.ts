@@ -101,7 +101,7 @@ export function runWasm(
 ): boolean {
   const k = kernel();
   if (!k) return false;
-  if (uw && !field._beltrami) return false; // elliptic vorticity needs the two-term curl — JS kernel
+  if (uw && !field._beltrami) return false; // non-circular vorticity needs the general curl — JS kernel
   const N = field.N;
   const n = (pos.length / 3) | 0;
   const n2 = n + (n & 1); // wasm processes pairs; pad odd counts

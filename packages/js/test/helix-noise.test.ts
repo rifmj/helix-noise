@@ -950,3 +950,147 @@ test("twoScale: exact sum, still divergence-free, potential still exact", () => 
   assert.deepEqual(inside, [0, 0, 0], "flow is zero inside the obstacle");
   assert.equal(storm.bake3D(4).data.length, 4 * 4 * 4 * 4);
 });
+
+// ---------------------------------------------------------------------------
+// Grain axis — world-anchored linear polarization
+// ---------------------------------------------------------------------------
+
+/** Exact space-average of ⟨|u·n|²⟩/⟨|u|²⟩ straight from the mode data (no grid sampling error). */
+function axisEnergyFraction(f: HelixField, n: [number, number, number]): number {
+  let num = 0, den = 0;
+  for (let j = 0; j < f.N; j++) {
+    const a2 = f.a[j] * f.a[j];
+    const p1 = f.e1x[j] * n[0] + f.e1y[j] * n[1] + f.e1z[j] * n[2];
+    const p2 = f.e2x[j] * n[0] + f.e2y[j] * n[1] + f.e2z[j] * n[2];
+    num += a2 * (p1 * p1 + p2 * p2);
+    den += a2 * (f.e1x[j] ** 2 + f.e1y[j] ** 2 + f.e1z[j] ** 2 +
+                 f.e2x[j] ** 2 + f.e2y[j] ** 2 + f.e2z[j] ** 2);
+  }
+  return num / den;
+}
+
+test("grain axis: off by default, and polarizationBias alone changes nothing", () => {
+  const a = create({ modes: 12, seed: 7, helicity: 0.4 }) as unknown as HelixField;
+  const b = create({ modes: 12, seed: 7, helicity: 0.4, polarizationBias: 0.8 }) as unknown as HelixField;
+  assert.equal(b._general, false, "the channel is gated on the axis, never on the bias");
+  for (const k of ["kx", "e1x", "e1y", "e1z", "e2x", "e2y", "e2z", "s", "chi", "ph", "om", "a"] as const) {
+    for (let j = 0; j < 12; j++) assert.equal(a[k][j], b[k][j], `${k}[${j}] must be untouched`);
+  }
+  assert.equal(a._scale, b._scale);
+});
+
+test("grain axis: energy along the axis follows (1 + d)/3", () => {
+  for (const d of [0, 0.4, 0.85]) {
+    let acc = 0;
+    const S = 24;
+    for (let s = 0; s < S; s++) {
+      const f = create({
+        modes: 400, seed: 1000 + s, layout: "random", slope: 0, ellipticity: 0,
+        polarizationAxis: [0, 1, 0], polarizationBias: d,
+      }) as unknown as HelixField;
+      acc += axisEnergyFraction(f, [0, 1, 0]);
+    }
+    const got = acc / S, want = (1 + d) / 3;
+    assert.ok(Math.abs(got - want) < 0.02, `d=${d}: axis energy fraction ${got}, expected ≈ ${want}`);
+  }
+});
+
+test("grain axis: the linear channel alone carries no helicity", () => {
+  // Statistical smoke test: a single realization of a finite mode sum has O(1/√N) residual
+  // helicity, so average over seeds. (Deliberately not `tileable` — snapping wavevectors to
+  // the integer lattice makes modes collide, and colliding modes' cross terms do not average
+  // away on the grid.)
+  let acc = 0;
+  const S = 6;
+  for (let s = 0; s < S; s++) {
+    const f = create({
+      modes: 600, seed: 21 + s, layout: "random", ellipticity: 0,
+      polarizationAxis: [0, 1, 0], polarizationBias: 0.85,
+    });
+    acc += f.relativeHelicity(10);
+  }
+  assert.ok(Math.abs(acc / S) < 0.03, `pure linear polarization is achiral (mean ρ = ${acc / S})`);
+});
+
+test("grain axis: handedness survives with the channel on", () => {
+  const f = create({
+    modes: 500, seed: 5, layout: "random", helicity: 1, ellipticity: 1,
+    polarizationAxis: [0, 0, 1], polarizationBias: 0.3,
+  });
+  assert.ok(f.relativeHelicity(10) > 0.5, "a right-handed field stays right-handed");
+});
+
+test("grain axis: still divergence-free, with an exact curl and potential", () => {
+  const f = create({ modes: 24, seed: 3, ellipticity: 0.4, polarizationAxis: [1, 0, 0], polarizationBias: 0.6 });
+  const h = 1e-3;
+  const curlOf = (fn: (x: number, y: number, z: number) => Vec3, x: number, y: number, z: number): number[] => {
+    const ap = fn(x, y + h, z), am = fn(x, y - h, z);
+    const bp = fn(x, y, z + h), bm = fn(x, y, z - h);
+    const cp = fn(x + h, y, z), cm = fn(x - h, y, z);
+    return [
+      (ap[2] - am[2]) / (2 * h) - (bp[1] - bm[1]) / (2 * h),
+      (bp[0] - bm[0]) / (2 * h) - (cp[2] - cm[2]) / (2 * h),
+      (cp[1] - cm[1]) / (2 * h) - (ap[0] - am[0]) / (2 * h),
+    ];
+  };
+  let div = 0, wErr = 0, uErr = 0;
+  for (const [x, y, z] of [[0.9, 1.7, 0.4], [3.1, 2.2, 5.0]] as const) {
+    const dx = (f.sample(x + h, y, z)[0] - f.sample(x - h, y, z)[0]) / (2 * h);
+    const dy = (f.sample(x, y + h, z)[1] - f.sample(x, y - h, z)[1]) / (2 * h);
+    const dz = (f.sample(x, y, z + h)[2] - f.sample(x, y, z - h)[2]) / (2 * h);
+    div = Math.max(div, Math.abs(dx + dy + dz));
+    const w = f.vorticity(x, y, z), wf = curlOf((a, b, c) => f.sample(a, b, c), x, y, z);
+    const u = f.sample(x, y, z), uf = curlOf((a, b, c) => f.potential(a, b, c), x, y, z);
+    for (let i = 0; i < 3; i++) {
+      wErr = Math.max(wErr, Math.abs(w[i] - wf[i]));
+      uErr = Math.max(uErr, Math.abs(u[i] - uf[i]));
+    }
+  }
+  assert.ok(div < 1e-3, `FD divergence: ${div}`);
+  assert.ok(wErr < 1e-3, `analytic vorticity vs FD curl: ${wErr}`);
+  assert.ok(uErr < 1e-3, `curl(A) vs u: ${uErr}`);
+});
+
+test("grain axis: batch kernels and the emitted GLSL agree with the sampler", () => {
+  const f = create({ modes: 20, seed: 4, ellipticity: 0.5, polarizationAxis: [0, 1, 0], polarizationBias: 0.5 });
+  const n = 200, pos = new Float64Array(3 * n).map((_, i) => Math.sin(i * 1.7) * 3);
+  const t = 0.3;
+  const uw = f.sampleManyUW(pos, undefined, t), u3 = f.sampleMany(pos, undefined, t);
+  const o = [0, 0, 0, 0, 0, 0];
+  let e6 = 0, e3 = 0;
+  for (let i = 0; i < n; i++) {
+    f.sampleUW(pos[3 * i], pos[3 * i + 1], pos[3 * i + 2], o, t);
+    for (let c = 0; c < 6; c++) e6 = Math.max(e6, Math.abs(uw[6 * i + c] - o[c]));
+    for (let c = 0; c < 3; c++) e3 = Math.max(e3, Math.abs(u3[3 * i + c] - o[c]));
+  }
+  assert.ok(e6 < 1e-12, `sampleManyUW: ${e6}`);
+  assert.ok(e3 < 1e-9, `sampleMany: ${e3}`);
+
+  const g = f as unknown as HelixField;
+  const src = g.glsl({ name: "grain", potential: true });
+  assert.ok(src.includes("cross(grain_K[j], tv2)"), "curl uses the cross-product body");
+  assert.ok(src.includes("dot(grain_K[j], grain_K[j])"), "potential divides by |k|²");
+  for (const [x, y, z] of [[1, 2, 3], [0.3, 5.1, 2.2]] as const) {
+    const u = [0, 0, 0], w = [0, 0, 0], A = [0, 0, 0];
+    for (let j = 0; j < g.N; j++) {
+      const phi = g.kx[j] * x + g.ky[j] * y + g.kz[j] * z + g.ph[j];
+      const c = Math.cos(phi), s = Math.sin(phi), a = g.a[j];
+      const e1 = [g.e1x[j], g.e1y[j], g.e1z[j]], e2 = [g.e2x[j], g.e2y[j], g.e2z[j]];
+      const k = [g.kx[j], g.ky[j], g.kz[j]];
+      const tv2 = [0, 1, 2].map((i) => a * (-s * e1[i] - c * e2[i]));
+      const cr = [
+        k[1] * tv2[2] - k[2] * tv2[1],
+        k[2] * tv2[0] - k[0] * tv2[2],
+        k[0] * tv2[1] - k[1] * tv2[0],
+      ];
+      const k2 = k[0] ** 2 + k[1] ** 2 + k[2] ** 2;
+      for (let i = 0; i < 3; i++) { u[i] += a * (c * e1[i] - s * e2[i]); w[i] += cr[i]; A[i] += cr[i] / k2; }
+    }
+    const U = g.sample(x, y, z), W = g.vorticity(x, y, z), P = g.potential(x, y, z);
+    for (let i = 0; i < 3; i++) {
+      assert.ok(Math.abs(u[i] * g._scale - U[i]) < 1e-12, "shader velocity");
+      assert.ok(Math.abs(w[i] * g._scale - W[i]) < 1e-12, "shader curl");
+      assert.ok(Math.abs(A[i] * g._scale - P[i]) < 1e-12, "shader potential");
+    }
+  }
+});

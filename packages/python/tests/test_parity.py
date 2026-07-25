@@ -35,6 +35,7 @@ MODE_CONFIGS = [
     "M_coherence_k",
     "N_helicity_k",
     "O_shellpeak",
+    "Q_grain",
 ]
 
 # Callable options travel in the fixture as {"$preset": name, "args": [...]} descriptors.
@@ -200,6 +201,20 @@ def test_glsl_A_numeric():
         )
 
 
+def test_glsl_Q_grain():
+    """The grain-axis (general) curl/potential bodies match the JS emitter."""
+    data = _load()
+    f = _build(data["Q_grain"]["config"])
+    got = f.glsl(name="helixNoise", precision=7, curl=True, potential=True)
+    with open(os.path.join(HERE, "ref_glsl_Q_grain.glsl")) as fp:
+        ref = fp.read()
+    assert "cross(" in got, "grain-axis curl must use the cross-product body"
+    gf, rf = _parse_floats(got), _parse_floats(ref)
+    assert len(gf) == len(rf), "glsl float count {} != {}".format(len(gf), len(rf))
+    for i, (g, r) in enumerate(zip(gf, rf)):
+        assert _close(g, r, atol=1e-6, rtol=1e-6), "glsl float[{}]: {!r} != {!r}".format(i, g, r)
+
+
 def test_glsl_K_elliptic():
     """The general-chi curl/potential bodies (ellipticity != 1) match the JS emitter."""
     data = _load()
@@ -230,7 +245,7 @@ def test_abc_factory():
 
 def _run_all():
     test_mode_configs()
-    print("mode configs (A-E, J-K, M-O): modes, samples, relHelicity, bake sum, vectorized OK")
+    print("mode configs (A-E, J-K, M-O, Q): modes, samples, relHelicity, bake sum, vectorized OK")
     test_abc_factory()
     print("P_abc factory: modes, samples, relHelicity, bake sum OK")
     test_boundary_F()
@@ -241,6 +256,8 @@ def _run_all():
     print("glsl A numeric parity OK")
     test_glsl_K_elliptic()
     print("glsl K (elliptic) numeric parity OK")
+    test_glsl_Q_grain()
+    print("glsl Q (grain axis) numeric parity OK")
     print("\nALL PARITY TESTS PASSED")
 
 

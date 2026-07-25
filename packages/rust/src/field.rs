@@ -2,7 +2,7 @@
 //! evaluatable analytically at any point in space and time.
 
 use crate::boundary::BoundedField;
-use crate::constants::{ga, HelixOptions, Layout, TAU};
+use crate::constants::{ga, HelixOptions, Layout, POLAR_DEG_MAX, POLAR_SALT, TAU};
 use crate::glsl::{to_glsl, GlslOptions};
 use crate::rng::Mulberry32;
 
@@ -86,6 +86,8 @@ pub struct ModeSnapshot {
     pub e2z: Vec<f64>,
     pub nu: f64,
     pub scale: f64,
+    /// True when the grain-axis channel folded a general transverse amplitude into the frame.
+    pub general: bool,
 }
 
 /// A divergence-free helical flow field, evaluatable grid-free as an analytic sum of Beltrami
@@ -116,6 +118,11 @@ pub struct HelixField {
     /// True when every mode is fully circular (`ellipticity == 1`): gates the legacy Beltrami
     /// shortcut, whose exact rounding the parity fixture pins.
     pub(crate) beltrami: bool,
+    /// True when the grain-axis channel folded a general transverse amplitude into the frame.
+    pub(crate) general: bool,
+    /// Curl frame for general modes: `w = a*(cos(phi)*w1 - sin(phi)*w2)`.
+    pub(crate) w1: Vec<[f64; 3]>,
+    pub(crate) w2: Vec<[f64; 3]>,
     /// Set when the modes come from a closed-form preset instead of the RNG.
     pub(crate) fixed: bool,
     opts: HelixOptions,
@@ -145,6 +152,9 @@ impl HelixField {
             nu: 0.0,
             scale: 1.0,
             beltrami: true,
+            general: false,
+            w1: Vec::new(),
+            w2: Vec::new(),
             fixed: false,
             opts,
         };
@@ -233,6 +243,7 @@ impl HelixField {
             e2z: self.e2z.clone(),
             nu: self.nu,
             scale: self.scale,
+            general: self.general,
         }
     }
 
@@ -417,10 +428,11 @@ impl HelixField {
         }
 
         self.nu = p.decay.max(0.0);
+        let amp = if p.amplitude != 0.0 { p.amplitude } else { 1.0 };
+        self.polarize(); // grain-axis channel (no-op unless polarization_axis is set)
 
         self.scale = 1.0;
         let rms = self.rms();
-        let amp = if p.amplitude != 0.0 { p.amplitude } else { 1.0 };
         self.scale = amp / if rms != 0.0 { rms } else { 1.0 };
     }
 
@@ -434,6 +446,105 @@ impl HelixField {
         }
     }
 
+    /// Grain-axis channel: fold a Gaussian transverse amplitude into the stored frame.
+    ///
+    /// Draws come from a *second*, independent mulberry32 stream, so every draw of the main
+    /// build happens in the same order with the same use — a field with the channel off is
+    /// bit-identical to one built before the channel existed. See spec §4b.
+    fn polarize(&mut self) {
+        self.general = false;
+        let (ax, d0) = match self.opts.polarization_axis {
+            None => return,
+            Some(ax) => (ax, self.opts.polarization_bias.clamp(0.0, 0.95)),
+        };
+        let an = {
+            let h = hypot3(ax[0], ax[1], ax[2]);
+            if h == 0.0 { 1.0 } else { h }
+        };
+        let (nx, ny, nz) = (ax[0] / an, ax[1] / an, ax[2] / an);
+        let seed_eff = if self.opts.seed == 0 { 1 } else { self.opts.seed };
+        let seed2 = seed_eff.wrapping_add(POLAR_SALT);
+        let mut rng2 = Mulberry32::new(if seed2 == 0 { 1 } else { seed2 });
+        let n = self.n;
+        self.w1 = vec![[0.0; 3]; n];
+        self.w2 = vec![[0.0; 3]; n];
+
+        for j in 0..n {
+            // Complex standard normals (E|z|^2 = 1): no factor 2 under the sqrt.
+            let r1 = (-(1.0 - rng2.next_f64()).ln()).sqrt();
+            let t1 = TAU * rng2.next_f64();
+            let (z1r, z1i) = (r1 * t1.cos(), r1 * t1.sin());
+            let r2 = (-(1.0 - rng2.next_f64()).ln()).sqrt();
+            let t2 = TAU * rng2.next_f64();
+            let (z2r, z2i) = (r2 * t2.cos(), r2 * t2.sin());
+
+            let km = self.km[j];
+            let (dx, dy, dz) = (self.kx[j] / km, self.ky[j] / km, self.kz[j] / km);
+            let e1 = [self.e1x[j], self.e1y[j], self.e1z[j]];
+            let e2 = [self.e2x[j], self.e2y[j], self.e2z[j]];
+
+            let ndk = nx * dx + ny * dy + nz * dz;
+            let (mut tx, mut ty, mut tz) = (nx - ndk * dx, ny - ndk * dy, nz - ndk * dz);
+            let tl = hypot3(tx, ty, tz);
+            let (mut c2, mut s2) = (1.0, 0.0);
+            if tl > 1e-6 {
+                tx /= tl;
+                ty /= tl;
+                tz /= tl;
+                let ct = tx * e1[0] + ty * e1[1] + tz * e1[2];
+                let st = tx * e2[0] + ty * e2[1] + tz * e2[2];
+                let psi = st.atan2(ct);
+                c2 = (2.0 * psi).cos();
+                s2 = (2.0 * psi).sin();
+            }
+
+            let (mut dd, mut pp) = (d0, self.chi[j]);
+            let deg = dd.hypot(pp);
+            if deg > POLAR_DEG_MAX {
+                let f = POLAR_DEG_MAX / deg;
+                dd *= f;
+                pp *= f;
+            }
+            let (j11, j22) = (1.0 + dd * c2, 1.0 - dd * c2);
+            let (j21r, j21i) = (dd * s2, pp);
+            let l11 = j11.max(1e-12).sqrt();
+            let (l21r, l21i) = (j21r / l11, j21i / l11);
+            let l22 = (j22 - (j21r * j21r + j21i * j21i) / j11).max(0.0).sqrt();
+
+            let (a1r, a1i) = (l11 * z1r, l11 * z1i);
+            let a2r = l21r * z1r - l21i * z1i + l22 * z2r;
+            let a2i = l21r * z1i + l21i * z1r + l22 * z2i;
+            let mut f1 = [0.0; 3];
+            let mut f2 = [0.0; 3];
+            for c in 0..3 {
+                f1[c] = a1r * e1[c] + a2r * e2[c];
+                f2[c] = a1i * e1[c] + a2i * e2[c];
+            }
+            self.e1x[j] = f1[0];
+            self.e1y[j] = f1[1];
+            self.e1z[j] = f1[2];
+            self.e2x[j] = f2[0];
+            self.e2y[j] = f2[1];
+            self.e2z[j] = f2[2];
+            self.s[j] = 1.0;
+            self.chi[j] = 1.0;
+
+            let (kx, ky, kz) = (self.kx[j], self.ky[j], self.kz[j]);
+            self.w1[j] = [
+                -(ky * f2[2] - kz * f2[1]),
+                -(kz * f2[0] - kx * f2[2]),
+                -(kx * f2[1] - ky * f2[0]),
+            ];
+            self.w2[j] = [
+                ky * f1[2] - kz * f1[1],
+                kz * f1[0] - kx * f1[2],
+                kx * f1[1] - ky * f1[0],
+            ];
+        }
+        self.beltrami = false;
+        self.general = true;
+    }
+
     /// Velocity `u` and vorticity `w` at `(x, y, z, t)`. Returns `(u, w)`.
     pub fn sample_uw(&self, x: f64, y: f64, z: f64, t: f64) -> ([f64; 3], [f64; 3]) {
         let sc = self.scale;
@@ -444,7 +555,15 @@ impl HelixField {
             let c = phi.cos();
             let sn = phi.sin();
             let a = self.amp_at(j, t);
-            if self.beltrami {
+            if self.general {
+                // Grain-axis modes: folded (non-orthonormal) frame; curl from the precomputed frame.
+                ux += a * (c * self.e1x[j] - sn * self.e2x[j]);
+                uy += a * (c * self.e1y[j] - sn * self.e2y[j]);
+                uz += a * (c * self.e1z[j] - sn * self.e2z[j]);
+                wx += a * (c * self.w1[j][0] - sn * self.w2[j][0]);
+                wy += a * (c * self.w1[j][1] - sn * self.w2[j][1]);
+                wz += a * (c * self.w1[j][2] - sn * self.w2[j][2]);
+            } else if self.beltrami {
                 // Legacy Beltrami path: bit-compatible with spec 1.0 (w = s*k * u).
                 let s = self.s[j];
                 let tx = a * (c * self.e1x[j] - s * sn * self.e2x[j]);
@@ -483,7 +602,16 @@ impl HelixField {
             let c = phi.cos();
             let sn = phi.sin();
             let a = self.amp_at(j, t);
-            if self.beltrami {
+            if self.general {
+                // A_j = w_j / k^2, same cross-product curl frame.
+                ux += a * (c * self.e1x[j] - sn * self.e2x[j]);
+                uy += a * (c * self.e1y[j] - sn * self.e2y[j]);
+                uz += a * (c * self.e1z[j] - sn * self.e2z[j]);
+                let ga = a / (self.km[j] * self.km[j]);
+                ax += ga * (c * self.w1[j][0] - sn * self.w2[j][0]);
+                ay += ga * (c * self.w1[j][1] - sn * self.w2[j][1]);
+                az += ga * (c * self.w1[j][2] - sn * self.w2[j][2]);
+            } else if self.beltrami {
                 let s = self.s[j];
                 let tx = a * (c * self.e1x[j] - s * sn * self.e2x[j]);
                 let ty = a * (c * self.e1y[j] - s * sn * self.e2y[j]);

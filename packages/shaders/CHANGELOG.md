@@ -3,6 +3,15 @@
 All notable changes to this project are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.4.0]
+
+- **Grain axis (spec 1.2)**: `polarizationAxis` / `polarizationBias` add world-anchored linear
+  polarization — the third channel of the spectral tensor. Off by default (`null` axis), and then
+  bit-identical to before; when on, a second independent mulberry32 stream (seed + `POLAR_SALT`)
+  supplies 4 draws per mode so the main build's draw order is untouched. Folded frames take the
+  general cross-product curl/potential (spec §4b, §5, §8). New CLI flags
+  `--polarization-axis` and `--polarization-bias`.
+
 ## [0.3.0]
 
 - **Scale-dependent dials**: `helicity` and `coherence` accept a pure per-wavenumber callable

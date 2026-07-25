@@ -3,6 +3,33 @@
 All notable changes to this project are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [1.4.0]
+
+### Added
+
+- **`polarizationAxis` / `polarizationBias` — a world-space grain axis.** `ellipticity` sets how each
+  wave polarizes, but each wave's ellipse is oriented by its own wavevector, so there is no overall
+  grain. This adds one: a direction the texture combs along, and how strongly (`0 … 0.95`). It is the
+  last of the three polarization channels (`Φ = g·P⊥ + D + i·p·N`) — the real, traceless transverse
+  part `D`, which no amount of `anisotropy` can produce (that only moves wavevector *directions*).
+- Sandbox demo: a **grain** slider.
+
+### Notes
+
+- **The channel is gated on the axis, never on the bias.** With `polarizationAxis: null` (the
+  default) nothing changes at all — no second stream is created and the field is bit-identical to
+  1.3. Setting the axis re-rolls the texture: each wave's amplitude is then drawn from a Gaussian
+  with the requested covariance, so the statistics are what you asked for but the particular
+  realization is new, even at `polarizationBias: 0`.
+- The extra draws come from a **second, independent** mulberry32 stream (seed + a fixed salt), so
+  every draw of the main build still happens in the same order with the same use.
+- Grain and handedness compete for the same budget: `d` and the chirality `χ = ε·s` are jointly
+  capped at `√(d² + χ²) ≤ 0.97`. That is the positivity of the covariance — physics, not a quirk.
+  At `ellipticity: 1` there is almost no room for grain; lower it to open the ball.
+- Energy along the axis lands at `(1 + d)/3` (`1/3` being isotropic) — a shipped self-test.
+- Folded frames need the general cross-product curl, so `sampleManyUW` and the emitted `…Curl` /
+  `…Pot` take that path; batch velocity keeps its wasm fast path.
+
 ## [1.3.0]
 
 ### Added

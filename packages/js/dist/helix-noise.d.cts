@@ -69,6 +69,24 @@ interface HelixNoiseOptions {
     /** Anisotropy axis (normalized internally). Default [0, 0, 1]. */
     axis?: [number, number, number];
     /**
+     * World-space **grain axis** for linear polarization — the direction the flow's texture combs
+     * along. `null` (default) leaves the channel off, and the field is then exactly what previous
+     * versions produced. Normalized internally.
+     *
+     * Turning it on re-rolls the texture: the channel draws each mode's amplitude from a Gaussian
+     * with the requested transverse covariance (from a second, independent RNG stream), so the
+     * *statistics* are what you asked for but the particular realization changes — even at
+     * `polarizationBias: 0`.
+     */
+    polarizationAxis?: [number, number, number] | null;
+    /**
+     * Strength d ∈ [0, 0.95] of the linear polarization along `polarizationAxis`. Only meaningful
+     * when that axis is set. Physically the polarization degree is capped: `d` and the per-mode
+     * chirality χ = ε·s are jointly clamped to √(d² + χ²) ≤ 0.97, so a fully circular field
+     * (`ellipticity: 1`) leaves almost no room for grain — lower `ellipticity` to open it up.
+     */
+    polarizationBias?: number;
+    /**
      * Polarization ellipticity ε ∈ [0, 1] (clamped): per-mode chirality χ = ε·s, where s = ±1 is the
      * helicity-biased sign. `1` (default) = circular/Beltrami modes — tubes & corkscrews, the classic
      * engine, bit-identical. `0` = linearly polarized modes — sheets & jets, zero helicity.
@@ -285,6 +303,11 @@ interface ModeData {
     ph: Float64Array;
     /** Per-mode chirality χ[j] = ellipticity · s[j] ∈ [−1, 1] (equals `s` at ellipticity = 1). */
     chi: Float64Array;
+    /**
+     * Set when the modes carry a general transverse polarization (the grain-axis channel), so the
+     * curl and potential must use the cross-product form instead of any circular shortcut.
+     */
+    _general?: boolean;
     /** Per-mode phase rate (rad per unit time): eddy churn + coherent sweep. */
     om: Float64Array;
     /** Viscous decay rate ν (amplitudes ∝ e^(−νk²t)); 0 = none. */
@@ -340,6 +363,15 @@ declare class HelixField implements Field, ModeData {
      * rounds differently — the parity fixture pins the shortcut's bits. @internal
      */
     _beltrami: boolean;
+    /** True when the grain-axis channel folded a general transverse amplitude into the frame. */
+    _general: boolean;
+    /** Curl frame for general modes: w = A·(cos φ·w1 − sin φ·w2). Allocated only when needed. */
+    w1x?: Float64Array;
+    w1y?: Float64Array;
+    w1z?: Float64Array;
+    w2x?: Float64Array;
+    w2y?: Float64Array;
+    w2z?: Float64Array;
     /** Bumped on every rebuild — the wasm backend uses it to re-upload mode data. @internal */
     _buildStamp: number;
     /** Test/bench escape hatch: set true to force the JS batch kernel. @internal */
@@ -357,6 +389,19 @@ declare class HelixField implements Field, ModeData {
     private _installDirect;
     private _alloc;
     private _build;
+    /**
+     * Linear-polarization ("grain axis") post-pass. Each mode's circular amplitude is replaced by a
+     * Gaussian sample with the requested 2×2 transverse covariance `J = I + d·R(2ψ) + χ·N`, drawn
+     * from a **second, independent** RNG stream — so every draw of the main build above happens in
+     * the same order with the same use, and a field with the channel off is bit-identical to one
+     * built before the channel existed.
+     *
+     * The sampled amplitude is folded straight into the stored frame (`e1`, `e2` stop being
+     * orthonormal, `s` becomes 1), which leaves the velocity formula untouched; only the curl and
+     * potential need the general cross-product form, precomputed here as `w1`/`w2`.
+     */
+    private _polarize;
+    private _allocGeneral;
     /** Mode amplitudes at time t: a·e^(−νk²t), cached per t (recomputed once per frame, not per sample). */
     private _amps;
     sampleUW<T extends Out6>(x: number, y: number, z: number, out6: T, t?: number): T;
@@ -497,7 +542,7 @@ declare function create(options?: HelixNoiseOptions): Field;
 /** Create a sparse-atom field: broadband, infinite, amortized O(1), spatially-varying params. */
 declare function createAtoms(options?: HelixAtomsOptions): AtomField;
 /** Library version. */
-declare const version = "1.3.0";
+declare const version = "1.4.0";
 /** Run the built-in validation (transversality, divergence, helicity tracking). */
 declare function selfTest(): SelfTestReport;
 /** Default export: the Helix Noise namespace (`HelixNoise.create(...)`). */

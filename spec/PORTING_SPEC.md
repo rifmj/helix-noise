@@ -19,7 +19,7 @@ JS reference to ~1e-12 relative, NOT bit-for-bit. Parity tests must use a tolera
 ```
 TAU  = 2*pi
 GA   = pi * (3 - sqrt(5))     # golden angle (Fibonacci sphere azimuth step)
-VERSION = "1.3.0"
+VERSION = "1.4.0"
 ```
 
 Defaults (every option):
@@ -27,11 +27,15 @@ Defaults (every option):
 modes=48, slope=1.6, helicity=0.0, coherence=0.0, kmin=1.0, kmax=6.2,   # helicity/coherence:
                                                                        #   number OR pure (k)->value
 centers=3, amplitude=1.0, tileable=false, seed=1, layout="fibonacci",
-churn=1.0, decay=0.0, anisotropy=0.0, axis=[0,0,1], ellipticity=1.0
+churn=1.0, decay=0.0, anisotropy=0.0, axis=[0,0,1], ellipticity=1.0,
+polarizationAxis=null, polarizationBias=0.0                            # spec 1.2
 spectrum = optional callable (k:float)->float, no default
+
+POLAR_SALT    = 0x9E3779B9   # second-stream seed salt (32-bit wrapping add)
+POLAR_DEG_MAX = 0.97         # polarization-degree ball radius (PSD of the 2x2 covariance)
 ```
 
-**Spec version: 1.1** (adds `ellipticity` and the §10 presets; spec-1.0 fields are the `ellipticity=1.0` special case,
+**Spec version: 1.2** (1.1 adds `ellipticity` and the §10 presets, 1.2 the §4b grain-axis channel; spec-1.0 fields are the `ellipticity=1.0` special case,
 bit-identical — see the normative shortcut note in §5).
 
 ## 2. mulberry32 (VERIFIED bit-exact — do NOT change the integer ops)
@@ -179,6 +183,54 @@ scale = (amplitude or 1) / (rms() or 1)      # see rms below
 `rms()`: sample velocity on a 5×5×5 grid over [0,TAU); return sqrt(mean(|u|^2)). NOTE: rms uses the
 un-scaled field (set scale=1 first). Grid point (i,j,k) → ((i/5)*TAU, (j/5)*TAU, (k/5)*TAU), i,j,k in 0..5.
 
+## 4b. Polarization channel (spec 1.2) — grain axis / linear polarization
+
+Skipped entirely when `polarizationAxis == null`: no second stream is created and the algorithm is
+exactly §4. When set, **every §4 draw still happens in the same order with the same use** — the
+channel is a post-pass consuming a SECOND, independent stream.
+
+```
+seedEff = (seed >>> 0) || 1                    # identical to §4's effective seed
+seed2   = (seedEff + POLAR_SALT) >>> 0         # 32-bit wrapping add
+rng2    = mulberry32(seed2 || 1)
+```
+
+The additive salt puts stream 2 a fixed ~6.1e8 draws down the same mulberry32 orbit — five orders
+of magnitude beyond what any build consumes, so the two never overlap. (An XOR salt would make the
+offset seed-dependent and unauditable; rejected.)
+
+Post-pass: runs AFTER the `om[]` loop and BEFORE the rms/scale step, so normalization sees the
+polarized field. With `n = polarizationAxis / (hypot || 1)`, `d = clamp(polarizationBias, 0, 0.95)`:
+
+```
+for j in 0..N:            # ascending j; EXACTLY 4 rng2 draws per mode, unconditional
+    # complex standard normals, E|z|^2 = 1. NOTE: no factor 2 under the sqrt, unlike the real
+    # Box-Muller of §4 — each real component must be N(0, 1/2). Copying -2*ln(...) here ships a
+    # 2x-variance stream that only the fixture catches.
+    r1 = sqrt(-ln(1 - rng2())) ; t1 = TAU*rng2() ; z1 = (r1*cos t1, r1*sin t1)
+    r2 = sqrt(-ln(1 - rng2())) ; t2 = TAU*rng2() ; z2 = (r2*cos t2, r2*sin t2)
+
+    d_hat = (kx,ky,kz)/km ; ndk = n . d_hat ; T = n - ndk*d_hat ; tl = |T|
+    if tl > 1e-6: psi = atan2((T/tl).e2, (T/tl).e1) ; c2 = cos 2psi ; s2 = sin 2psi
+    else:         c2 = 1 ; s2 = 0            # k parallel to the axis: grain undefined
+
+    dd = d ; pp = chi[j] ; deg = hypot(dd, pp)
+    if deg > POLAR_DEG_MAX: dd *= POLAR_DEG_MAX/deg ; pp *= POLAR_DEG_MAX/deg
+    J11 = 1 + dd*c2 ; J22 = 1 - dd*c2 ; J21 = (dd*s2, pp)              # complex (re, im)
+    L11 = sqrt(max(J11, 1e-12)) ; L21 = J21/L11 ; L22 = sqrt(max(J22 - |J21|^2/J11, 0))
+    alpha1 = L11*z1 ; alpha2 = L21*z1 + L22*z2                          # complex arithmetic
+
+    # fold into the stored frame; ph[j], om[j], a[j] all unchanged
+    e1[j], e2[j] <- ( Re(alpha1)*e1 + Re(alpha2)*e2 , Im(alpha1)*e1 + Im(alpha2)*e2 )
+    s[j] <- 1 ; chi[j] <- 1
+    w1[j] = -(k x e2[j]) ; w2[j] = (k x e1[j])                          # curl frame, precomputed
+mark the field GENERAL: the samplers and emitters take the general path of §5 / §8.
+```
+
+The folded `e1`/`e2` are no longer orthonormal — that is the point: they carry the sampled complex
+amplitude. Divergence-freedom is untouched (`k . e1 = k . e2 = 0` still holds), so `withBoundary`
+and the potential bakes need no change.
+
 ## 5. Sampling (all take optional time t, default 0)
 
 Amplitude at time t: `A[j] = a[j]` if `nu==0 or t==0`, else `a[j]*exp(-nu*km[j]^2*t)`.
@@ -203,6 +255,15 @@ same t_vec; u += t_vec
 if ellipticity == 1: A_pot += (s[j]/km[j]) * t_vec
 else:                A_pot += (A[j]/km[j]) * (chi[j]*c*e1[j] - sn*e2[j])   # A_j = w_j/k^2
 return u*scale, A_pot*scale
+```
+
+**General (grain-axis) fields** — when §4b ran, neither shortcut applies; use the precomputed
+curl frame (`s[j] = chi[j] = 1` after the fold):
+
+```
+u     += A[j] * (c*e1[j] - sn*e2[j])
+w     += A[j] * (c*w1[j] - sn*w2[j])
+A_pot += (A[j]/km[j]^2) * (c*w1[j] - sn*w2[j])
 ```
 
 **NOTE (normative):** at `ellipticity == 1` ports MUST take the shortcut branch. The general form
@@ -276,6 +337,15 @@ vec3 name(vec3 p){ return name(p,0.0); }
 so the velocity body above is already the correct general form with no ABI change. The `nameCurl`
 and `namePot` shortcuts are Beltrami-only: emit them **iff every |chi_j| == 1** (byte-identical to
 spec 1.0 output), otherwise emit the general two-term bodies:
+
+For a **grain-axis** field neither shortcut applies; emit the cross-product body instead (no new
+baked arrays — the folded frame is already in `P_E1`/`P_E2`, and `P_S[j] = 1`):
+
+```glsl
+vec3 tv2 = (amp) * (-sin(phi) * P_E1[j] - cos(phi) * P_E2[j]);
+w += cross(P_K[j], tv2);                        // nameCurl
+A += cross(P_K[j], tv2) / dot(P_K[j], P_K[j]);  // namePot
+```
 
 ```glsl
 // nameCurl, general chi

@@ -110,8 +110,34 @@ Returns a [`Field`](#field). All options are optional — sensible defaults are 
 | `tileable` | `boolean` | `false` | Snaps waves to an integer grid so the field repeats seamlessly every `2π`. Great for textures. |
 | `anisotropy` | `number` | `0` | Stretches the flow along `axis`. `< 0` → streaks *along* the axis (jets); `> 0` → layers *across* it (strata). |
 | `axis` | `[number,number,number]` | `[0,0,1]` | The direction `anisotropy` works along. |
+| `polarizationAxis` | `[number,number,number] \| null` | `null` | A world-space **grain axis**: the direction the texture combs along. `null` leaves the channel off. |
+| `polarizationBias` | `number` | `0` | How strongly the flow polarizes along that axis, `0 … 0.95`. |
 | `spectrum` | `(k: number) => number` | — | Custom amplitude curve, replacing the `slope` power law. Only the shape matters (the field is re-normalized). Must be pure. |
 | `layout` | `"fibonacci" \| "random"` | `"fibonacci"` | How the waves are spread out. `"fibonacci"` (default) looks cleaner at the same `modes` — use it for rendering. `"random"` gives statistically independent waves (for Monte-Carlo / analysis work); it needs more `modes` to look as smooth. |
+
+### Grain axis
+
+`ellipticity` sets *how* each wave polarizes, but each wave's ellipse is oriented by its own
+wavevector — so there is no overall grain. `polarizationAxis` adds one: a world direction the
+texture combs along, with `polarizationBias` for how strongly.
+
+```js
+create({ ellipticity: 0.3, polarizationAxis: [0, 1, 0], polarizationBias: 0.7 });
+```
+
+Two things to know:
+
+- **Turning it on re-rolls the texture.** The channel draws each wave's amplitude from a Gaussian
+  with the covariance you asked for, using a second, independent random stream. The statistics are
+  what you requested; the particular realization is new — even at `polarizationBias: 0`. (With the
+  axis left `null`, nothing changes at all: the field is exactly what earlier versions produced.)
+- **Grain and handedness compete.** A wave can be at most fully polarized, so `polarizationBias`
+  and the chirality `ε·s` are jointly capped at `√(d² + χ²) ≤ 0.97`. At `ellipticity: 1` there is
+  almost no room left for grain — lower `ellipticity` to open it up. That is physics (the
+  covariance must stay positive), not a knob quirk.
+
+The energy fraction along the axis lands at `(1 + d)/3` — `1/3` is the isotropic value, so
+`polarizationBias: 0.85` puts about 62% of the flow's energy along the grain.
 
 ### Scale-dependent dials
 

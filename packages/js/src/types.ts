@@ -70,6 +70,24 @@ export interface HelixNoiseOptions {
   /** Anisotropy axis (normalized internally). Default [0, 0, 1]. */
   axis?: [number, number, number];
   /**
+   * World-space **grain axis** for linear polarization — the direction the flow's texture combs
+   * along. `null` (default) leaves the channel off, and the field is then exactly what previous
+   * versions produced. Normalized internally.
+   *
+   * Turning it on re-rolls the texture: the channel draws each mode's amplitude from a Gaussian
+   * with the requested transverse covariance (from a second, independent RNG stream), so the
+   * *statistics* are what you asked for but the particular realization changes — even at
+   * `polarizationBias: 0`.
+   */
+  polarizationAxis?: [number, number, number] | null;
+  /**
+   * Strength d ∈ [0, 0.95] of the linear polarization along `polarizationAxis`. Only meaningful
+   * when that axis is set. Physically the polarization degree is capped: `d` and the per-mode
+   * chirality χ = ε·s are jointly clamped to √(d² + χ²) ≤ 0.97, so a fully circular field
+   * (`ellipticity: 1`) leaves almost no room for grain — lower `ellipticity` to open it up.
+   */
+  polarizationBias?: number;
+  /**
    * Polarization ellipticity ε ∈ [0, 1] (clamped): per-mode chirality χ = ε·s, where s = ±1 is the
    * helicity-biased sign. `1` (default) = circular/Beltrami modes — tubes & corkscrews, the classic
    * engine, bit-identical. `0` = linearly polarized modes — sheets & jets, zero helicity.
@@ -292,6 +310,11 @@ export interface ModeData {
   s: Float64Array; a: Float64Array; ph: Float64Array;
   /** Per-mode chirality χ[j] = ellipticity · s[j] ∈ [−1, 1] (equals `s` at ellipticity = 1). */
   chi: Float64Array;
+  /**
+   * Set when the modes carry a general transverse polarization (the grain-axis channel), so the
+   * curl and potential must use the cross-product form instead of any circular shortcut.
+   */
+  _general?: boolean;
   /** Per-mode phase rate (rad per unit time): eddy churn + coherent sweep. */
   om: Float64Array;
   /** Viscous decay rate ν (amplitudes ∝ e^(−νk²t)); 0 = none. */

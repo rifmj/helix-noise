@@ -22,6 +22,9 @@ const CONFIGS = {
   M_coherence_k: { modes: 6, seed: 11, centers: 2, coherence: { $preset: "rolloff", args: [4] } },
   N_helicity_k: { modes: 8, seed: 12, helicity: { $preset: "condensate", args: [3.0, 1, -1] } },
   O_shellpeak: { modes: 8, seed: 13, spectrum: { $preset: "shellPeak", args: [3, 1] } },
+  // Grain axis (spec 1.2): the second RNG stream folds a general transverse amplitude into the
+  // frame, so this config also pins the cross-product curl/potential path.
+  Q_grain: { modes: 6, seed: 9, ellipticity: 0.4, polarizationAxis: [0, 1, 0], polarizationBias: 0.6 },
 };
 
 const POINTS = [

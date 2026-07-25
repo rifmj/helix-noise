@@ -15,6 +15,11 @@ pub fn ga() -> f64 {
 }
 
 /// Library version string, mirroring the reference package.
+/// Seed salt for the polarization channel's second RNG stream (32-bit wrapping add).
+pub const POLAR_SALT: u32 = 0x9E37_79B9;
+/// Polarization-degree ball radius: `sqrt(d^2 + chi^2)` is clamped to this (PSD of the covariance).
+pub const POLAR_DEG_MAX: f64 = 0.97;
+
 pub const VERSION: &str = "1.1.0";
 
 /// Mode layout strategy.
@@ -121,6 +126,10 @@ pub struct HelixOptions {
     pub coherence_fn: Option<ScaleFn>,
     /// Optional per-wavenumber helicity `(k) -> p`. When set, overrides `helicity`.
     pub helicity_fn: Option<ScaleFn>,
+    /// World-space grain axis for linear polarization. `None` (default) = channel off.
+    pub polarization_axis: Option<[f64; 3]>,
+    /// Linear-polarization strength `d` in `[0, 0.95]` along `polarization_axis`.
+    pub polarization_bias: f64,
 }
 
 impl Default for HelixOptions {
@@ -145,6 +154,8 @@ impl Default for HelixOptions {
             spectrum: None,
             coherence_fn: None,
             helicity_fn: None,
+            polarization_axis: None,
+            polarization_bias: 0.0,
         }
     }
 }
@@ -171,6 +182,8 @@ impl fmt::Debug for HelixOptions {
             .field("spectrum", &self.spectrum.as_ref().map(|_| "<fn>"))
             .field("coherence_fn", &self.coherence_fn.as_ref().map(|_| "<fn>"))
             .field("helicity_fn", &self.helicity_fn.as_ref().map(|_| "<fn>"))
+            .field("polarization_axis", &self.polarization_axis)
+            .field("polarization_bias", &self.polarization_bias)
             .finish()
     }
 }
