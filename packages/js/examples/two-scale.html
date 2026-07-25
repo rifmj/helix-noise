@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Helix Noise — two-scale: a backbone carrying detail</title>
+<style>
+  html,body{margin:0;background:#070a0e;color:#cdd6dd;font-family:system-ui,sans-serif}
+  .wrap{max-width:1000px;margin:0 auto;padding:22px 16px}
+  h1{font-size:19px;font-weight:600;margin:0 0 6px}
+  h1 code{color:#f4a13c}
+  p{color:#8a97a2;font-size:13.5px;line-height:1.6;margin:0 0 14px}
+  p b{color:#cdd6dd;font-weight:500}
+  code{font-family:ui-monospace,Menlo,monospace;color:#f4a13c;font-size:12.5px}
+  .three{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+  .cell{position:relative;border:1px solid rgba(150,180,200,.15);border-radius:9px;overflow:hidden;background:#070a0e;aspect-ratio:1/1}
+  .cell canvas{display:block;width:100%;height:100%}
+  .cap{position:absolute;left:8px;top:7px;font-family:ui-monospace,monospace;font-size:10.5px;color:#93a3b0;
+    background:rgba(7,10,14,.6);border-radius:5px;padding:3px 7px;pointer-events:none}
+  .cap b{font-weight:400;color:#38d9d1}
+  .row{display:flex;flex-wrap:wrap;gap:16px;align-items:center;margin-top:14px;font-family:ui-monospace,monospace;font-size:12px;color:#93a3b0}
+  .row label{display:flex;align-items:center;gap:8px}
+  input[type=range]{width:150px}
+  button{font-family:ui-monospace,monospace;font-size:11.5px;color:#cdd6dd;background:#0c1016;
+    border:1px solid rgba(150,180,200,.22);border-radius:7px;padding:6px 11px;cursor:pointer}
+  button:hover{border-color:#38d9d1}
+  button.on{border-color:#38d9d1;color:#fff}
+  .note{margin-top:14px;font-size:12px;color:#5d6b77;font-family:ui-monospace,monospace;line-height:1.7}
+  .bars{display:flex;align-items:flex-end;gap:2px;height:52px;margin-top:14px}
+  .bars i{flex:1;background:linear-gradient(180deg,#2fd6bf,#12484a);border-radius:2px 2px 0 0;display:block}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Two-scale — <code>abc()</code> + <code>shellPeak</code> through <code>twoScale</code></h1>
+  <p>A recipe rather than a knob: an <b>organized large-scale backbone</b> carrying <b>incoherent
+    broadband detail</b>. The backbone here is <code>abc()</code> — the classical ABC cell flow,
+    written as exactly three waves of the same engine, with no randomness in it at all. The detail
+    is an ordinary field with a <code>shellPeak</code> spectrum, a narrow band around
+    <code>kDetail</code>. <code>twoScale</code> sums them; the sum of two divergence-free fields is
+    divergence-free and its potential is the sum of theirs, so obstacles and the potential bakes
+    keep working on the result.</p>
+  <p>The point of the <code>kDetail</code> slider: sizing the detail as
+    <code>amplitude = C_TWO_SCALE / kDetail</code> holds its <b>vorticity budget</b> fixed. Slide it
+    and the detail moves to finer scales <b>without the picture getting busier or calmer</b> — watch
+    the enstrophy readout stay put while the texture changes.</p>
+
+  <div class="three">
+    <div class="cell"><canvas id="c-base"></canvas><div class="cap">backbone — <code>abc(3,3,3)</code></div></div>
+    <div class="cell"><canvas id="c-det"></canvas><div class="cap">detail — <code>shellPeak(<b id="cap-k">8</b>)</code></div></div>
+    <div class="cell"><canvas id="c-mix"></canvas><div class="cap">composite — <code>twoScale</code></div></div>
+  </div>
+
+  <div class="row">
+    <label>kDetail <input id="kd" type="range" min="4" max="16" step="1" value="8"><span id="v-kd">8</span></label>
+    <label>detail gain <input id="gain" type="range" min="0.2" max="3" step="0.1" value="1"><span id="v-gain">1.0</span></label>
+    <button id="fixed" class="on">fixed budget ✓</button>
+    <button id="reseed">↻ detail seed</button>
+  </div>
+
+  <div class="bars" id="bars" title="mean enstrophy of the detail layer, per kDetail"></div>
+  <div class="note" id="note">—</div>
+</div>
+
+<script src="../dist/helix-noise.global.js"></script>
+<script>
+(function(){
+  var TAU = Math.PI * 2;
+  var params = { kd: 8, gain: 1, fixedBudget: true, seed: 2 };
+  var C = HelixNoise.C_TWO_SCALE;
+
+  var base = HelixNoise.abc(3, 3, 3);
+  var detail, mix;
+
+  function detailAmplitude(kd){
+    // The whole recipe: amplitude ~ 1/k holds b²k² — the detail's vorticity budget — constant.
+    return params.fixedBudget ? C / kd : C / 8;
+  }
+
+  function build(){
+    detail = HelixNoise.create({
+      spectrum: HelixNoise.shellPeak(params.kd),
+      kmin: Math.max(0.5, params.kd - 3), kmax: params.kd + 3,
+      amplitude: detailAmplitude(params.kd), seed: params.seed, coherence: 0,
+    });
+    mix = HelixNoise.twoScale(base, detail, { detailGain: params.gain });
+  }
+  build();
+
+  /** Streaklines of one field on a z-slice, scaled so each panel fills its box. */
+  function draw(cv, f, span, step, nl, seedOff){
+    var ctx = cv.getContext("2d");
+    var w = cv.clientWidth || 280, h = cv.clientHeight || 280;
+    var dpr = Math.min(2, window.devicePixelRatio || 1);
+    cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = "#070a0e"; ctx.fillRect(0, 0, w, h);
+
+    var rs = (1234567 ^ seedOff) >>> 0;
+    function rnd(){ rs = (rs * 1664525 + 1013904223) >>> 0; return rs / 4294967296; }
+
+    ctx.lineWidth = 0.8;
+    ctx.globalCompositeOperation = "lighter";
+    var uw = [0,0,0,0,0,0];
+    for (var i = 0; i < nl; i++){
+      var x = rnd() * span, y = rnd() * span, z = rnd() * span;
+      f.sampleUW(x, y, z, uw);
+      var hel = uw[0]*uw[3] + uw[1]*uw[4] + uw[2]*uw[5];
+      ctx.strokeStyle = hel >= 0 ? "rgba(47,214,191,0.45)" : "rgba(244,161,60,0.45)";
+      ctx.beginPath();
+      ctx.moveTo((x/span)*w, h - (y/span)*h);
+      for (var s = 0; s < 30; s++){
+        f.sampleUW(x, y, z, uw);
+        x += uw[0]*step; y += uw[1]*step; z += uw[2]*step;
+        ctx.lineTo((x/span)*w, h - (y/span)*h);
+      }
+      ctx.stroke();
+    }
+    ctx.globalCompositeOperation = "source-over";
+  }
+
+  /** Mean enstrophy ⟨|ω|²⟩ of a field on a coarse grid — the "budget" the recipe holds fixed. */
+  function enstrophy(f){
+    var ng = 8, uw = [0,0,0,0,0,0], s = 0, n = 0;
+    for (var i = 0; i < ng; i++) for (var j = 0; j < ng; j++) for (var k = 0; k < ng; k++){
+      f.sampleUW((i/ng)*TAU, (j/ng)*TAU, (k/ng)*TAU, uw);
+      s += uw[3]*uw[3] + uw[4]*uw[4] + uw[5]*uw[5]; n++;
+    }
+    return s / n;
+  }
+
+  var $ = function(id){ return document.getElementById(id); };
+  var bars = $("bars");
+
+  function redraw(){
+    build();
+    // The backbone is a fixed 2π cell; the detail is finer, so give each panel its own span.
+    draw($("c-base"), base, TAU, 0.12, 420, 1);
+    draw($("c-det"), detail, TAU, 0.35, 520, 2);
+    draw($("c-mix"), mix, TAU, 0.12, 520, 3);
+    $("cap-k").textContent = params.kd;
+
+    // Sweep kDetail to show the budget really is flat (or really is not, when you switch it off).
+    bars.innerHTML = "";
+    var vals = [], kds = [];
+    for (var kd = 4; kd <= 16; kd++){
+      var d = HelixNoise.create({
+        spectrum: HelixNoise.shellPeak(kd), kmin: Math.max(0.5, kd - 3), kmax: kd + 3,
+        amplitude: params.fixedBudget ? C / kd : C / 8, seed: params.seed, coherence: 0,
+      });
+      vals.push(enstrophy(d)); kds.push(kd);
+    }
+    var vmax = Math.max.apply(null, vals);
+    vals.forEach(function(v, i){
+      var b = document.createElement("i");
+      b.style.height = Math.max(2, (v / vmax) * 100) + "%";
+      b.style.opacity = kds[i] === params.kd ? "1" : "0.42";
+      b.title = "kDetail " + kds[i] + " · ⟨|ω|²⟩ " + v.toFixed(2);
+      bars.appendChild(b);
+    });
+
+    var spread = (Math.max.apply(null, vals) / Math.min.apply(null, vals)).toFixed(2);
+    $("note").innerHTML =
+      "bars: mean enstrophy ⟨|ω|²⟩ of the detail layer for kDetail = 4…16 · " +
+      "spread max/min = <b style='color:" + (params.fixedBudget ? "#2fd6bf" : "#f4a13c") + "'>" + spread + "×</b> " +
+      (params.fixedBudget
+        ? "with amplitude = C_TWO_SCALE / kDetail (C_TWO_SCALE = " + C + "). " +
+          "Switch the rule off and the same sweep spreads ~16× — the k² you would expect."
+        : "at fixed amplitude — that is the k² scaling the rule exists to cancel. " +
+          "Switch it back on and the same sweep flattens to ~1.4×.");
+  }
+
+  $("kd").oninput = function(e){ params.kd = +e.target.value; $("v-kd").textContent = params.kd; redraw(); };
+  $("gain").oninput = function(e){ params.gain = +e.target.value; $("v-gain").textContent = params.gain.toFixed(1); redraw(); };
+  $("fixed").onclick = function(){
+    params.fixedBudget = !params.fixedBudget;
+    $("fixed").classList.toggle("on", params.fixedBudget);
+    $("fixed").textContent = params.fixedBudget ? "fixed budget ✓" : "fixed amplitude";
+    redraw();
+  };
+  $("reseed").onclick = function(){ params.seed = (params.seed * 1103515245 + 12345) >>> 0; redraw(); };
+  addEventListener("resize", redraw);
+  redraw();
+})();
+</script>
+</body>
+</html>

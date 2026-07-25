@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Helix Noise — polarization: ellipticity × grain</title>
+<style>
+  html,body{margin:0;background:#070a0e;color:#cdd6dd;font-family:system-ui,sans-serif}
+  .wrap{max-width:1000px;margin:0 auto;padding:22px 16px}
+  h1{font-size:19px;font-weight:600;margin:0 0 6px}
+  h1 code{color:#f4a13c}
+  p{color:#8a97a2;font-size:13.5px;line-height:1.6;margin:0 0 14px}
+  p b{color:#cdd6dd;font-weight:500}
+  code{font-family:ui-monospace,Menlo,monospace;color:#f4a13c;font-size:12.5px}
+  .grid{display:grid;grid-template-columns:auto repeat(3,1fr);gap:8px;align-items:center}
+  .cell{position:relative;border:1px solid rgba(150,180,200,.15);border-radius:8px;overflow:hidden;background:#070a0e;aspect-ratio:4/3}
+  .cell canvas{display:block;width:100%;height:100%}
+  .cell .tag{position:absolute;left:7px;bottom:6px;font-family:ui-monospace,monospace;font-size:10px;color:#93a3b0;
+    background:rgba(7,10,14,.6);border-radius:4px;padding:2px 6px;pointer-events:none}
+  .hd{font-family:ui-monospace,monospace;font-size:11.5px;color:#93a3b0;text-align:center}
+  .side{font-family:ui-monospace,monospace;font-size:11.5px;color:#93a3b0;writing-mode:vertical-rl;transform:rotate(180deg);justify-self:center}
+  .row{display:flex;flex-wrap:wrap;gap:14px;align-items:center;margin-top:14px;font-family:ui-monospace,monospace;font-size:12px;color:#93a3b0}
+  .row label{display:flex;align-items:center;gap:8px}
+  input[type=range]{width:130px}
+  button{font-family:ui-monospace,monospace;font-size:11.5px;color:#cdd6dd;background:#0c1016;
+    border:1px solid rgba(150,180,200,.22);border-radius:7px;padding:6px 11px;cursor:pointer}
+  button:hover{border-color:#38d9d1}
+  .note{margin-top:14px;font-size:12px;color:#5d6b77;font-family:ui-monospace,monospace;line-height:1.7}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Polarization — <code>ellipticity</code> × <code>polarizationAxis</code></h1>
+  <p>Nine fields that share a seed, a spectrum and a helicity slider. <b>Only the polarization
+    differs.</b> Down the rows, <code>ellipticity</code> takes each wave from a circular corkscrew
+    (<b>1</b>, tubes) to a flat linear oscillation (<b>0</b>, sheets). Across the columns,
+    <code>polarizationBias</code> combs those waves along a world axis — the <b>grain</b>, drawn
+    vertically here. Neither is <code>anisotropy</code>, which only moves where the waves point;
+    these change how each wave <i>polarizes</i>. Streaklines are integrated with
+    <code>field.sample()</code>; colour is the genuine helicity density <code>u·ω</code>.</p>
+
+  <div class="grid" id="grid"></div>
+
+  <div class="row">
+    <label>helicity <input id="heli" type="range" min="-1" max="1" step="0.1" value="0.6"><span id="v-heli">+0.6</span></label>
+    <label>slope <input id="slope" type="range" min="1" max="3" step="0.1" value="1.8"><span id="v-slope">1.8</span></label>
+    <button id="reseed">↻ seed</button>
+  </div>
+
+  <div class="note" id="note">
+    Note what the grain costs: a wave can only be so polarized, so <code>polarizationBias</code> and the
+    chirality <code>ε·s</code> are jointly capped at <code>√(d²+χ²) ≤ 0.97</code>. In the top row
+    (<code>ellipticity 1</code>) there is almost no room left — the grain barely bites. Lower the
+    ellipticity and it opens up. That is the covariance staying positive, not a knob quirk.
+  </div>
+</div>
+
+<script src="../dist/helix-noise.global.js"></script>
+<script>
+(function(){
+  var TAU = Math.PI * 2;
+  var EPS = [1, 0.45, 0];        // rows: circular -> linear
+  var GRAIN = [0, 0.5, 0.9];     // columns: no grain -> combed
+  var params = { heli: 0.6, slope: 1.8, seed: 11 };
+
+  var grid = document.getElementById("grid");
+  var cells = [];
+
+  // header row
+  grid.appendChild(document.createElement("div"));
+  GRAIN.forEach(function(d){
+    var h = document.createElement("div");
+    h.className = "hd";
+    h.innerHTML = "grain d = <b style='color:#38d9d1;font-weight:400'>" + d.toFixed(2) + "</b>";
+    grid.appendChild(h);
+  });
+
+  EPS.forEach(function(eps, r){
+    var s = document.createElement("div");
+    s.className = "side";
+    s.innerHTML = "ellipticity ε = <b style='color:#38d9d1;font-weight:400'>" + eps.toFixed(2) + "</b>";
+    grid.appendChild(s);
+    GRAIN.forEach(function(d, c){
+      var cell = document.createElement("div");
+      cell.className = "cell";
+      var cv = document.createElement("canvas");
+      var tag = document.createElement("div");
+      tag.className = "tag";
+      cell.appendChild(cv); cell.appendChild(tag);
+      grid.appendChild(cell);
+      cells.push({ cv: cv, tag: tag, eps: eps, d: d, r: r, c: c });
+    });
+  });
+
+  /** One panel: streaklines of a slab of the field, drawn with a fixed step count. */
+  function draw(cell){
+    var cv = cell.cv, ctx = cv.getContext("2d");
+    var w = cv.clientWidth || 260, h = cv.clientHeight || 260;
+    var dpr = Math.min(2, window.devicePixelRatio || 1);
+    cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = "#070a0e"; ctx.fillRect(0, 0, w, h);
+
+    // Same seed, same spectrum, same helicity in every panel — only polarization moves.
+    var f = HelixNoise.create({
+      modes: 64, seed: params.seed, slope: params.slope, helicity: params.heli,
+      kmin: 1, kmax: 5.4, coherence: 0.35, centers: 2,
+      ellipticity: cell.eps,
+      polarizationAxis: cell.d > 0 ? [0, 1, 0] : null,
+      polarizationBias: cell.d,
+    });
+
+    var SPAN = TAU, STEPS = 26, NL = 620, DT = 0.055;
+    var rs = 987654321 ^ (cell.r * 7919 + cell.c * 104729);
+    function rnd(){ rs = (rs * 1664525 + 1013904223) >>> 0; return rs / 4294967296; }
+
+    ctx.lineWidth = 0.85;
+    ctx.globalCompositeOperation = "lighter";
+    var uw = [0,0,0,0,0,0];
+    for (var i = 0; i < NL; i++){
+      var x = rnd() * SPAN, y = rnd() * SPAN, z = rnd() * SPAN;
+      f.sampleUW(x, y, z, uw);
+      var hel = uw[0]*uw[3] + uw[1]*uw[4] + uw[2]*uw[5];
+      ctx.strokeStyle = hel >= 0 ? "rgba(47,214,191,0.5)" : "rgba(244,161,60,0.5)";
+      ctx.beginPath();
+      ctx.moveTo((x / SPAN) * w, h - (y / SPAN) * h);
+      for (var s = 0; s < STEPS; s++){
+        f.sampleUW(x, y, z, uw);
+        x += uw[0] * DT; y += uw[1] * DT; z += uw[2] * DT;
+        ctx.lineTo((x / SPAN) * w, h - (y / SPAN) * h);
+      }
+      ctx.stroke();
+    }
+    ctx.globalCompositeOperation = "source-over";
+
+    // Measured, not the slider: the relative helicity this field actually has.
+    var rho = f.relativeHelicitySpectral(0);
+    cell.tag.innerHTML = "&#961; = " + (rho >= 0 ? "+" : "") + rho.toFixed(2);
+  }
+
+  function redraw(){ cells.forEach(draw); }
+
+  var $ = function(id){ return document.getElementById(id); };
+  $("heli").oninput = function(e){ params.heli = +e.target.value;
+    $("v-heli").textContent = (params.heli>0?"+":"") + params.heli.toFixed(1); redraw(); };
+  $("slope").oninput = function(e){ params.slope = +e.target.value;
+    $("v-slope").textContent = params.slope.toFixed(1); redraw(); };
+  $("reseed").onclick = function(){ params.seed = (params.seed * 1103515245 + 12345) >>> 0; redraw(); };
+  addEventListener("resize", redraw);
+  redraw();
+})();
+</script>
+</body>
+</html>
