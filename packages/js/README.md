@@ -325,6 +325,7 @@ or jump straight in (they're plain HTML files in [`examples/`](examples/), no bu
 | [Kelp forest](https://rifmj.github.io/helix-noise/examples/kelp.html) | sway driven by the field's own `churn` — set it to 0 and the forest freezes |
 | [Ebru marbling](https://rifmj.github.io/helix-noise/examples/ebru.html) | ink stretches and folds but never tears — incompressibility made visible |
 | [Exact Navier–Stokes](https://rifmj.github.io/helix-noise/examples/exact-ns.html) | a field that genuinely solves the equations, plus three break-it buttons and a truth table where no single test catches every break |
+| [Transport barriers](https://rifmj.github.io/helix-noise/examples/ftle.html) | FTLE ridges from the analytic gradient, with the Jacobian checked against the ABC field's textbook form |
 | [Designing by wavenumber](https://rifmj.github.io/helix-noise/examples/spectrum-lab.html) | `shellPeak`/`rolloff`/`condensate` as callables, with the energy and handedness per shell drawn beside the field |
 | [Heat haze](https://rifmj.github.io/helix-noise/examples/boil.html) | `flutter` against plain `churn`, refracting the same plate — the shimmer is exactly zero at `t = 0` and dies when churn does |
 | [Vortex rings](https://rifmj.github.io/helix-noise/examples/rings.html) | closed-form structures: a smoke ring flying at Kelvin's speed, a head-on collision, and `compose(ring, noise)` |

@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Helix Noise — transport barriers (FTLE)</title>
+<style>
+  html,body{margin:0;background:#070a0e;color:#cdd6dd;font-family:system-ui,sans-serif}
+  .wrap{max-width:1000px;margin:0 auto;padding:22px 16px}
+  h1{font-size:19px;font-weight:600;margin:0 0 6px}
+  h1 code{color:#f4a13c}
+  p{color:#8a97a2;font-size:13.5px;line-height:1.6;margin:0 0 14px}
+  p b{color:#cdd6dd;font-weight:500}
+  code{font-family:ui-monospace,Menlo,monospace;color:#f4a13c;font-size:12.5px}
+  .split{display:grid;grid-template-columns:1.15fr 1fr;gap:12px;align-items:start}
+  .cell{position:relative;border:1px solid rgba(150,180,200,.15);border-radius:10px;overflow:hidden;background:#070a0e;aspect-ratio:1/1}
+  .cell canvas{display:block;width:100%;height:100%;image-rendering:auto}
+  .cap{position:absolute;left:8px;top:7px;font-family:ui-monospace,monospace;font-size:10px;color:#93a3b0;
+    background:rgba(7,10,14,.62);border-radius:5px;padding:3px 7px;pointer-events:none;letter-spacing:.05em}
+  .prog{position:absolute;left:0;bottom:0;height:2px;background:#38d9d1;transition:width .1s linear}
+  .row{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-top:12px;font-family:ui-monospace,monospace;font-size:12px;color:#93a3b0}
+  .row label{display:flex;align-items:center;gap:7px}
+  input[type=range]{width:110px}
+  button{font-family:ui-monospace,monospace;font-size:11.5px;color:#cdd6dd;background:#0c1016;
+    border:1px solid rgba(150,180,200,.22);border-radius:7px;padding:6px 11px;cursor:pointer}
+  button:hover{border-color:#38d9d1}
+  button.on{border-color:#38d9d1;color:#fff}
+  .rc{border:1px solid rgba(150,180,200,.16);border-radius:9px;padding:12px 14px;font-size:12.5px;color:#8a97a2;line-height:1.65;margin-bottom:10px}
+  .rc h3{margin:0 0 6px;font-size:12px;color:#cdd6dd;font-weight:500}
+  .num{font-family:ui-monospace,monospace;color:#2fd6bf}
+  .num.warn{color:#f4a13c}
+  .note{margin-top:6px;font-size:12px;color:#5d6b77;font-family:ui-monospace,monospace;line-height:1.7}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Transport barriers — the Lagrangian side of <code>sampleGrad</code></h1>
+  <p>The Q-criterion asks what the flow is doing <b>at a point, right now</b>. This asks something particles
+    care about more: over the next <code>T</code> seconds, <b>which pairs of neighbours get pulled apart?</b>
+    That is the FTLE — integrate the deformation gradient along a trajectory, take its largest singular value,
+    and the bright ridges are the surfaces material cannot cross. Every gradient in that integration comes from
+    <code>field.sampleGrad()</code>, analytically; there is no finite-difference step anywhere in this page.</p>
+
+  <div class="split">
+    <div class="cell"><canvas id="cv"></canvas><div class="cap" id="cap">FTLE · z-slice</div><div class="prog" id="prog" style="width:0"></div></div>
+    <div>
+      <div class="rc">
+        <h3>Is the gradient right? A known answer, not a self-comparison</h3>
+        The ABC field <code>u = (A sin z + C cos y, B sin x + A cos z, C sin y + B cos x)</code> has a Jacobian
+        you can write down by hand. Comparing all nine entries against <code>sampleGrad</code> over 200 points:
+        <br>max |difference| = <span class="num" id="r-jac">—</span>.
+        <br><span style="opacity:.75">This is the receipt that matters. Checking the gradient against a finite
+        difference of the same sampler would only prove the sampler is self-consistent.</span>
+      </div>
+      <div class="rc">
+        <h3>Incompressibility, from the gradient alone</h3>
+        The trace of <code>∇u</code> <i>is</i> the divergence, so it must vanish identically:
+        max |tr ∇u| = <span class="num" id="r-tr">—</span> over the same points.
+      </div>
+      <div class="rc" id="rc-lyap">
+        <h3>What the picture is</h3>
+        <span id="r-stats">—</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="row">
+    <button id="f-abc" class="on">abc(1,1,1)</button>
+    <button id="f-abc2">abc(1,1,0)</button>
+    <button id="f-spec">coherent field</button>
+    <label>horizon T <input id="T" type="range" min="1" max="8" step="0.5" value="4"><span id="v-T">4.0</span></label>
+    <label>res <input id="res" type="range" min="80" max="200" step="40" value="120"><span id="v-res">120</span></label>
+    <button id="go">recompute</button>
+  </div>
+  <div class="note" id="note">—</div>
+</div>
+
+<script src="../dist/helix-noise.global.js"></script>
+<script>
+(function(){
+  var TAU = Math.PI * 2;
+  var HN = HelixNoise;
+  var which = "abc", T = 4, RES = 120, ZSLICE = 1.1;
+
+  function makeField(){
+    if (which === "abc")  return HN.abc(1, 1, 1);
+    if (which === "abc2") return HN.abc(1, 1, 0);      // the integrable one — C = 0 kills the chaos
+    return HN.create({ modes: 48, seed: 4, slope: 1.7, coherence: 0.6, kmin: 1, kmax: 4, tileable: true });
+  }
+  var field = makeField();
+
+  // ---- receipts -----------------------------------------------------------
+  var g9 = new Float64Array(9);
+
+  /** The textbook Jacobian of abc(A,B,C), written out by hand. Rows are d/dx, d/dy, d/dz. */
+  function abcJacobian(A, B, C, x, y, z){
+    // u = (A sin z + C cos y,  B sin x + A cos z,  C sin y + B cos x)
+    return [
+      0,             B*Math.cos(x), -B*Math.sin(x),   // d/dx of (u1,u2,u3)
+      -C*Math.sin(y), 0,             C*Math.cos(y),   // d/dy
+      A*Math.cos(z), -A*Math.sin(z), 0,               // d/dz
+    ];
+  }
+
+  function receipts(){
+    var f = HN.abc(1, 1, 1), worst = 0, tr = 0;
+    for (var i = 0; i < 200; i++){
+      var x = Math.sin(i*1.7)*7, y = Math.cos(i*2.3)*7, z = Math.sin(i*0.9)*7;
+      f.sampleGrad(x, y, z, g9, 0);
+      var want = abcJacobian(1, 1, 1, x, y, z);
+      for (var c = 0; c < 9; c++) worst = Math.max(worst, Math.abs(g9[c] - want[c]));
+      tr = Math.max(tr, Math.abs(g9[0] + g9[4] + g9[8]));
+    }
+    var a = document.getElementById("r-jac");
+    a.textContent = worst.toExponential(1); a.className = worst < 1e-12 ? "num" : "num warn";
+    var b = document.getElementById("r-tr");
+    b.textContent = tr.toExponential(1); b.className = tr < 1e-12 ? "num" : "num warn";
+  }
+
+  // ---- FTLE ---------------------------------------------------------------
+  // Advect the deformation gradient F alongside the trajectory: dF/dt = (grad u) F.
+  // The FTLE is (1/|T|) ln sqrt(largest eigenvalue of F^T F).
+  var o6 = [0,0,0,0,0,0];
+  function ftleAt(x0, y0, z0, T, steps){
+    var dt = T/steps;
+    var x = x0, y = y0, z = z0;
+    var F = [1,0,0, 0,1,0, 0,0,1];
+    for (var s = 0; s < steps; s++){
+      field.sampleGrad(x, y, z, g9, 0);
+      // F <- (I + dt*G) F , with G[m][n] = du_n/dx_m -> J[n][m] in row-major "row = output"
+      var nF = new Array(9);
+      for (var r = 0; r < 3; r++) for (var c = 0; c < 3; c++){
+        var acc = F[r*3+c];
+        for (var k = 0; k < 3; k++) acc += dt * g9[k*3+r] * F[k*3+c];
+        nF[r*3+c] = acc;
+      }
+      F = nF;
+      field.sampleUW(x, y, z, o6, 0);
+      x += o6[0]*dt; y += o6[1]*dt; z += o6[2]*dt;
+    }
+    // largest eigenvalue of C = F^T F, by power iteration (3x3, converges in a few steps)
+    var C = new Array(9);
+    for (var i2 = 0; i2 < 3; i2++) for (var j2 = 0; j2 < 3; j2++){
+      var v = 0;
+      for (var k2 = 0; k2 < 3; k2++) v += F[k2*3+i2]*F[k2*3+j2];
+      C[i2*3+j2] = v;
+    }
+    var vx = 0.577, vy = 0.577, vz = 0.577, lam = 1;
+    for (var it = 0; it < 24; it++){
+      var ax = C[0]*vx + C[1]*vy + C[2]*vz;
+      var ay = C[3]*vx + C[4]*vy + C[5]*vz;
+      var az = C[6]*vx + C[7]*vy + C[8]*vz;
+      lam = Math.hypot(ax, ay, az) || 1;
+      vx = ax/lam; vy = ay/lam; vz = az/lam;
+    }
+    return Math.log(Math.sqrt(Math.max(lam, 1e-300))) / Math.abs(T);
+  }
+
+  // ---- progressive paint --------------------------------------------------
+  var cv = document.getElementById("cv"), running = null;
+  function compute(){
+    if (running) cancelAnimationFrame(running);
+    var ctx = cv.getContext("2d");
+    var w = RES, h = RES;
+    cv.width = w; cv.height = h;
+    var img = ctx.createImageData(w, h), d = img.data;
+    var vals = new Float32Array(w*h);
+    var row = 0, t0 = performance.now();
+    var steps = Math.max(24, Math.round(T*12));
+
+    function chunk(){
+      // Time-budgeted rather than a fixed row count: keep the tab responsive without
+      // stretching a 1.4M-sample job across hundreds of frames.
+      var deadline = performance.now() + 40;
+      while (row < h && performance.now() < deadline){
+        for (var x = 0; x < w; x++){
+          vals[row*w + x] = ftleAt((x/w)*TAU, (row/h)*TAU, ZSLICE, T, steps);
+        }
+        row++;
+      }
+      document.getElementById("prog").style.width = (100*row/h) + "%";
+      if (row < h) { running = requestAnimationFrame(chunk); return; }
+
+      // paint once the field is complete, so the colour scale is stable
+      var lo = Infinity, hi = -Infinity, mean = 0;
+      for (var i = 0; i < w*h; i++){ var v = vals[i]; if (v<lo) lo=v; if (v>hi) hi=v; mean += v; }
+      mean /= w*h;
+      for (var p = 0; p < w*h; p++){
+        var u = (vals[p]-lo)/((hi-lo)||1);
+        u = Math.pow(u, 1.9);                       // push the ridges forward
+        var o = p*4;
+        d[o]   = Math.round(10 + 245*Math.pow(u,1.1));
+        d[o+1] = Math.round(14 + 210*Math.pow(u,1.6));
+        d[o+2] = Math.round(20 + 190*Math.pow(u,2.6));
+        d[o+3] = 255;
+      }
+      ctx.putImageData(img, 0, 0);
+      document.getElementById("prog").style.width = "0%";
+      document.getElementById("r-stats").innerHTML =
+        "Bright = fast separation. FTLE range <span class='num'>" + lo.toFixed(3) + "</span> … " +
+        "<span class='num'>" + hi.toFixed(3) + "</span>, mean <span class='num'>" + mean.toFixed(3) + "</span> " +
+        "over horizon T = " + T + " on a " + w + "² slice. The ridges are where two neighbouring particles end " +
+        "up on opposite sides of the flow — material barriers, not vortices. " +
+        (which === "abc2"
+          ? "<b style='color:#cdd6dd'>This is abc(1,1,0)</b>: with C = 0 the ABC flow is integrable, so there is " +
+            "nothing chaotic to separate and the picture goes flat and banded. That contrast is the point of the button."
+          : "");
+      document.getElementById("note").textContent =
+        w + "² points × " + steps + " integration steps, each step one analytic sampleGrad + one sampleUW · " +
+        ((performance.now()-t0)/1000).toFixed(1) + " s";
+      running = null;
+    }
+    chunk();
+  }
+
+  // ---- wiring -------------------------------------------------------------
+  var $ = function(id){ return document.getElementById(id); };
+  var BTN = { "f-abc":"abc", "f-abc2":"abc2", "f-spec":"spec" };
+  var CAPS = { abc:"abc(1,1,1) — the chaotic ABC flow", abc2:"abc(1,1,0) — integrable, C = 0", spec:"coherent spectral field" };
+  Object.keys(BTN).forEach(function(id){
+    $(id).onclick = function(){
+      which = BTN[id];
+      Object.keys(BTN).forEach(function(o){ $(o).classList.toggle("on", o === id); });
+      field = makeField();
+      $("cap").textContent = "FTLE · " + CAPS[which];
+      compute();
+    };
+  });
+  $("T").oninput = function(e){ T = +e.target.value; $("v-T").textContent = T.toFixed(1); };
+  $("res").oninput = function(e){ RES = +e.target.value; $("v-res").textContent = RES; };
+  $("go").onclick = compute;
+
+  receipts();
+  $("cap").textContent = "FTLE · " + CAPS[which];
+  compute();
+})();
+</script>
+</body>
+</html>

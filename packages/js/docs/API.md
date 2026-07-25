@@ -195,6 +195,13 @@ analytic velocity gradient — no finite differences, no grid:
 | `stretching(x, y, z, t?)` | `number` | Positive where a vortex is being spun up, negative where it is being squashed. |
 | `sampleGrad(x, y, z, out9, t?)` | `out9` | The gradient itself, row-major `out9[3m + n] = ∂uₙ/∂xₘ`. |
 
+> **One performance note, since it is invisible otherwise.** `sampleManyUW` runs on an embedded WASM
+> kernel, and that kernel only knows the circular curl — so the moment `ellipticity` is anything other
+> than `1`, or `polarizationAxis` is set, it silently falls back to the JS kernel. It is a step, not a
+> ramp: measured at 48 modes, ~260 ns/point at `ellipticity: 1` against ~800 ns/point at `0.999`.
+> `sampleMany` (velocity only) is unaffected, because the velocity combine is correct for any
+> polarization. If you batch vorticity for a polarized field, budget for the JS path.
+
 ```js
 const q = field.qCriterion(x, y, z, t);
 particle.color = q > 0 ? coreColour : shearColour;
