@@ -3,6 +3,33 @@
 All notable changes to this project are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [1.11.2]
+
+### Fixed
+
+- **`rings.html` coloured the sign of roundoff.** A vortex ring's velocity is poloidal and its
+  vorticity is purely azimuthal, so `u·ω` is **identically zero** by orthogonality — not small,
+  zero. The demo nonetheless ran every particle through a two-tone teal/amber "right-handed /
+  left-handed" channel, so the picture asserted a handedness that was not there, for two of its
+  three scenes. Measured on the demo's own particle distribution: `max|u·ω| = 5.7e-14` against a
+  local scale `|u||ω| = 4.8e+2`, a ratio of `1.2e-16`. A sign channel now needs the value to clear
+  a deadband relative to its own local scale, and particles below it go grey; the readout prints
+  `max|u·ω|` and marks it `≡ 0`. The three scenes now separate completely — 100% grey for one ring
+  and for collide, 0% grey once composed with noise, where the number jumps to `4.7e+1`. That
+  contrast is the demo's actual lesson: `compose` produces helicity neither part had alone.
+- **`collapse.html`'s difference panel could not fail visibly.** A black panel was the pass state
+  and also exactly what a panel that never got drawn looks like — an ambiguity that bit once
+  already during development, when the panels were genuinely never drawn and looked like a passing
+  result. The panel now carries its own measured maximum in the caption: `—` before it has run,
+  `2e-13` when the loop closes, `1e+1` with `freezeProfile` off. Three distinguishable states.
+
+### Notes
+
+- Both are the same defect class, and neither was a broken calculation: the arithmetic was right and
+  the conclusion it supported was not checkable. A zero is evidence only when the corresponding
+  non-zero has been checked too, and a "pass" rendering is evidence only when it differs from the
+  never-ran rendering.
+
 ## [1.11.1]
 
 ### Fixed

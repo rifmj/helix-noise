@@ -62,7 +62,7 @@
     <div class="proof">
       <figure><canvas id="pa" width="64" height="64"></canvas><figcaption>now</figcaption></figure>
       <figure><canvas id="pb" width="64" height="64"></canvas><figcaption>+1 period</figcaption></figure>
-      <figure><canvas id="pd" width="64" height="64"></canvas><figcaption>difference</figcaption></figure>
+      <figure><canvas id="pd" width="64" height="64"></canvas><figcaption>difference <span id="dmax">—</span></figcaption></figure>
     </div>
     <div class="phase"><i id="ph"></i></div>
   </div>
@@ -165,7 +165,11 @@
 
   /** The same three panels, as pictures: now · one period later, rescaled · |difference|. */
   function renderProof(t) {
-    if (params.mode !== "dss") { for (const p of pcv) { p.ctx.clearRect(0, 0, P, P); } return; }
+    if (params.mode !== "dss") {
+      for (const p of pcv) p.ctx.clearRect(0, 0, P, P);
+      document.getElementById("dmax").textContent = "—";
+      return;
+    }
     const t2 = T - (T - t) / params.lambda;
     const sSp = Math.pow(params.lambda, -params.b), sAm = Math.pow(params.lambda, params.a);
     const A = new Float64Array(P * P), B = new Float64Array(P * P);
@@ -192,9 +196,14 @@
       pcv[idx].ctx.putImageData(pcv[idx].img, 0, 0);
     };
     const D = new Float64Array(P * P);
-    for (let n = 0; n < P * P; n++) D[n] = A[n] - B[n];
+    let dmax = 0;
+    for (let n = 0; n < P * P; n++) { D[n] = A[n] - B[n]; dmax = Math.max(dmax, Math.abs(D[n])); }
     put(A, 0, 1); put(B, 1, 1);
     put(D, 2, 1e6);   // ×10⁶ gain: if anything at all were there, it would be blinding
+    // A black difference panel is the pass state — and it is also exactly what a panel that never
+    // got drawn looks like. That ambiguity makes the picture alone worthless as evidence, so the
+    // panel carries its own measured maximum: "—" until it has actually run, a number afterwards.
+    document.getElementById("dmax").textContent = dmax.toExponential(0);
   }
 
   // ---- loop --------------------------------------------------------------

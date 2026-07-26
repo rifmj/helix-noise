@@ -20,6 +20,8 @@
     background:rgba(7,10,14,.55);border:1px solid rgba(150,180,200,.14);border-radius:6px;padding:5px 9px;
     text-align:right;line-height:1.5;pointer-events:none}
   .ro b{font-weight:400;color:#2fd6bf}
+  .ro b.nil{color:#7b8794}
+  .ro i{font-style:normal;color:#5d6b77}
   .row{display:flex;flex-wrap:wrap;gap:14px;align-items:center;margin-top:12px;font-family:ui-monospace,monospace;font-size:12px;color:#93a3b0}
   .row label{display:flex;align-items:center;gap:8px}
   input[type=range]{width:120px}
@@ -64,9 +66,18 @@
     velocity gradient. <b>Q</b> is the clearest — it is positive through the vortex core and negative in
     the jet the ring pushes through its own middle, so the two structures separate by colour rather than
     by position.</p>
+  <p><b>Why <code>u·ω</code> is grey on a ring, and why that is the point.</b> A ring's velocity is
+    poloidal and its vorticity is purely azimuthal, so <code>u·ω</code> is <b>identically zero</b> —
+    not small, zero, by orthogonality. The readout prints <code>max|u·ω|</code> as the receipt: it reads
+    <code>~1e-14</code> against <code>|u||ω| ~ 5e2</code>, which is roundoff, so the particles go grey
+    rather than claim a handedness. <b>Collide</b> stays grey too while the two cores are disjoint —
+    each ring is exactly zero where the other lives, so there is nothing to correlate. Only <b>+ noise</b>
+    makes the number jump to <code>~5e1</code>: <code>compose</code> produces helicity that neither
+    part had on its own. A two-tone picture there would have been the sign of floating-point noise.</p>
   <div class="note" style="margin-top:10px">
     <span class="key"><span class="sw" style="background:#2fd6bf"></span>positive</span>
     <span class="key"><span class="sw" style="background:#f4a13c"></span>negative</span>
+    <span class="key"><span class="sw" style="background:#59636f"></span>zero to roundoff — no sign to show</span>
   </div>
   <div class="note" id="note">loading three.js…</div>
 </div>
@@ -175,35 +186,57 @@
   addEventListener("resize", resize); resize();
 
   // ---- advection ---------------------------------------------------------
-  const TEAL = [0.184, 0.839, 0.749], AMBER = [0.957, 0.631, 0.235];
-  let t = 0, umax = 0, chMax = 0;
+  const TEAL = [0.184, 0.839, 0.749], AMBER = [0.957, 0.631, 0.235], GREY = [0.349, 0.388, 0.435];
+  // A sign is only worth drawing when the value carries it. Below this multiple of the local
+  // scale the sign is the sign of roundoff, so the particle goes grey instead of picking a side.
+  // This is not a cosmetic guard: for a lone ring u·ω is *identically* zero (u is poloidal, ω is
+  // azimuthal — orthogonal by construction), so every particle would otherwise be two-toned by
+  // noise at ~1e-16 of |u||ω|, and the picture would assert a handedness that is not there.
+  const EPS = 1e-9;
+  let t = 0, umax = 0, chMax = 0, helMax = 0, helScale = 0;
   const uw = [0, 0, 0, 0, 0, 0];
   function step() {
     const dt = 0.02;
     t += dt;
-    umax = 0; chMax = 0;
+    umax = 0;
+    const prevScale = chMax; // last frame's magnitude, so the deadband has a scale to compare against
+    let chNext = 0, helNext = 0, helScaleNext = 0;
     for (let i = 0; i < N; i++) {
       const x = posD[3 * i], y = posD[3 * i + 1], z = posD[3 * i + 2];
       field.sampleUW(x, y, z, uw, t);
       const sp = Math.hypot(uw[0], uw[1], uw[2]);
+      const wm = Math.hypot(uw[3], uw[4], uw[5]);
       if (sp > umax) umax = sp;
       posD[3 * i] = x + uw[0] * dt;
       posD[3 * i + 1] = y + uw[1] * dt;
       posD[3 * i + 2] = z + uw[2] * dt;
       if (--life[i] <= 0 || Math.abs(posD[3 * i + 2]) > 6) spawn(i);
       pos[3 * i] = posD[3 * i]; pos[3 * i + 1] = posD[3 * i + 1]; pos[3 * i + 2] = posD[3 * i + 2];
+      // Helicity is measured every frame whatever the colour channel, because its magnitude is the
+      // receipt printed in the readout: ~1e-14 for rings alone, genuinely non-zero once composed.
+      const hel = uw[0] * uw[3] + uw[1] * uw[4] + uw[2] * uw[5];
+      if (Math.abs(hel) > helNext) helNext = Math.abs(hel);
+      if (sp * wm > helScaleNext) helScaleNext = sp * wm;
       // Signed channels get the two-tone treatment; all four come from the analytic gradient,
       // which primitives only gained in 1.11.0 — before that a ring had no diagnostic at all.
-      let h;
-      if (params.colour === "h") h = uw[0] * uw[3] + uw[1] * uw[4] + uw[2] * uw[5];
-      else if (params.colour === "q") h = field.qCriterion(x, y, z, t);
-      else if (params.colour === "l") h = -field.lambda2(x, y, z, t);
-      else h = field.stretching(x, y, z, t);
-      if (Math.abs(h) > chMax) chMax = Math.abs(h);
-      const c = h >= 0 ? TEAL : AMBER;
+      // u·ω is compared against its own local scale |u||ω|; the gradient channels have no such
+      // pointwise bound, so they use the field's running magnitude instead.
+      let h, dead;
+      if (params.colour === "h") {
+        h = hel;
+        dead = Math.abs(h) <= EPS * sp * wm;
+      } else {
+        if (params.colour === "q") h = field.qCriterion(x, y, z, t);
+        else if (params.colour === "l") h = -field.lambda2(x, y, z, t);
+        else h = field.stretching(x, y, z, t);
+        dead = Math.abs(h) <= EPS * prevScale;
+      }
+      if (Math.abs(h) > chNext) chNext = Math.abs(h);
+      const c = dead ? GREY : h > 0 ? TEAL : AMBER;
       const g = Math.min(1, 0.25 + sp * 0.5);
       col[3 * i] = c[0] * g; col[3 * i + 1] = c[1] * g; col[3 * i + 2] = c[2] * g;
     }
+    chMax = chNext; helMax = helNext; helScale = helScaleNext;
     if (params.fly && params.scene !== "mix") {
       const sh = ringSpeed * t;
       guide.position.z = (params.scene === "two" ? -SEP / 2 : 0) + sh;
@@ -214,11 +247,19 @@
   }
 
   const ro = document.getElementById("ro");
+  /** "0.00" lies about 1e-14 and "23954.23" invents precision: both tails want an exponent. */
+  const mag = (v) => {
+    const a = Math.abs(v);
+    return v === 0 ? "0" : a < 0.01 || a >= 1e4 ? v.toExponential(1) : v.toFixed(2);
+  };
   function readout() {
     const CH = { h: "u·ω", q: "Q", l: "−λ₂", s: "ξ̂·S·ξ̂" }[params.colour];
+    const nil = helMax <= EPS * helScale; // the ring alone is exactly swirl-free
     ro.innerHTML = `Γ <b>${params.circ.toFixed(2)}</b> · core <b>${params.core.toFixed(2)}</b><br>` +
       `Kelvin U <b>${ringSpeed.toFixed(3)}</b><br>|u|max <b>${umax.toFixed(2)}</b><br>` +
-      `colour <b>${CH}</b> max <b>${chMax.toFixed(2)}</b>`;
+      `colour <b>${CH}</b> max <b>${mag(chMax)}</b><br>` +
+      (nil ? `max|u·ω| <b class="nil">${mag(helMax)}</b> <i>≡ 0</i>`
+           : `max|u·ω| <b>${mag(helMax)}</b>`);
   }
 
   function frame() { step(); readout(); controls.update(); renderer.render(scene, camera); requestAnimationFrame(frame); }
