@@ -3,7 +3,7 @@ var TAU = 2 * Math.PI;
 var PHI = (1 + Math.sqrt(5)) / 2;
 var POLAR_SALT = 2654435769;
 var POLAR_DEG_MAX = 0.97;
-var VERSION = "1.8.0";
+var VERSION = "1.11.0";
 var DEFAULTS = {
   modes: 48,
   // number of helical modes (cost of one sample is O(modes))
@@ -2589,6 +2589,50 @@ var AxisymField = class extends AxisBase {
     }
     if (this.h) out[1] = r * this.h(q, z);
   }
+  /** Second derivatives: exact when the profile supplies them, differenced from the first otherwise. */
+  dqq(f, q, z) {
+    if (f.dqq) return f.dqq(q, z);
+    const h = FD * (1 + Math.abs(q));
+    if (q - h < 0) return (this.dq(f, q + h, z) - this.dq(f, q, z)) / h;
+    return (this.dq(f, q + h, z) - this.dq(f, q - h, z)) / (2 * h);
+  }
+  dqz(f, q, z) {
+    if (f.dqz) return f.dqz(q, z);
+    return (this.dq(f, q, z + FD) - this.dq(f, q, z - FD)) / (2 * FD);
+  }
+  dzz(f, q, z) {
+    if (f.dzz) return f.dzz(q, z);
+    return (this.dz(f, q, z + FD) - this.dz(f, q, z - FD)) / (2 * FD);
+  }
+  /**
+   * Closed form in `r`. With `q = r²`,
+   *
+   * ```
+   * ∂_r u^r = −P_z − 2q·P_qz      ∂_z u^r = −r·P_zz
+   * ∂_r u^θ = h + 2q·h_q          ∂_z u^θ = r·h_z
+   * ∂_r u^z = 2r(4P_q + 2q·P_qq)  ∂_z u^z = 2P_z + 2q·P_qz
+   * ```
+   *
+   * — note `∂_r u^r + u^r/r + ∂_z u^z = 0` identically, whatever the profiles are. The `r`
+   * dependence and the frame are always exact; only the profile's own second derivatives fall back
+   * to differences, and only when it does not supply `dqq`/`dqz`/`dzz`.
+   */
+  dcyl(r, z, out6) {
+    const q = r * r;
+    out6[0] = out6[1] = out6[2] = out6[3] = out6[4] = out6[5] = 0;
+    if (this.P) {
+      const Pz = this.dz(this.P, q, z), Pq = this.dq(this.P, q, z);
+      const Pqz = this.dqz(this.P, q, z), Pqq = this.dqq(this.P, q, z), Pzz = this.dzz(this.P, q, z);
+      out6[0] = -Pz - 2 * q * Pqz;
+      out6[3] = -r * Pzz;
+      out6[2] = 2 * r * (4 * Pq + 2 * q * Pqq);
+      out6[5] = 2 * Pz + 2 * q * Pqz;
+    }
+    if (this.h) {
+      out6[1] = this.h(q, z) + 2 * q * this.dq(this.h, q, z);
+      out6[4] = r * this.dz(this.h, q, z);
+    }
+  }
   pot(r, z, out) {
     const q = r * r;
     out[0] = this.P ? r * this.P(q, z) : 0;
@@ -2626,6 +2670,16 @@ var StrainedColumnField = class extends AxisBase {
     out[3] = 0;
     out[4] = 0;
     out[5] = this.eps * this.a / this.nu * e;
+  }
+  dcyl(r, _z, out6) {
+    const x = this.b * r * r, e = Math.exp(-x);
+    const E = x > 1e-300 ? -Math.expm1(-x) / x : 1;
+    out6[0] = -this.a;
+    out6[1] = this.eps * this.b * (2 * e - E);
+    out6[2] = 0;
+    out6[3] = 0;
+    out6[4] = 0;
+    out6[5] = 2 * this.a;
   }
   pot(r, z, out) {
     out[0] = this.a * r * z;

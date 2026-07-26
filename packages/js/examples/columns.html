@@ -67,12 +67,17 @@
     <button id="c-l">λ₂</button>
     <button id="c-s">stretching</button>
   </div>
-  <p style="margin-top:12px">The <b>colour by</b> row is the point of <code>sampleGrad</code> parity: <code>qCriterion</code>,
-    <code>λ₂</code> and <code>stretching</code> are computed from the column's <em>analytic</em> velocity
-    gradient, with no finite differences anywhere. Watch where <b>Q</b> changes sign — it lands on the
-    core radius <code>√(2ν/a)</code> drawn as the wireframe, which is a real cross-check: Q comes from the
-    gradient, the radius comes from the closed-form Gaussian vorticity, and they are derived
-    independently.</p>
+  <p style="margin-top:12px">The <b>colour by</b> row is the point of <code>sampleGrad</code> parity:
+    <code>qCriterion</code>, <code>λ₂</code> and <code>stretching</code> come from the column's
+    <em>closed-form</em> velocity gradient — no finite differences anywhere in the column case.</p>
+  <p>That makes a sharp prediction. On the axis the gradient collapses to
+    <code>Q = a²(ε²/4ν² − 3)</code>, so <b>the column has a vortex core at all only when
+    <code>ε &gt; 2√3·ν</code></b> — independent of the strain. Below that threshold the strain beats the
+    swirl everywhere and Q is negative even on the axis: there is nothing to find, and the demo says so
+    rather than drawing a core that is not there. Turn <b>circulation</b> down and watch it cross. The
+    readout prints the measured <code>Q</code> beside the predicted one (they agree to ~1e-16 across the
+    whole slider range) and, when a core exists, where Q's zero sits in units of the core radius
+    <code>√(2ν/a)</code> — about 1.1 well above threshold, shrinking to 0 as you approach it.</p>
   <div class="note" style="margin-top:10px">
     <span class="key"><span class="sw" style="background:#2fd6bf"></span>weak</span>
     <span class="key"><span class="sw" style="background:#f4a13c"></span>strong (near the channel's peak)</span>
@@ -219,6 +224,30 @@
   // ---- the live receipt --------------------------------------------------
   // On the plane between two counter-swirling columns the tangential and axial components are not
   // "nearly" zero, they are zero. Measure it every frame rather than asserting it in prose.
+  /**
+   * The closed-form prediction, checked live. On the axis every term of the gradient is elementary,
+   * and Q collapses to a²(ε²/4ν² − 3) — so whether a core exists is decided by ε against 2√3·ν and
+   * nothing else. Printing the measured value next to the predicted one is the receipt; printing
+   * "no core" when there is none is the other half, which a demo that only ever shows a bright
+   * filament would quietly skip.
+   */
+  function qReceipt() {
+    const a = params.strain, nu = params.nu, eps = params.circ;
+    const predicted = a * a * ((eps * eps) / (4 * nu * nu) - 3);
+    const measured = field.qCriterion(0, 0, 0);
+    const rel = Math.abs(measured - predicted) / Math.max(1, Math.abs(predicted));
+    const thr = 2 * Math.sqrt(3) * nu;
+    let s = `<br>Q on axis <b>${measured.toFixed(2)}</b><br>predicted <b>${predicted.toFixed(2)}</b>` +
+            `<br>agree to <span class="zero">${rel.toExponential(0)}</span>` +
+            `<br>ε vs 2√3ν <b>${eps.toFixed(2)}</b> vs <b>${thr.toFixed(3)}</b>`;
+    if (measured <= 0) return s + `<br><span style="color:#f4a13c">no core — strain wins</span>`;
+    let cross = -1;
+    for (let i = 1; i <= 400 && cross < 0; i++) {
+      if (field.qCriterion((i * core) / 40, 0, 0) <= 0) cross = (i * core) / 40;
+    }
+    return s + (cross > 0 ? `<br>Q = 0 at <b>${(cross / core).toFixed(2)}</b>×core` : "");
+  }
+
   function planeCheck() {
     let onN = 0, onW = 0, onT = 0, offN = 0, offW = 0;
     for (let i = 1; i <= 26; i++) {
@@ -295,6 +324,7 @@
     const CH = { w: "|ω|", q: "Q", l: "−λ₂", s: "ξ̂·S·ξ̂" }[params.colour];
     let s = `core √(2ν/a) <b>${core.toFixed(3)}</b><br>peak εa/ν <b>${peak.toFixed(1)}</b><br>|ω|max <b>${wmax.toFixed(1)}</b>` +
       `<br>colour <b>${CH}</b>${params.colour !== "w" ? ` max <b>${cmax.toFixed(1)}</b>` : ""}`;
+    if (params.scene === "one") s += qReceipt();
     if (params.scene === "two") {
       const m = planeCheck();
       s += `<br>on plane u·n ${fmt(m.onN)}<br>on plane |ω| ${fmt(m.onW)}<br>on plane jet <b>${m.onT.toFixed(2)}</b>` +

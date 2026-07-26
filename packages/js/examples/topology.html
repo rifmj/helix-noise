@@ -1,0 +1,414 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Helix Noise — where the flow stands still (critical points)</title>
+<style>
+  html,body{margin:0;background:#070a0e;color:#cdd6dd;font-family:system-ui,sans-serif}
+  .wrap{max-width:980px;margin:0 auto;padding:22px 16px}
+  h1{font-size:19px;font-weight:600;margin:0 0 6px}
+  h1 code{color:#f4a13c}
+  p{color:#8a97a2;font-size:13.5px;line-height:1.6;margin:0 0 14px}
+  p b{color:#cdd6dd;font-weight:500}
+  code{font-family:ui-monospace,Menlo,monospace;color:#f4a13c;font-size:12.5px}
+  #stage{position:relative;width:100%;aspect-ratio:16/10;border:1px solid rgba(150,180,200,.15);border-radius:10px;overflow:hidden;background:#070a0e}
+  .badge{position:absolute;top:10px;left:12px;font-family:ui-monospace,monospace;font-size:10.5px;
+    letter-spacing:.12em;text-transform:uppercase;color:#93a3b0;background:rgba(7,10,14,.55);
+    border:1px solid rgba(150,180,200,.14);border-radius:6px;padding:4px 8px;pointer-events:none}
+  .ro{position:absolute;top:10px;right:12px;font-family:ui-monospace,monospace;font-size:11px;color:#93a3b0;
+    background:rgba(7,10,14,.6);border:1px solid rgba(150,180,200,.14);border-radius:6px;padding:6px 9px;
+    text-align:right;line-height:1.55;pointer-events:none}
+  .ro b{font-weight:400;color:#2fd6bf}
+  .ro .zero{color:#f4a13c}
+  .ro .bad{color:#e8524a}
+  .census{position:absolute;left:12px;bottom:12px;font-family:ui-monospace,monospace;font-size:10px;
+    color:#8a97a2;background:rgba(7,10,14,.62);border:1px solid rgba(150,180,200,.14);border-radius:8px;
+    padding:8px 10px;line-height:1.5;pointer-events:none;max-height:44%;overflow:hidden}
+  .census b{color:#cdd6dd;font-weight:500}
+  .row{display:flex;flex-wrap:wrap;gap:14px;align-items:center;margin-top:12px;font-family:ui-monospace,monospace;font-size:12px;color:#93a3b0}
+  .row label{display:flex;align-items:center;gap:8px}
+  input[type=range]{width:120px}
+  button{font-family:ui-monospace,monospace;font-size:11.5px;color:#cdd6dd;background:#0c1016;
+    border:1px solid rgba(150,180,200,.22);border-radius:7px;padding:6px 11px;cursor:pointer}
+  button:hover{border-color:#38d9d1}
+  button.on{border-color:#38d9d1;color:#fff}
+  .note{margin-top:12px;font-size:12px;color:#5d6b77;font-family:ui-monospace,monospace}
+  .key{display:inline-flex;align-items:center;gap:6px;margin-right:14px}
+  .sw{width:10px;height:10px;border-radius:2px;display:inline-block}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Where the flow stands still — <code>sampleGrad</code> as a Jacobian, not a colour</h1>
+  <p>The points where <code>u = 0</code> are the skeleton of a flow: everything else is organised around
+    them. Finding them needs Newton's method, Newton needs the Jacobian, and the Jacobian is exactly what
+    <code>sampleGrad</code> returns — so this page uses the 1.11.0 gradient for something other than
+    shading. Each zero is then classified by the eigenvalues of <code>∇u</code> there, and the curves
+    running out along its real eigenvectors are drawn.</p>
+  <p>One fact falls out immediately, and it is not a coincidence of this seed: <b>every zero is a
+    saddle.</b> Incompressibility means <code>tr ∇u = 0</code>, so <code>λ₁+λ₂+λ₃ = 0</code> and the
+    eigenvalues can never be all-negative or all-positive — <b>a divergence-free flow has no sources and
+    no sinks, anywhere, ever.</b> Nothing is created and nothing drains away. Switch to <b>compressible
+    control</b> for the paired opposite: a written-out gradient field <code>u = ∇φ</code> with
+    <code>φ = −cos x − cos y − cos z</code>, in the same box, where genuine sources and sinks appear and
+    the trace reading jumps off zero. Without that half, "the trace is 0" would only be a measurement of
+    a degenerate configuration.</p>
+  <p>The second readout audits <em>the search itself</em>, by a method that does not use the search: the
+    <b>Kronecker degree</b> of <code>û</code> over the faces of a movable <b>audit box</b>, by surface
+    quadrature, must equal the sum of the indices <code>sign det ∇u</code> of the zeros Newton found
+    inside it. It has to be a sub-box: over the whole periodic cell the total index is forced to zero
+    by Poincaré–Hopf, so agreement there would be guaranteed no matter what the search did. The raw
+    quadrature value is printed unrounded next to that integer. When they disagree, the page says the
+    search missed something — the theorem is used to test the algorithm, which is the only honest
+    direction to run it. Drag to orbit.</p>
+  <div id="stage">
+    <div class="badge">helix-noise · critical points</div>
+    <div class="ro" id="ro">solving…</div>
+    <div class="census" id="census"></div>
+  </div>
+  <div class="row">
+    <button id="m-div" class="on">divergence-free</button>
+    <button id="m-cmp">compressible control</button>
+    <button id="sep" class="on">separatrices ✓</button>
+    <label>seed <input id="seed" type="range" min="1" max="24" step="1" value="7"><span id="v-seed">7</span></label>
+    <label>modes <input id="modes" type="range" min="6" max="24" step="1" value="12"><span id="v-modes">12</span></label>
+  </div>
+  <div class="row">
+    audit box
+    <label>x <input id="bx" type="range" min="0.05" max="0.95" step="0.01" value="0.50"><span id="v-bx">0.50</span></label>
+    <label>size <input id="br" type="range" min="0.08" max="0.48" step="0.01" value="0.30"><span id="v-br">0.30</span></label>
+  </div>
+  <div class="note" style="margin-top:10px">
+    <span class="key"><span class="sw" style="background:#f4a13c"></span>saddle (index +1)</span>
+    <span class="key"><span class="sw" style="background:#2fd6bf"></span>saddle (index −1)</span>
+    <span class="key"><span class="sw" style="background:#e8524a"></span>source / sink — impossible when div u = 0</span>
+  </div>
+  <div class="note" id="note">loading three.js…</div>
+</div>
+
+<script src="../dist/helix-noise.global.js"></script>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+  import * as THREE from "three";
+  import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+  const TAU = Math.PI * 2;
+  const params = { mode: "div", seed: 7, modes: 12, sep: true, boxX: 0.5, boxR: 0.30 };
+
+  // ---- the two fields ----------------------------------------------------
+  // The control is written out rather than generated: u = ∇φ with φ = −cos x − cos y − cos z gives
+  // u = (sin x, sin y, sin z), whose divergence cos x + cos y + cos z is emphatically not zero, and
+  // whose zeros at the corners of the π-lattice are honest sources and sinks.
+  let field;
+  const control = {
+    sample: (x, y, z) => [Math.sin(x), Math.sin(y), Math.sin(z)],
+    sampleGrad: (x, y, z, g) => {
+      for (let i = 0; i < 9; i++) g[i] = 0;
+      g[0] = Math.cos(x); g[4] = Math.cos(y); g[8] = Math.cos(z);
+      return g;
+    },
+  };
+  function build() {
+    field = params.mode === "div"
+      ? HelixNoise.create({ modes: params.modes, seed: params.seed, kmax: 2, tileable: true, coherence: 0.3 })
+      : control;
+  }
+
+  const F = () => (params.mode === "div"
+    ? { u: (x, y, z) => field.sample(x, y, z), g: (x, y, z, o) => field.sampleGrad(x, y, z, o) }
+    : { u: control.sample, g: control.sampleGrad });
+
+  // ---- linear algebra ----------------------------------------------------
+  const g9 = new Array(9).fill(0);
+  /** J[n][m] = ∂u_n/∂x_m, from the row-major out9[3m+n] the library returns. */
+  function jac(x, y, z) {
+    F().g(x, y, z, g9);
+    return [[g9[0], g9[3], g9[6]], [g9[1], g9[4], g9[7]], [g9[2], g9[5], g9[8]]];
+  }
+  const det3 = (J) =>
+    J[0][0] * (J[1][1] * J[2][2] - J[1][2] * J[2][1]) -
+    J[0][1] * (J[1][0] * J[2][2] - J[1][2] * J[2][0]) +
+    J[0][2] * (J[1][0] * J[2][1] - J[1][1] * J[2][0]);
+
+  function solve3(J, b) {
+    const d = det3(J);
+    if (Math.abs(d) < 1e-13) return null;
+    const col = (k) => J.map((r, i) => r.map((v, j) => (j === k ? b[i] : v)));
+    return [0, 1, 2].map((k) => det3(col(k)) / d);
+  }
+
+  /**
+   * Eigenvalues of a real 3×3 matrix, from its characteristic cubic λ³ − c₂λ² + c₁λ − c₀.
+   * Depressed by λ = t + c₂/3 to t³ + pt + q, then the trigonometric form when all three roots are
+   * real and Cardano when one is. Repeated roots are handled explicitly — the control field's
+   * Jacobian is diagonal, so `p → 0` is a case that actually occurs rather than a theoretical one.
+   */
+  function eigen(J) {
+    const c2 = J[0][0] + J[1][1] + J[2][2];
+    const c1 =
+      J[0][0] * J[1][1] - J[0][1] * J[1][0] +
+      J[0][0] * J[2][2] - J[0][2] * J[2][0] +
+      J[1][1] * J[2][2] - J[1][2] * J[2][1];
+    const c0 = det3(J);
+    const s = c2 / 3;
+    const p = c1 - (c2 * c2) / 3;
+    const q = (-2 * c2 * c2 * c2) / 27 + (c1 * c2) / 3 - c0;
+    const scale = Math.max(1e-12, Math.abs(c2), Math.sqrt(Math.abs(c1)), Math.cbrt(Math.abs(c0)));
+
+    if (Math.abs(p) < 1e-12 * scale * scale && Math.abs(q) < 1e-12 * scale * scale * scale) {
+      return { real: [s, s, s], complex: false, trace: c2, det: c0 };   // triple root
+    }
+    const disc = -4 * p * p * p - 27 * q * q;      // > 0 ⟺ three distinct real roots
+    if (p < 0 && disc >= 0) {
+      const m = 2 * Math.sqrt(-p / 3);
+      const arg = Math.max(-1, Math.min(1, ((3 * q) / (p * m))));
+      const th = Math.acos(arg) / 3;
+      return {
+        real: [0, 1, 2].map((k) => s + m * Math.cos(th - (TAU * k) / 3)),
+        complex: false, trace: c2, det: c0,
+      };
+    }
+    // One real root; the conjugate pair's real part follows from the roots summing to c₂.
+    const rad = Math.sqrt((q * q) / 4 + (p * p * p) / 27);
+    const re = s + Math.cbrt(-q / 2 + rad) + Math.cbrt(-q / 2 - rad);
+    return { real: [re], pairRe: (c2 - re) / 2, complex: true, trace: c2, det: c0 };
+  }
+
+  /** Newton on u = 0, using the analytic Jacobian. Returns a wrapped point or null. */
+  function newton(x0, y0, z0) {
+    let p = [x0, y0, z0];
+    for (let it = 0; it < 60; it++) {
+      const u = F().u(p[0], p[1], p[2]);
+      const d = solve3(jac(p[0], p[1], p[2]), [-u[0], -u[1], -u[2]]);
+      if (!d) return null;
+      const step = Math.hypot(d[0], d[1], d[2]);
+      const k = step > 0.6 ? 0.6 / step : 1;      // damped, or it walks out of the cell
+      p = [p[0] + k * d[0], p[1] + k * d[1], p[2] + k * d[2]];
+      if (step < 1e-14) break;
+    }
+    const u = F().u(p[0], p[1], p[2]);
+    if (Math.hypot(u[0], u[1], u[2]) > 1e-9) return null;
+    return p.map((v) => ((v % TAU) + TAU) % TAU);
+  }
+
+  // ---- the census --------------------------------------------------------
+  let zeros = [], maxTrace = 0, indexSum = 0, degree = 0, inBox = 0;
+  function census() {
+    zeros = []; maxTrace = 0; indexSum = 0;
+    const N = 9;
+    for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) for (let k = 0; k < N; k++) {
+      const p = newton(((i + 0.5) / N) * TAU, ((j + 0.5) / N) * TAU, ((k + 0.5) / N) * TAU);
+      if (!p) continue;
+      if (zeros.some((q) => Math.hypot(q.p[0] - p[0], q.p[1] - p[1], q.p[2] - p[2]) < 1e-4)) continue;
+      const J = jac(p[0], p[1], p[2]);
+      const e = eigen(J);
+      const idx = Math.sign(e.det);
+      maxTrace = Math.max(maxTrace, Math.abs(e.trace));
+      // A source has every eigenvalue positive, a sink every one negative. With tr = 0 neither can
+      // happen — which is the whole point, so the classifier is allowed to say them.
+      const re = e.complex ? [e.real[0], e.pairRe, e.pairRe] : e.real;
+      const pos = re.filter((v) => v > 0).length, neg = re.filter((v) => v < 0).length;
+      const type = pos === 3 ? "source" : neg === 3 ? "sink" : e.complex ? "spiral saddle" : "saddle";
+      zeros.push({ p, e, idx, type, re });
+    }
+    // Index sum over the zeros that fall inside the audit box — the quantity the degree predicts.
+    const { lo, hi } = boxBounds();
+    indexSum = zeros.filter((z) => z.p.every((v, k) => v > lo[k] && v < hi[k]))
+                    .reduce((s, z) => s + z.idx, 0);
+    inBox = zeros.filter((z) => z.p.every((v, k) => v > lo[k] && v < hi[k])).length;
+    degree = kronecker();
+  }
+
+  /** The audit box: centre and half-width, in cell units. */
+  function boxBounds() {
+    const c = params.boxX * TAU, r = params.boxR * TAU;
+    return { lo: [c - r, Math.PI - r, Math.PI - r], hi: [c + r, Math.PI + r, Math.PI + r] };
+  }
+
+  /**
+   * Degree of û over the boundary of a **sub-box**, by surface quadrature — an independent count of
+   * what should be inside it. deg = (1/4π) ∮ û·(û_s × û_t) ds dt over the six faces, outward.
+   *
+   * It has to be a sub-box. Over the whole periodic cell the total index is forced to zero by
+   * Poincaré–Hopf (χ(T³) = 0), so "degree = Σ index = 0" would be true whatever the search did —
+   * a check that cannot fail is not a check. Slide the box and the integer moves.
+   */
+  function kronecker() {
+    const M = 26, h = 1e-4;
+    const { lo, hi } = boxBounds();
+    const hat = (x, y, z) => {
+      const u = F().u(x, y, z), n = Math.hypot(u[0], u[1], u[2]) || 1e-300;
+      return [u[0] / n, u[1] / n, u[2] / n];
+    };
+    let total = 0;
+    // face axis a, at the low (−) and high (+) side of the cell
+    for (let a = 0; a < 3; a++) for (const side of [0, 1]) {
+      const b = (a + 1) % 3, c = (a + 2) % 3;
+      const sgn = side ? 1 : -1;
+      const wb = hi[b] - lo[b], wc = hi[c] - lo[c];
+      for (let i = 0; i < M; i++) for (let j = 0; j < M; j++) {
+        const s = lo[b] + ((i + 0.5) / M) * wb, tt = lo[c] + ((j + 0.5) / M) * wc;
+        const P = []; P[a] = side ? hi[a] : lo[a]; P[b] = s; P[c] = tt;
+        const n0 = hat(P[0], P[1], P[2]);
+        const Pb = P.slice(); Pb[b] += h;
+        const Pc = P.slice(); Pc[c] += h;
+        const nb = hat(Pb[0], Pb[1], Pb[2]), nc = hat(Pc[0], Pc[1], Pc[2]);
+        const db = [0, 1, 2].map((k) => (nb[k] - n0[k]) / h);
+        const dc = [0, 1, 2].map((k) => (nc[k] - n0[k]) / h);
+        const cr = [db[1] * dc[2] - db[2] * dc[1], db[2] * dc[0] - db[0] * dc[2], db[0] * dc[1] - db[1] * dc[0]];
+        // orientation: (ê_b × ê_c) points along +ê_a, so the outward normal flips sign on the low face
+        total += sgn * (n0[0] * cr[0] + n0[1] * cr[1] + n0[2] * cr[2]) * (wb / M) * (wc / M);
+      }
+    }
+    return total / (2 * TAU);
+  }
+
+  // ---- three.js ----------------------------------------------------------
+  const stage = document.getElementById("stage");
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(Math.min(2, devicePixelRatio));
+  stage.appendChild(renderer.domElement);
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x070a0e);
+  const camera = new THREE.PerspectiveCamera(45, 16 / 10, 0.1, 100);
+  camera.position.set(9, 6, 11);
+  const controls = new OrbitControls(camera, renderer.domElement);
+  controls.target.set(Math.PI, Math.PI, Math.PI);
+  controls.enableDamping = true; controls.autoRotate = true; controls.autoRotateSpeed = 0.4;
+
+  const cell = new THREE.LineSegments(
+    new THREE.EdgesGeometry(new THREE.BoxGeometry(TAU, TAU, TAU)),
+    new THREE.LineBasicMaterial({ color: 0x2c3a44 })
+  );
+  cell.position.set(Math.PI, Math.PI, Math.PI);
+  scene.add(cell);
+
+  const boxMesh = new THREE.LineSegments(
+    new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1)),
+    new THREE.LineBasicMaterial({ color: 0x7fd1a8, transparent: true, opacity: 0.55 })
+  );
+  scene.add(boxMesh);
+  function layoutBox() {
+    const { lo, hi } = boxBounds();
+    boxMesh.scale.set(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]);
+    boxMesh.position.set((lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2);
+  }
+
+  const group = new THREE.Group();
+  scene.add(group);
+  const COL = { "+1": 0xf4a13c, "-1": 0x2fd6bf, bad: 0xe8524a };
+
+  function draw() {
+    group.clear();
+    const sphere = new THREE.SphereGeometry(0.11, 14, 10);
+    for (const z of zeros) {
+      const bad = z.type === "source" || z.type === "sink";
+      const c = bad ? COL.bad : z.idx >= 0 ? COL["+1"] : COL["-1"];
+      const m = new THREE.Mesh(sphere, new THREE.MeshBasicMaterial({ color: c }));
+      m.position.set(z.p[0], z.p[1], z.p[2]);
+      group.add(m);
+      if (!params.sep) continue;
+      // 1-D separatrices: integrate out along ±the real eigenvector directions. Rather than solve
+      // for eigenvectors, step the linearised flow — J^n v converges to the dominant direction.
+      for (const sgn of [1, -1]) {
+        for (let a = 0; a < 3; a++) {
+          const pts = [];
+          let p = [z.p[0], z.p[1], z.p[2]];
+          let v = [0, 0, 0]; v[a] = 1e-3 * sgn;
+          p = [p[0] + v[0], p[1] + v[1], p[2] + v[2]];
+          for (let s = 0; s < 260; s++) {
+            pts.push(new THREE.Vector3(p[0], p[1], p[2]));
+            const u = F().u(p[0], p[1], p[2]);
+            const n = Math.hypot(u[0], u[1], u[2]);
+            if (n < 1e-12) break;
+            const dt = 0.05 * sgn;
+            p = [p[0] + (u[0] / n) * dt, p[1] + (u[1] / n) * dt, p[2] + (u[2] / n) * dt];
+            if (p.some((q) => q < -1 || q > TAU + 1)) break;
+          }
+          if (pts.length < 4) continue;
+          group.add(new THREE.Line(
+            new THREE.BufferGeometry().setFromPoints(pts),
+            new THREE.LineBasicMaterial({ color: c, transparent: true, opacity: 0.28 })
+          ));
+        }
+      }
+    }
+  }
+
+  function resize() {
+    renderer.setSize(stage.clientWidth, stage.clientHeight);
+    camera.aspect = stage.clientWidth / stage.clientHeight;
+    camera.updateProjectionMatrix();
+  }
+  addEventListener("resize", resize); resize();
+
+  // ---- readouts ----------------------------------------------------------
+  function report() {
+    const ro = document.getElementById("ro");
+    const { lo, hi } = boxBounds();
+    const onFace = zeros.some((z) => z.p.some((v, k) =>
+      Math.abs(v - lo[k]) < 0.02 || Math.abs(v - hi[k]) < 0.02));
+    const agree = Math.abs(degree - indexSum) < 0.05;
+    const traceCls = maxTrace < 1e-12 ? "zero" : "";
+    ro.innerHTML =
+      `zeros found <b>${zeros.length}</b><br>` +
+      `max |λ₁+λ₂+λ₃| <span class="${traceCls}">${maxTrace.toExponential(1)}</span><br>` +
+      `sources + sinks <b>${zeros.filter((z) => z.type === "source" || z.type === "sink").length}</b><br>` +
+      `<br>in audit box <b>${inBox}</b><br>` +
+      `Σ index (Newton) <b>${indexSum}</b><br>` +
+      `degree (quadrature) <b>${degree.toFixed(3)}</b><br>` +
+      (agree ? `<span class="zero">census complete</span>`
+             : onFace ? `<span class="bad">zero on the box face —<br>degree undefined, move it</span>`
+                      : `<span class="bad">search missed one</span>`);
+
+    const c = document.getElementById("census");
+    const rows = zeros.slice(0, 7).map((z) => {
+      const e = z.re.map((v) => (v >= 0 ? "+" : "") + v.toFixed(2)).join("  ");
+      return `<b>${z.type.padEnd(13)}</b> λ ${e}  idx ${z.idx > 0 ? "+1" : "−1"}`;
+    });
+    if (zeros.length > 7) rows.push(`… and ${zeros.length - 7} more`);
+    c.innerHTML = rows.join("<br>") || "no zeros in this cell";
+  }
+
+  function rebuild() {
+    build(); census(); draw(); layoutBox(); report();
+  }
+
+  function frame() { controls.update(); renderer.render(scene, camera); requestAnimationFrame(frame); }
+  rebuild();
+  frame();
+
+  // ---- controls ----------------------------------------------------------
+  const $ = (id) => document.getElementById(id);
+  const setMode = (m) => {
+    params.mode = m;
+    $("m-div").classList.toggle("on", m === "div");
+    $("m-cmp").classList.toggle("on", m === "cmp");
+    for (const id of ["seed", "modes"]) $(id).disabled = m !== "div";
+    rebuild();
+  };
+  $("m-div").onclick = () => setMode("div");
+  $("m-cmp").onclick = () => setMode("cmp");
+  $("sep").onclick = () => {
+    params.sep = !params.sep;
+    $("sep").classList.toggle("on", params.sep);
+    $("sep").textContent = params.sep ? "separatrices ✓" : "separatrices";
+    draw();
+  };
+  $("bx").oninput = (e) => { params.boxX = +e.target.value; $("v-bx").textContent = params.boxX.toFixed(2); rebuild(); };
+  $("br").oninput = (e) => { params.boxR = +e.target.value; $("v-br").textContent = params.boxR.toFixed(2); rebuild(); };
+  $("seed").oninput = (e) => { params.seed = +e.target.value; $("v-seed").textContent = params.seed; rebuild(); };
+  $("modes").oninput = (e) => { params.modes = +e.target.value; $("v-modes").textContent = params.modes; rebuild(); };
+
+  $("note").textContent =
+    "Newton from a 9³ seeding, Jacobian from field.sampleGrad() · eigenvalues by the closed-form cubic · " +
+    "the degree is a 26² surface quadrature per face, independent of the Newton search · three.js r160";
+</script>
+</body>
+</html>

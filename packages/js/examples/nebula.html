@@ -108,7 +108,7 @@
     + "        float shape=smoothstep(R,R*0.45,r);\n"
     + "        if(shape>0.015){\n"
     + "          vec3 q=p*2.1+vec3(3.14159);           // sample around the field's centre\n"
-    + "          vec3 w=hxCurl(q,uTime);               // gas density = |vorticity| (enstrophy):\n"
+    + "          vec3 w=hxCurl(q,uTime);               // gas density = |vorticity|:\n"
     + "          float wp=length(w)*(0.30+0.70*shape); // curl amplifies fine scales by k -> wisps\n"
     + "          float den=smoothstep(uThr.x,uThr.y,wp); // transfer self-calibrated per field\n"
     + "          if(den>0.012){\n"
@@ -177,7 +177,7 @@
     prog=p; gl.useProgram(prog);
     ["uRes","uTime","uThr","camPos","camR","camU","camF","fovT","aspect"].forEach(function(n){U[n]=gl.getUniformLocation(prog,n);});
     $("note").textContent=params.modes+" modes → "+(frag.length/1024).toFixed(1)+" kB of GLSL · 46 raymarch steps × hxCurl(p,t) per pixel · transfer auto-calibrated (p72/p97 |ω| = "
-      +THR[0].toFixed(2)+"/"+THR[1].toFixed(2)+") · rebuilt in "+(performance.now()-t0).toFixed(0)+" ms · ⟨u·ω⟩ "+field.relativeHelicitySpectral(0).toFixed(2);
+      +THR[0].toFixed(2)+"/"+THR[1].toFixed(2)+") · rebuilt in "+(performance.now()-t0).toFixed(0)+" ms · relative helicity "+field.relativeHelicitySpectral(0).toFixed(2);
   }
 
   var RW=840,RH=472;

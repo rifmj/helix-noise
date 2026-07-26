@@ -152,7 +152,7 @@
   }
 
   // ---- programs ----
-  var advProg=null, dispProg=null, uAdv={}, uDisp={};
+  var advProg=null, dispProg=null, uAdv={}, uDisp={}, fieldKB=0;
   function buildDisplay(){
     dispProg = link(VERT, DISPLAY);
     uDisp.res = gl.getUniformLocation(dispProg,"uRes");
@@ -163,7 +163,8 @@
     var f = HelixNoise.create({ modes:params.modes, slope:params.slope, helicity:params.heli,
       coherence:params.coh, seed:params.seed, kmin:params.kmin, kmax:params.kmax,
       anisotropy:params.gam, axis:axisFromAngle(params.ang) });
-    var frag = advectSource(f.glsl({ name:"cf" }));
+    var frag = advectSource(f.glsl({ name:"cf", curl:false }));   // cfCurl was emitted and never called
+    fieldKB = frag.length / 1024;   // the source actually compiled, not a second generation with other defaults
     var p = link(VERT, frag);
     if(advProg) gl.deleteProgram(advProg);
     advProg = p;
@@ -176,7 +177,7 @@
               : params.gam >  0.25 ? "billow layers — bands across the wind"
               : "fair weather — isotropic puffs";
     $("tag").innerHTML = "<b>γ "+(params.gam>=0?"+":"−")+Math.abs(params.gam).toFixed(2)+"</b> · "+label;
-    $("note").textContent = params.modes+" modes → "+(f.glsl().length/1024).toFixed(1)
+    $("note").textContent = params.modes+" modes → "+fieldKB.toFixed(1)
       +" kB GLSL · IBFV dye advected on the GPU · anisotropy live-recompiles the field";
   }
   function axisFromAngle(deg){ var r=deg*Math.PI/180; return [Math.cos(r), Math.sin(r), 0]; }

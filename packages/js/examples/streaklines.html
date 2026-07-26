@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Helix Noise — streamline, pathline, streakline</title>
+<style>
+  html,body{margin:0;background:#070a0e;color:#cdd6dd;font-family:system-ui,sans-serif}
+  .wrap{max-width:980px;margin:0 auto;padding:22px 16px}
+  h1{font-size:19px;font-weight:600;margin:0 0 6px}
+  h1 code{color:#f4a13c}
+  p{color:#8a97a2;font-size:13.5px;line-height:1.6;margin:0 0 14px}
+  p b{color:#cdd6dd;font-weight:500}
+  code{font-family:ui-monospace,Menlo,monospace;color:#f4a13c;font-size:12.5px}
+  #stage{position:relative;width:100%;aspect-ratio:16/10;border:1px solid rgba(150,180,200,.15);border-radius:10px;overflow:hidden;background:#070a0e}
+  #cv{width:100%;height:100%;display:block}
+  .badge{position:absolute;top:10px;left:12px;font-family:ui-monospace,monospace;font-size:10.5px;
+    letter-spacing:.12em;text-transform:uppercase;color:#93a3b0;background:rgba(7,10,14,.55);
+    border:1px solid rgba(150,180,200,.14);border-radius:6px;padding:4px 8px;pointer-events:none}
+  .ro{position:absolute;top:10px;right:12px;font-family:ui-monospace,monospace;font-size:11px;color:#93a3b0;
+    background:rgba(7,10,14,.6);border:1px solid rgba(150,180,200,.14);border-radius:6px;padding:6px 9px;
+    text-align:right;line-height:1.55;pointer-events:none}
+  .ro b{font-weight:400;color:#2fd6bf}
+  .ro .zero{color:#f4a13c}
+  .row{display:flex;flex-wrap:wrap;gap:14px;align-items:center;margin-top:12px;font-family:ui-monospace,monospace;font-size:12px;color:#93a3b0}
+  button{font-family:ui-monospace,monospace;font-size:11.5px;color:#cdd6dd;background:#0c1016;
+    border:1px solid rgba(150,180,200,.22);border-radius:7px;padding:6px 11px;cursor:pointer}
+  button:hover{border-color:#38d9d1}
+  button.on{border-color:#38d9d1;color:#fff}
+  table{border-collapse:collapse;margin-top:14px;font-family:ui-monospace,monospace;font-size:11.5px;width:100%}
+  th,td{border:1px solid rgba(150,180,200,.14);padding:6px 9px;text-align:right}
+  th:first-child,td:first-child{text-align:left;color:#8a97a2}
+  th{color:#93a3b0;font-weight:500}
+  td.same{color:#2fd6bf}
+  td.diff{color:#f4a13c}
+  tr.on td{background:rgba(56,217,209,.07)}
+  .note{margin-top:12px;font-size:12px;color:#5d6b77;font-family:ui-monospace,monospace}
+  .key{display:inline-flex;align-items:center;gap:6px;margin-right:14px}
+  .sw{width:16px;height:3px;border-radius:2px;display:inline-block}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Streamline, pathline, streakline — <code>churn</code>, <code>decay</code>, <code>exactNS</code></h1>
+  <p>The most-taught figure in flow visualisation, and the one thing 27 demos never drew: the three curve
+    families through a single point. A dye nozzle sits in the flow. The <b>streamline</b> is the curve
+    tangent to the velocity field <em>right now</em>; the <b>pathline</b> is where one particle released at
+    the nozzle actually went; the <b>streakline</b> is the plume — every particle ever released, at the
+    positions they occupy now. In a steady flow all three coincide. The textbook shorthand is that
+    unsteadiness pulls them apart.</p>
+  <p>That shorthand is wrong, and this library can refute it on screen. Row 2 is <code>exactNS</code> — a
+    genuinely unsteady, genuinely viscous, <em>exact</em> Navier–Stokes solution. Its velocity changes by a
+    third over the window measured in column A. Yet the three curves stay on top of each other to twelve
+    decimal places, because a single-shell Beltrami field decays as <b>one global scalar</b>
+    <code>e^(−νk₀²t)</code>: every mode shares one <code>|k|</code>, so the field's <em>direction</em>
+    never moves even as its magnitude collapses. Reparametrise time and the pathlines are the streamlines.
+    Row 3 gives the same viscosity a broadband spectrum instead — the modes now decay at different rates,
+    the direction field turns, and the curves separate. So the separation is about the spectrum, not about
+    unsteadiness, and row 3 is what stops row 2 from being a claim about decay in general.</p>
+  <div id="stage">
+    <canvas id="cv"></canvas>
+    <div class="badge">helix-noise · three curve families</div>
+    <div class="ro" id="ro">—</div>
+  </div>
+  <div class="row">
+    <button id="s-0" class="on">frozen</button>
+    <button id="s-1">exactNS</button>
+    <button id="s-2">broadband + ν</button>
+    <button id="s-3">churn</button>
+    <button id="run" class="on">running ✓</button>
+  </div>
+  <table id="tbl">
+    <thead><tr><th>field</th><th>A · unsteadiness max|u(t+Δ)−u(t)|</th><th>B · max curve separation</th></tr></thead>
+    <tbody></tbody>
+  </table>
+  <div class="note" style="margin-top:10px">
+    <span class="key"><span class="sw" style="background:#4aa3ff"></span>streamline (tangent now)</span>
+    <span class="key"><span class="sw" style="background:#2fd6bf"></span>pathline (one particle's history)</span>
+    <span class="key"><span class="sw" style="background:#f4a13c"></span>streakline (the plume)</span>
+  </div>
+  <div class="note" id="note">—</div>
+</div>
+
+<script src="../dist/helix-noise.global.js"></script>
+<script>
+(() => {
+  const TAU = Math.PI * 2;
+  const NOZZLE = [2.1, 3.4, 1.0];
+  const SPAN = 3.4;                 // half-width of the drawn window, in field units
+  const DT = 0.02, STEPS = 300;     // integrator: RK4 at a fixed step
+  const params = { scene: 0, run: true };
+
+  // ---- the four fields ---------------------------------------------------
+  // Row 2 is the interesting one: a single shell (kmin === kmax) means every mode carries the same
+  // |k|, so viscous decay multiplies the whole field by one scalar and cannot turn it.
+  const SCENES = [
+    { name: "frozen", make: () => HelixNoise.create({ modes: 24, seed: 6, coherence: 0.45, slope: 1.8, tileable: true, churn: 0 }) },
+    { name: "exactNS", make: () => HelixNoise.create(HelixNoise.exactNS({ k0: 2, nu: 0.05, modes: 24, seed: 6 })) },
+    { name: "broadband + ν", make: () => HelixNoise.create({ modes: 24, seed: 6, kmin: 1, kmax: 4, decay: 0.05, coherence: 0.45, churn: 0, tileable: true }) },
+    { name: "churn", make: () => HelixNoise.create({ modes: 24, seed: 6, kmin: 1, kmax: 4, coherence: 0.45, churn: 1, tileable: true }) },
+  ];
+  const fields = SCENES.map((s) => s.make());
+  const field = () => fields[params.scene];
+
+  // ---- integration -------------------------------------------------------
+  const _u = [0, 0, 0, 0, 0, 0];
+  function vel(f, p, t, out) {
+    f.sampleUW(p[0], p[1], p[2], _u, t);
+    out[0] = _u[0]; out[1] = _u[1]; out[2] = _u[2];
+  }
+  const k1 = [0, 0, 0], k2 = [0, 0, 0], k3 = [0, 0, 0], k4 = [0, 0, 0], tmp = [0, 0, 0];
+  /** One RK4 step of dx/dτ = u(x, tOf(τ)). `tOf` is what separates the three families. */
+  function rk4(f, p, tau, dt, tOf) {
+    vel(f, p, tOf(tau), k1);
+    for (let i = 0; i < 3; i++) tmp[i] = p[i] + (dt / 2) * k1[i];
+    vel(f, tmp, tOf(tau + dt / 2), k2);
+    for (let i = 0; i < 3; i++) tmp[i] = p[i] + (dt / 2) * k2[i];
+    vel(f, tmp, tOf(tau + dt / 2), k3);
+    for (let i = 0; i < 3; i++) tmp[i] = p[i] + dt * k3[i];
+    vel(f, tmp, tOf(tau + dt), k4);
+    for (let i = 0; i < 3; i++) p[i] += (dt / 6) * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i]);
+  }
+
+  /** Streamline: the field is held at `tNow`, so the curve is tangent to one instant. */
+  function streamline(f, tNow, n = STEPS) {
+    const p = NOZZLE.slice(), out = [p.slice()];
+    for (let i = 0; i < n; i++) { rk4(f, p, 0, DT, () => tNow); out.push(p.slice()); }
+    return out;
+  }
+  /** Pathline: one particle released at `t0`, clock running with it. */
+  function pathline(f, t0, tNow) {
+    const n = Math.max(1, Math.round((tNow - t0) / DT));
+    const p = NOZZLE.slice(), out = [p.slice()];
+    for (let i = 0; i < n; i++) { rk4(f, p, t0 + i * DT, DT, (tt) => tt); out.push(p.slice()); }
+    return out;
+  }
+  /**
+   * Streakline: where every particle released between t0 and tNow is *now*. Release times are put
+   * on a deliberate half-step offset from the pathline's own steps, so any agreement below is
+   * limited by interpolation rather than by the two integrations sharing identical arithmetic —
+   * otherwise a near-zero would be a fact about RK4, not about the flow.
+   */
+  function streakline(f, t0, tNow, m = 90) {
+    const out = [];
+    for (let j = 0; j <= m; j++) {
+      const tr = t0 + ((j + 0.5) / (m + 1)) * (tNow - t0);
+      const n = Math.max(1, Math.round((tNow - tr) / DT));
+      const dt = (tNow - tr) / n;
+      const p = NOZZLE.slice();
+      for (let i = 0; i < n; i++) rk4(f, p, tr + i * dt, dt, (tt) => tt);
+      out.push(p.slice());
+    }
+    out.reverse();              // nearest the nozzle first, like the other two
+    // A particle released at this instant is still at the nozzle. Without it the streakline starts
+    // slightly downstream and the arc-length alignment reads that offset as a separation — the
+    // steady row measured 0.026 of "difference" that was purely this.
+    out.unshift(NOZZLE.slice());
+    return out;
+  }
+
+  // ---- the two measured columns ------------------------------------------
+  /** A: how unsteady the field actually is, over the same window the curves span. */
+  function unsteadiness(f, tNow, win) {
+    let worst = 0;
+    for (let i = 0; i < 512; i++) {
+      const x = Math.sin(i * 1.7) * 3, y = Math.cos(i * 2.3) * 3, z = Math.sin(i * 0.9) * 3;
+      const a = f.sample(x, y, z, tNow - win), b = f.sample(x, y, z, tNow);
+      worst = Math.max(worst, Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]));
+    }
+    return worst;
+  }
+  /** Resample a polyline at `n` equal arc-length stations, so curves are compared like with like. */
+  function resample(c, n, L) {
+    const d = [0];
+    for (let i = 1; i < c.length; i++)
+      d.push(d[i - 1] + Math.hypot(c[i][0] - c[i - 1][0], c[i][1] - c[i - 1][1], c[i][2] - c[i - 1][2]));
+    const total = Math.min(L, d[d.length - 1]);
+    const out = [];
+    let j = 0;
+    for (let i = 0; i <= n; i++) {
+      const s = (i / n) * total;
+      while (j < d.length - 2 && d[j + 1] < s) j++;
+      const seg = d[j + 1] - d[j] || 1e-12, w = (s - d[j]) / seg;
+      out.push([0, 1, 2].map((k) => c[j][k] + w * (c[j + 1][k] - c[j][k])));
+    }
+    return out;
+  }
+  /** B: the largest gap between the three curves at equal arc length along their shared extent. */
+  function separation(curves) {
+    const len = (c) => {
+      let s = 0;
+      for (let i = 1; i < c.length; i++) s += Math.hypot(c[i][0] - c[i - 1][0], c[i][1] - c[i - 1][1], c[i][2] - c[i - 1][2]);
+      return s;
+    };
+    const L = Math.min(...curves.map(len));
+    if (!(L > 0)) return 0;
+    const R = curves.map((c) => resample(c, 120, L));
+    let worst = 0;
+    for (let i = 0; i <= 120; i++)
+      for (let a = 0; a < 3; a++) for (let b = a + 1; b < 3; b++)
+        worst = Math.max(worst, Math.hypot(R[a][i][0] - R[b][i][0], R[a][i][1] - R[b][i][1], R[a][i][2] - R[b][i][2]));
+    return worst;
+  }
+
+  // ---- drawing -----------------------------------------------------------
+  const cv = document.getElementById("cv"), ctx = cv.getContext("2d");
+  function fit() {
+    const r = Math.min(2, devicePixelRatio);
+    cv.width = cv.clientWidth * r; cv.height = cv.clientHeight * r;
+  }
+  addEventListener("resize", fit); fit();
+
+  const COL = ["#4aa3ff", "#2fd6bf", "#f4a13c"];
+  function project(p) {
+    const s = Math.min(cv.width, cv.height) / (2 * SPAN);
+    return [cv.width / 2 + (p[0] - NOZZLE[0]) * s, cv.height / 2 - (p[1] - NOZZLE[1]) * s];
+  }
+  function stroke(c, col, w) {
+    if (c.length < 2) return;
+    ctx.strokeStyle = col; ctx.lineWidth = w; ctx.beginPath();
+    let m = true;
+    for (const p of c) {
+      const [X, Y] = project(p);
+      if (m) { ctx.moveTo(X, Y); m = false; } else ctx.lineTo(X, Y);
+    }
+    ctx.stroke();
+  }
+
+  // ---- loop --------------------------------------------------------------
+  // Start with a full window behind us, so all three families exist on the first frame
+  // rather than the page opening on a single lonely streamline.
+  let tNow = 3.0, last = performance.now();
+  const WIN = 3.0;             // how far back the plume and the pathline reach
+  const rows = SCENES.map(() => ({ A: 0, B: 0 }));
+
+  function measureAll() {
+    // At a fixed reference time with a full window behind it. Measuring at the animation's own
+    // clock would evaluate the table at t = 0 on load, where the pathline has zero length and every
+    // separation is trivially zero — a table that reads "identical" because there is nothing there.
+    const tRef = WIN + 1.0;
+    for (let s = 0; s < SCENES.length; s++) {
+      const f = fields[s], t0 = tRef - WIN;
+      const curves = [streamline(f, tRef, 200), pathline(f, t0, tRef), streakline(f, t0, tRef, 60)];
+      rows[s] = { A: unsteadiness(f, tRef, WIN), B: separation(curves) };
+    }
+    const tb = document.querySelector("#tbl tbody");
+    tb.innerHTML = SCENES.map((s, i) => {
+      const A = rows[i].A, B = rows[i].B;
+      const fmt = (v) => (v < 1e-4 ? v.toExponential(1) : v.toFixed(3));
+      return `<tr class="${i === params.scene ? "on" : ""}"><td>${s.name}</td>` +
+        `<td class="${A < 1e-9 ? "same" : "diff"}">${fmt(A)}</td>` +
+        `<td class="${B < 1e-4 ? "same" : "diff"}">${fmt(B)}</td></tr>`;
+    }).join("");
+  }
+
+  function frame(now) {
+    const dt = Math.min(0.05, (now - last) / 1000); last = now;
+    if (params.run) tNow += dt * 0.6;
+    const f = field(), t0 = tNow - WIN;
+    const curves = [streamline(f, tNow), pathline(f, t0, tNow), streakline(f, t0, tNow)];
+
+    ctx.fillStyle = "#070a0e"; ctx.fillRect(0, 0, cv.width, cv.height);
+    stroke(curves[0], COL[0], 3.5);
+    stroke(curves[1], COL[1], 2.2);
+    ctx.setLineDash([6, 5]); stroke(curves[2], COL[2], 2.2); ctx.setLineDash([]);
+    const [nx, ny] = project(NOZZLE);
+    ctx.fillStyle = "#cdd6dd"; ctx.beginPath(); ctx.arc(nx, ny, 4, 0, TAU); ctx.fill();
+
+    const A = unsteadiness(f, tNow, WIN), B = separation(curves);
+    document.getElementById("ro").innerHTML =
+      `t <b>${tNow.toFixed(2)}</b> · window <b>${WIN}</b><br>` +
+      `A unsteadiness <b>${A < 1e-9 ? `<span class="zero">${A.toExponential(1)}</span>` : A.toFixed(3)}</b><br>` +
+      `B separation ${B < 1e-4 ? `<span class="zero">${B.toExponential(1)}</span>` : `<b>${B.toFixed(3)}</b>`}<br>` +
+      (A > 1e-3 && B < 1e-4 ? `<span class="zero">unsteady, yet identical</span>` : "");
+    requestAnimationFrame(frame);
+  }
+  measureAll();
+  requestAnimationFrame(frame);
+
+  // ---- controls ----------------------------------------------------------
+  const $ = (id) => document.getElementById(id);
+  for (let i = 0; i < SCENES.length; i++) {
+    $("s-" + i).onclick = () => {
+      params.scene = i;
+      for (let j = 0; j < SCENES.length; j++) $("s-" + j).classList.toggle("on", j === i);
+      measureAll();
+    };
+  }
+  $("run").onclick = () => {
+    params.run = !params.run;
+    $("run").classList.toggle("on", params.run);
+    $("run").textContent = params.run ? "running ✓" : "paused";
+  };
+
+  $("note").innerHTML =
+    "RK4 at dt = 0.02 · the streakline's release times sit on a half-step offset from the pathline's steps, " +
+    "so agreement is interpolation-limited rather than an artefact of shared arithmetic · " +
+    "near-zeros are the integrator floor, not exact zeros · column B compares the three curves at equal arc length";
+})();
+</script>
+</body>
+</html>

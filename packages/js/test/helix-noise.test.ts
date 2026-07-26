@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert";
+import { readFileSync } from "node:fs";
 import type { AxiProfile } from "../src/index";
-import HelixNoise, { create, createAtoms, HelixField, abc, twoScale, shellPeak, rolloff, condensate, C_TWO_SCALE, exactNS, nsDeveloped, nsForced, NS_TARGETS, createRing, collidingRings, compose, ringSpeed, axisymmetric, strainedColumn, counterSwirlColumns, columnCore, columnPeakVorticity, collapse, dssCollapse, twoScale } from "../src/index";
+import HelixNoise, { create, createAtoms, HelixField, abc, twoScale, shellPeak, rolloff, condensate, C_TWO_SCALE, exactNS, nsDeveloped, nsForced, NS_TARGETS, createRing, collidingRings, compose, ringSpeed, axisymmetric, strainedColumn, counterSwirlColumns, columnCore, columnPeakVorticity, collapse, dssCollapse, version } from "../src/index";
 import type { Vec3, FlowField, Field } from "../src/types";
 import { runWasm } from "../src/wasm";
 
@@ -1828,4 +1829,58 @@ test("gradient parity: a boundary-constrained field is the one approximate case,
     const c = [g[5] - g[7], g[6] - g[2], g[1] - g[3]];
     for (let i = 0; i < 3; i++) assert.ok(Math.abs(c[i] - uw[3 + i]) < 1e-12, "curl of the gradient is the vorticity");
   }
+});
+
+test("the exported version is the released version — VERSION cannot drift from package.json", () => {
+  // Regression: VERSION sat at 1.8.0 through the 1.9/1.10/1.11 releases, so every consumer that
+  // printed `HelixNoise.version` reported a release three versions stale. The constant is hand-held
+  // (src/ ships as a source entry point, so it cannot import package.json) — this test is the latch.
+  const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string };
+  assert.equal(version, pkg.version, `src/constants.ts VERSION is stale — bump it to ${pkg.version}`);
+  assert.equal(HelixNoise.version, pkg.version, "the default export carries the same version");
+});
+
+test("strained column: Q on the axis is closed form, and decides whether a core exists at all", () => {
+  // Every term of the gradient is elementary on the axis, and Q collapses to a²(ε²/4ν² − 3).
+  // So the existence of a vortex core is decided by ε against 2√3·ν — and by nothing else, not
+  // even the strain, which cancels out of the sign.
+  let worst = 0, wrongSign = 0, n = 0;
+  for (const a of [0.2, 0.7, 1.5, 3]) {
+    for (const nu of [0.01, 0.05, 0.1, 0.2, 0.3]) {
+      for (const eps of [0.05, 0.2, 0.5, 1, 2, 3]) {
+        const measured = strainedColumn({ strain: a, viscosity: nu, circulation: eps }).qCriterion(0, 0, 0);
+        const predicted = a * a * ((eps * eps) / (4 * nu * nu) - 3);
+        worst = Math.max(worst, Math.abs(measured - predicted) / Math.max(1, Math.abs(predicted)));
+        if ((eps > 2 * Math.sqrt(3) * nu) !== measured > 0) wrongSign++;
+        n++;
+      }
+    }
+  }
+  assert.ok(n === 120 && worst < 1e-12, `closed form holds over ${n} settings (worst ${worst})`);
+  assert.equal(wrongSign, 0, "and ε > 2√3ν predicts the sign every time");
+
+  // Both sides of the threshold, so this is not a statement about one regime.
+  assert.ok(strainedColumn({ strain: 1, viscosity: 0.05, circulation: 1 }).qCriterion(0, 0, 0) > 0);
+  assert.ok(strainedColumn({ strain: 1, viscosity: 0.3, circulation: 0.2 }).qCriterion(0, 0, 0) < 0);
+});
+
+test("axisymmetric partials are closed form in r, not differenced", () => {
+  // The tell is the trace. Differenced partials leave a divergence around 1e-11; genuinely
+  // closed-form ones cancel to machine precision.
+  const col = strainedColumn({ strain: 0.7, viscosity: 0.05, circulation: 1.3 });
+  const g: number[] = new Array(9).fill(0);
+  let tr = 0;
+  for (const [x, y, z] of GRID) { col.sampleGrad(x, y, z, g); tr = Math.max(tr, Math.abs(g[0] + g[4] + g[8])); }
+  assert.ok(tr < 1e-14, `column divergence at machine precision, not FD precision (${tr})`);
+
+  // Same for the chassis, whose r-dependence is exact even when the profile's second derivatives
+  // are not supplied.
+  const stream: AxiProfile = Object.assign((q: number, z: number) => Math.exp(-q) * Math.sin(z), {
+    dq: (q: number, z: number) => -Math.exp(-q) * Math.sin(z),
+    dz: (q: number, z: number) => Math.exp(-q) * Math.cos(z),
+  });
+  let tr2 = 0;
+  const ch = axisymmetric({ stream });
+  for (const [x, y, z] of GRID) { ch.sampleGrad(x, y, z, g); tr2 = Math.max(tr2, Math.abs(g[0] + g[4] + g[8])); }
+  assert.ok(tr2 < 1e-14, `chassis divergence likewise (${tr2})`);
 });

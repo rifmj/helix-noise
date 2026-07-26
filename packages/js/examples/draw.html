@@ -148,7 +148,8 @@ window.addEventListener("error", (e) => { window.__err = e.message + " @ " + e.f
       pxr[i] = ((pxr[i] + u[0] * 0.13) % W + W) % W;
       pyr[i] = ((pyr[i] + u[1] * 0.13) % H + H) % H;
       if (sdf(pxr[i], pyr[i], 0) < 0) { spawn(i); continue; }
-      field.sampleUW(pxr[i], pyr[i], 1.7, uw, ft);
+      // The bounded field — the one actually transporting the dot. See obstacle.html.
+      bounded.sampleUW(pxr[i], pyr[i], 1.7, uw, ft);
       const h = uw[0]*uw[3] + uw[1]*uw[4] + uw[2]*uw[5];
       ctx.strokeStyle = h >= 0 ? "rgba(47,214,191,0.8)" : "rgba(244,161,60,0.8)";
       if (Math.abs(pxr[i]-x0) < W*0.5 && Math.abs(pyr[i]-y0) < H*0.5) {

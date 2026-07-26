@@ -19,10 +19,10 @@
 <div class="wrap">
   <h1>Helix Noise in <code>p5.js</code></h1>
   <p>A classic flow-field sketch: thousands of agents advected through a 2-D slice of the field with
-    <code>field.sample(x, y, 0)</code>, coloured by helicity. Helix Noise is renderer-agnostic — in p5
+    <code>field.sampleManyUW()</code>, coloured by helicity. Helix Noise is renderer-agnostic — in p5
     it's three lines. (Loads p5.js from a CDN.)</p>
   <main id="host"></main>
-  <div class="note">field.sample() drives every agent · p5.js 1.9</div>
+  <div class="note">one batched field.sampleManyUW() call drives every agent · p5.js 1.9</div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/p5@1.9.4/lib/p5.min.js"></script>
@@ -43,17 +43,21 @@
     strokeWeight(1.1);
   }
 
-  const uw = [0,0,0,0,0,0];
+  const qpos = new Float64Array(N*3), quw = new Float64Array(N*6);
   function draw(){
     noStroke(); fill(7,10,14,26); rect(0,0,W,H);   // trail fade
     blendMode(ADD);
     const sx = W/TAU, sy = H/TAU;
+    // One batched call for all N, rather than N scalar ones. The colour needs vorticity too,
+    // so this is sampleManyUW — six floats out per point instead of three.
+    for (let i=0;i<N;i++){ qpos[i*3]=xs[i]; qpos[i*3+1]=ys[i]; qpos[i*3+2]=0; }
+    field.sampleManyUW(qpos, quw);
     for (let i=0;i<N;i++){
       const x = xs[i], y = ys[i];
-      field.sampleUW(x, y, 0, uw);
-      const h = uw[0]*uw[3] + uw[1]*uw[4] + uw[2]*uw[5];
-      const nx = ((x + uw[0]*0.09) % TAU + TAU) % TAU;
-      const ny = ((y + uw[1]*0.09) % TAU + TAU) % TAU;
+      const b = i*6;
+      const h = quw[b]*quw[b+3] + quw[b+1]*quw[b+4] + quw[b+2]*quw[b+5];
+      const nx = ((x + quw[b]  *0.09) % TAU + TAU) % TAU;
+      const ny = ((y + quw[b+1]*0.09) % TAU + TAU) % TAU;
       if (Math.abs(nx-x) < TAU*0.5 && Math.abs(ny-y) < TAU*0.5){
         if (h >= 0) stroke(47,214,191,150); else stroke(244,161,60,150);
         line(x*sx, y*sy, nx*sx, ny*sy);

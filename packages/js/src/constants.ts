@@ -2,15 +2,16 @@ import type { HelixNoiseOptions } from "./types";
 
 export const TAU = 2 * Math.PI;
 
-/** Seed salt for the polarization channel's second RNG stream (32-bit wrapping add). */
 /** Golden ratio — the flutter harmonic's rate multiplier, so it never resynchronizes with churn. */
 export const PHI = (1 + Math.sqrt(5)) / 2;
 
+/** Seed salt for the polarization channel's second RNG stream (32-bit wrapping add). */
 export const POLAR_SALT = 0x9e3779b9;
 /** Polarization-degree ball radius: sqrt(d^2 + chi^2) is clamped to this (PSD of the 2x2 covariance). */
 export const POLAR_DEG_MAX = 0.97;
 
-export const VERSION = "1.8.0";
+/** Library version. Must match `package.json` — the spec suite asserts it (release checklist). */
+export const VERSION = "1.11.0";
 
 /** Default options, filled in for every field (`spectrum` stays optional — no default law object). */
 export const DEFAULTS: Required<Omit<HelixNoiseOptions, "spectrum">> & Pick<HelixNoiseOptions, "spectrum"> = {

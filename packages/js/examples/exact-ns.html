@@ -64,12 +64,12 @@
     <button id="sign">chirality: +1</button>
     <span style="opacity:.5">break it →</span>
     <button id="b-ell">ellipticity 0.6</button>
-    <button id="b-band">two shells</button>
+    <button id="b-band">wider band</button>
     <button id="b-churn">churn 1</button>
   </div>
 
   <table id="truth">
-    <thead><tr><th>test</th><th id="h0">exactNS</th><th id="h1">ellipticity 0.6</th><th id="h2">two shells</th><th id="h3">churn 1</th></tr></thead>
+    <thead><tr><th>test</th><th id="h0">exactNS</th><th id="h1">ellipticity 0.6</th><th id="h2">wider band</th><th id="h3">churn 1</th></tr></thead>
     <tbody></tbody>
   </table>
 
@@ -82,8 +82,11 @@
     one rate. Note also that the curl in row A is read from <code>field.sampleGrad()</code>, not from
     <code>vorticity()</code>: on a circular field the sampler computes <code>w = s·κ·u</code> by assignment,
     so testing <code>∇×u = k₀u</code> against it would be circular reasoning. The gradient is an independent
-    analytic code path, so the residual below is a real measurement. And the "two shells" button rebuilds the
-    mode table — it is the same seed, a new draw, not the same field with a wider band.
+    analytic code path, so the residual below is a real measurement. And the "wider band" button does exactly
+    what it now says: it raises <code>kmax</code> to <code>k₀+2</code> while leaving <code>kmin</code>
+    at <code>k₀</code>, so the shell becomes one continuous band rather than two separate shells — and
+    because the wavenumbers are redrawn it is a new mode table on the same seed, not the original field
+    stretched.
   </div>
 </div>
 
@@ -140,7 +143,11 @@
 
   /** (C) the momentum law: with the nonlinearity inert, ∂ₜu must be exactly −νk₀²u. */
   function momentumResidual(f) {
-    const h = 1e-3, t0 = 1.5;
+    // h = 1e-4, not 1e-3: the central difference's own O(h²) truncation is ~(h²/6)(νk₀²)²,
+    // which at the top of these sliders (k₀ = 6, ν = 0.2) reaches 6e-5 — sixty times the 1e-6
+    // pass threshold, so the table reported FAIL on the *unbroken* field at 37 of its 120
+    // slider settings. At 1e-4 the worst case is 6e-7 and the roundoff floor is ~1e-12.
+    const h = 1e-4, t0 = 1.5;
     let worst = 0, scale = 1e-12;
     for (const [x, y, z] of PTS) {
       const up = f.sample(x, y, z, t0 + h), um = f.sample(x, y, z, t0 - h), u = f.sample(x, y, z, t0);

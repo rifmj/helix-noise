@@ -18,7 +18,7 @@
 <div class="wrap">
   <h1>Helix Noise in <code>three.js</code></h1>
   <p>A <code>THREE.Points</code> cloud of 16,000 particles, each advected every frame by
-    <code>field.sample(x, y, z)</code> and coloured by helicity. Helix Noise only produces velocities —
+    <code>field.sampleUW(x, y, z, uw)</code> and coloured by helicity. Helix Noise only produces velocities —
     it drops into any renderer. Drag to orbit. (Loads three.js from a CDN.)</p>
   <div id="stage"></div>
   <div class="note" id="note">loading three.js…</div>
@@ -69,15 +69,18 @@
   const mat = new THREE.PointsMaterial({ size: 0.045, vertexColors: true, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false });
   scene.add(new THREE.Points(geo, mat));
 
-  const uw = [0,0,0,0,0,0];
+  // One batched call for the whole system rather than N scalar ones: sampleMany is mode-major
+  // and tiled, and routes to the wasm kernel past a few dozen points. The loop only needs
+  // velocity, so this is sampleMany, not sampleManyUW.
+  const qpos = new Float64Array(N*3), qvel = new Float64Array(N*3);
   function step(){
+    for (let i=0;i<N;i++){ qpos[i*3]=pos[i*3]+PI; qpos[i*3+1]=pos[i*3+1]+PI; qpos[i*3+2]=pos[i*3+2]+PI; }
+    field.sampleMany(qpos, qvel);
     for (let i=0;i<N;i++){
-      const x = pos[i*3]+PI, y = pos[i*3+1]+PI, z = pos[i*3+2]+PI;
-      field.sampleUW(x, y, z, uw);
       if (--life[i] <= 0){ respawn(i, false); continue; }
-      let nx = ((x + uw[0]*0.06) % TAU + TAU) % TAU;
-      let ny = ((y + uw[1]*0.06) % TAU + TAU) % TAU;
-      let nz = ((z + uw[2]*0.06) % TAU + TAU) % TAU;
+      const nx = ((qpos[i*3]   + qvel[i*3]  *0.06) % TAU + TAU) % TAU;
+      const ny = ((qpos[i*3+1] + qvel[i*3+1]*0.06) % TAU + TAU) % TAU;
+      const nz = ((qpos[i*3+2] + qvel[i*3+2]*0.06) % TAU + TAU) % TAU;
       pos[i*3]=nx-PI; pos[i*3+1]=ny-PI; pos[i*3+2]=nz-PI;
     }
     geo.attributes.position.needsUpdate = true;
@@ -85,7 +88,7 @@
   function loop(){ step(); controls.update(); renderer.render(scene, camera); requestAnimationFrame(loop); }
 
   size(); addEventListener("resize", ()=>{ size(); camera.aspect = stage.clientWidth/stage.clientHeight; camera.updateProjectionMatrix(); });
-  document.getElementById("note").textContent = "16,000 particles advected by field.sample() · three.js r160";
+  document.getElementById("note").textContent = "16,000 particles advected in one batched field.sampleMany() call per frame · three.js r160";
   loop();
 </script>
 </body>

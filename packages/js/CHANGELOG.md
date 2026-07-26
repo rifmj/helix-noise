@@ -3,6 +3,60 @@
 All notable changes to this project are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [1.11.1]
+
+### Fixed
+
+- **`exact-ns.html`'s truth table reported FAIL on the unbroken field.** Row (C) estimated `∂ₜu` with
+  a central difference at `h = 1e-3`, whose own `O(h²)` truncation reaches `6e-5` at the top of the
+  page's own sliders — sixty times the `1e-6` pass threshold. Measured: **37 of its 120 slider
+  settings** marked the genuine `exactNS` column as broken. At `h = 1e-4` it is 0 of 120. A demo
+  whose entire point is a truth table was lying on a third of its parameter space.
+- **`obstacle.html` and `draw.html` coloured from the wrong field.** Both advect with the bounded
+  field and coloured with the *unbounded* one. Inside the influence band the two differ, and on 58
+  of 360 sampled points there they disagree in **sign** — the dot was painted the opposite
+  handedness, in exactly the region those pages exist to show.
+- **`collapse.html` had two live controls that did nothing.** `λ` and `a` belong to the DSS law
+  only; in plain `collapse` mode they were fully interactive and ignored. They are now disabled
+  there, the shared exponent slider is relabelled `q` to match the prose, and the τ-recycle — which
+  is seamless only because the DSS picture is periodic — no longer cuts mid-collapse in the
+  non-periodic mode.
+- **The axisymmetric partials were differenced, not closed form** — contradicting what 1.11.0's own
+  notes claimed. `StrainedColumnField` and `AxisymField` now override `dcyl` with the algebra doc 14
+  §12.4 spells out (the column using `−expm1(−x)/x` so the axis does not cancel catastrophically),
+  and `AxiProfile` gained optional `dqq`/`dqz`/`dzz`. The tell is the divergence: it drops from
+  `~1e-11`, the finite-difference floor, to `~1e-16`.
+
+### Changed
+
+- **`three.html` and `p5.html`** advect through one batched `sampleMany`/`sampleManyUW` call per
+  frame instead of 16,000 and 4,000 scalar ones; **`cirrus.html`** stops emitting a `curl` function
+  its shader never calls, and measures the source it actually compiled rather than a second
+  generation with different defaults; **`rings.html`** gains the `Q · λ₂ · stretching` colour row
+  that 1.11.0 made possible on a primitive.
+- Copy corrections across seven demos where the prose named a different API than the code called,
+  labelled a normalised ratio as a raw correlator, called `|ω|` enstrophy, called a broadband
+  one-handed field Beltrami, or named a button "two shells" for something that widens one band.
+- **`columns.html`** replaces an overclaim. "Q's zero lands on the core radius" held at the default
+  settings and nowhere near the ends of its own sliders. On the axis `Q = a²(ε²/4ν² − 3)` exactly, so
+  the page now prints the measured `Q` beside that closed form (they agree to `~1e-16` over 120
+  settings) and states the real threshold: a core exists **iff `ε > 2√3·ν`**, independent of strain.
+  Below it the page says "no core — strain wins" rather than drawing one.
+
+### Added
+
+- **`examples/topology.html`** — critical points, using `sampleGrad` as a Jacobian rather than a
+  colour. Newton finds the zeros, their eigenvalues classify them, and every one is a saddle:
+  `tr ∇u = 0` forbids sources and sinks outright. A written-out compressible control supplies the
+  paired opposite. A movable audit box checks the census by Kronecker degree — deliberately a
+  *sub*-box, because over the whole periodic cell Poincaré–Hopf forces the total index to zero and
+  the check could not fail.
+- **`examples/streaklines.html`** — streamline, pathline and streakline through one nozzle, and a
+  refutation of the shorthand that unsteadiness separates them. `exactNS` is genuinely unsteady
+  (`0.70`) yet its three curves stay `3e-5` apart, because a single shell decays as one global
+  scalar and cannot turn the direction field; a broadband field at the same unsteadiness (`0.66`)
+  separates by `0.29`. It is the spectrum, not the unsteadiness.
+
 ## [1.11.0]
 
 ### Added

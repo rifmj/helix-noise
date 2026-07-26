@@ -762,6 +762,12 @@ interface AxiProfile {
     dq?: (q: number, z: number) => number;
     /** ∂/∂z. Optional; central differences are used when absent. */
     dz?: (q: number, z: number) => number;
+    /** ∂²/∂q². Optional; used by `sampleGrad`, differenced from `dq` when absent. */
+    dqq?: (q: number, z: number) => number;
+    /** ∂²/∂q∂z. Optional; used by `sampleGrad`, differenced from `dq` when absent. */
+    dqz?: (q: number, z: number) => number;
+    /** ∂²/∂z². Optional; used by `sampleGrad`, differenced from `dz` when absent. */
+    dzz?: (q: number, z: number) => number;
 }
 /** Options for {@link axisymmetric}. */
 interface AxisymOptions {
@@ -940,7 +946,7 @@ declare function create(options?: HelixNoiseOptions): Field;
 /** Create a sparse-atom field: broadband, infinite, amortized O(1), spatially-varying params. */
 declare function createAtoms(options?: HelixAtomsOptions): AtomField;
 /** Library version. */
-declare const version = "1.8.0";
+declare const version = "1.11.0";
 /** Run the built-in validation (transversality, divergence, helicity tracking). */
 declare function selfTest(): SelfTestReport;
 /** Default export: the Helix Noise namespace (`HelixNoise.create(...)`). */

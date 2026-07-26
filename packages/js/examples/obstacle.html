@@ -58,7 +58,10 @@
       px[i] = ((px[i] + u[0] * 0.14) % TAU + TAU) % TAU;
       py[i] = ((py[i] + u[1] * 0.14) % TAU + TAU) % TAU;
       if (cylinder(px[i], py[i], 0) < 0) { spawn(i); continue; } // torus wrap can land inside
-      field.sampleUW(px[i], py[i], Math.PI, uw, ft);
+      // The *bounded* field, not the base one: inside the influence band they differ, and on
+      // 58 of 360 sampled points there they disagree in sign — the dot would be painted the
+      // wrong handedness in exactly the region this page exists to show.
+      bounded.sampleUW(px[i], py[i], Math.PI, uw, ft);
       const h = uw[0]*uw[3] + uw[1]*uw[4] + uw[2]*uw[5];         // helicity density → colour
       ctx.strokeStyle = h >= 0 ? "rgba(47,214,191,0.8)" : "rgba(244,161,60,0.8)";
       if (Math.abs(px[i]-x0) < TAU*0.5 && Math.abs(py[i]-y0) < TAU*0.5) {

@@ -51,9 +51,22 @@
     <label>circulation <input id="circ" type="range" min="0.4" max="3" step="0.1" value="1.6"><span id="v-circ">1.6</span></label>
     <label>core <input id="core" type="range" min="0.15" max="0.7" step="0.01" value="0.42"><span id="v-core">0.42</span></label>
   </div>
+  <div class="row">
+    colour by
+    <button id="c-h" class="on">u·ω</button>
+    <button id="c-q">Q-criterion</button>
+    <button id="c-l">λ₂</button>
+    <button id="c-s">stretching</button>
+  </div>
+  <p style="margin-top:12px">The <b>colour by</b> row exists because of 1.11.0: <code>qCriterion</code>,
+    <code>λ₂</code> and <code>stretching</code> used to live only on the mode-sum field, so a closed-form
+    ring had no diagnostic to colour by at all. All four channels here come from the ring's analytic
+    velocity gradient. <b>Q</b> is the clearest — it is positive through the vortex core and negative in
+    the jet the ring pushes through its own middle, so the two structures separate by colour rather than
+    by position.</p>
   <div class="note" style="margin-top:10px">
-    <span class="key"><span class="sw" style="background:#2fd6bf"></span>u·ω &gt; 0 (right-handed)</span>
-    <span class="key"><span class="sw" style="background:#f4a13c"></span>u·ω &lt; 0 (left-handed)</span>
+    <span class="key"><span class="sw" style="background:#2fd6bf"></span>positive</span>
+    <span class="key"><span class="sw" style="background:#f4a13c"></span>negative</span>
   </div>
   <div class="note" id="note">loading three.js…</div>
 </div>
@@ -71,7 +84,7 @@
 
   const TAU = Math.PI * 2;
   const R = 1.5, SEP = 2.2;
-  const params = { scene: "one", fly: true, circ: 1.6, core: 0.42 };
+  const params = { scene: "one", fly: true, circ: 1.6, core: 0.42, colour: "h" };
 
   // ---- the field ---------------------------------------------------------
   // Rings live along z. `compose` sums flows: the sum of divergence-free fields is
@@ -163,12 +176,12 @@
 
   // ---- advection ---------------------------------------------------------
   const TEAL = [0.184, 0.839, 0.749], AMBER = [0.957, 0.631, 0.235];
-  let t = 0, umax = 0;
+  let t = 0, umax = 0, chMax = 0;
   const uw = [0, 0, 0, 0, 0, 0];
   function step() {
     const dt = 0.02;
     t += dt;
-    umax = 0;
+    umax = 0; chMax = 0;
     for (let i = 0; i < N; i++) {
       const x = posD[3 * i], y = posD[3 * i + 1], z = posD[3 * i + 2];
       field.sampleUW(x, y, z, uw, t);
@@ -179,8 +192,14 @@
       posD[3 * i + 2] = z + uw[2] * dt;
       if (--life[i] <= 0 || Math.abs(posD[3 * i + 2]) > 6) spawn(i);
       pos[3 * i] = posD[3 * i]; pos[3 * i + 1] = posD[3 * i + 1]; pos[3 * i + 2] = posD[3 * i + 2];
-      // colour by the genuine helicity density u·ω, dimmed where the flow is weak
-      const h = uw[0] * uw[3] + uw[1] * uw[4] + uw[2] * uw[5];
+      // Signed channels get the two-tone treatment; all four come from the analytic gradient,
+      // which primitives only gained in 1.11.0 — before that a ring had no diagnostic at all.
+      let h;
+      if (params.colour === "h") h = uw[0] * uw[3] + uw[1] * uw[4] + uw[2] * uw[5];
+      else if (params.colour === "q") h = field.qCriterion(x, y, z, t);
+      else if (params.colour === "l") h = -field.lambda2(x, y, z, t);
+      else h = field.stretching(x, y, z, t);
+      if (Math.abs(h) > chMax) chMax = Math.abs(h);
       const c = h >= 0 ? TEAL : AMBER;
       const g = Math.min(1, 0.25 + sp * 0.5);
       col[3 * i] = c[0] * g; col[3 * i + 1] = c[1] * g; col[3 * i + 2] = c[2] * g;
@@ -196,8 +215,10 @@
 
   const ro = document.getElementById("ro");
   function readout() {
+    const CH = { h: "u·ω", q: "Q", l: "−λ₂", s: "ξ̂·S·ξ̂" }[params.colour];
     ro.innerHTML = `Γ <b>${params.circ.toFixed(2)}</b> · core <b>${params.core.toFixed(2)}</b><br>` +
-      `Kelvin U <b>${ringSpeed.toFixed(3)}</b><br>|u|max <b>${umax.toFixed(2)}</b>`;
+      `Kelvin U <b>${ringSpeed.toFixed(3)}</b><br>|u|max <b>${umax.toFixed(2)}</b><br>` +
+      `colour <b>${CH}</b> max <b>${chMax.toFixed(2)}</b>`;
   }
 
   function frame() { step(); readout(); controls.update(); renderer.render(scene, camera); requestAnimationFrame(frame); }
@@ -220,6 +241,12 @@
   $("s-one").onclick = () => pickScene("one");
   $("s-two").onclick = () => pickScene("two");
   $("s-mix").onclick = () => pickScene("mix");
+  for (const [id, key] of [["c-h", "h"], ["c-q", "q"], ["c-l", "l"], ["c-s", "s"]]) {
+    $(id).onclick = () => {
+      params.colour = key;
+      for (const o of ["c-h", "c-q", "c-l", "c-s"]) $(o).classList.toggle("on", o === id);
+    };
+  }
   $("fly").onclick = () => {
     params.fly = !params.fly;
     $("fly").classList.toggle("on", params.fly);

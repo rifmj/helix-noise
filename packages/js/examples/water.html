@@ -78,7 +78,7 @@
 <body>
 <div class="wrap">
   <p class="eyebrow">Helix Noise · flowing water · caustics + sun-glints</p>
-  <h1>Flowing water surface <span class="thin">— ripples bent along <code style="color:var(--amber);font-size:.72em">field.sample()</code></span></h1>
+  <h1>Flowing water surface <span class="thin">— ripples bent along <code style="color:var(--amber);font-size:.72em">field.sampleUW()</code></span></h1>
   <p class="lede">A moving water surface where the wave crests are <b>warped along the flow field's
     streamlines</b>: a few travelling ripple layers, their lattice bent by the field, shaded with a
     depth ramp, sharp <b>caustic</b> highlights on the crests, and specular <b>sun-glints</b>. The three
@@ -133,7 +133,7 @@
         gives a per-pixel <code>warp</code> offset — that's what bends the wave lattice to follow the current.
         Every frame, four travelling ripple layers are summed at the warped coordinate, the surface normal
         comes from their analytic gradient, and the shader adds a depth ramp, caustic crests, sun specular,
-        and a Fresnel sky term. All the flow comes from <code>field.sample()</code> — the rest is a small
+        and a Fresnel sky term. All the flow comes from <code>field.sampleUW()</code> — the rest is a small
         surface shader you can lift straight into a fragment program.</p>
     </div>
     <div>

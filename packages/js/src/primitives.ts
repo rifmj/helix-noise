@@ -364,6 +364,12 @@ export interface AxiProfile {
   dq?: (q: number, z: number) => number;
   /** ∂/∂z. Optional; central differences are used when absent. */
   dz?: (q: number, z: number) => number;
+  /** ∂²/∂q². Optional; used by `sampleGrad`, differenced from `dq` when absent. */
+  dqq?: (q: number, z: number) => number;
+  /** ∂²/∂q∂z. Optional; used by `sampleGrad`, differenced from `dq` when absent. */
+  dqz?: (q: number, z: number) => number;
+  /** ∂²/∂z². Optional; used by `sampleGrad`, differenced from `dz` when absent. */
+  dzz?: (q: number, z: number) => number;
 }
 
 /** Options for {@link axisymmetric}. */
@@ -640,6 +646,52 @@ class AxisymField extends AxisBase {
     if (this.h) out[1] = r * this.h(q, z);                       // u^θ = r h
   }
 
+  /** Second derivatives: exact when the profile supplies them, differenced from the first otherwise. */
+  private dqq(f: AxiProfile, q: number, z: number): number {
+    if (f.dqq) return f.dqq(q, z);
+    const h = FD * (1 + Math.abs(q));
+    if (q - h < 0) return (this.dq(f, q + h, z) - this.dq(f, q, z)) / h;
+    return (this.dq(f, q + h, z) - this.dq(f, q - h, z)) / (2 * h);
+  }
+  private dqz(f: AxiProfile, q: number, z: number): number {
+    if (f.dqz) return f.dqz(q, z);
+    return (this.dq(f, q, z + FD) - this.dq(f, q, z - FD)) / (2 * FD);
+  }
+  private dzz(f: AxiProfile, q: number, z: number): number {
+    if (f.dzz) return f.dzz(q, z);
+    return (this.dz(f, q, z + FD) - this.dz(f, q, z - FD)) / (2 * FD);
+  }
+
+  /**
+   * Closed form in `r`. With `q = r²`,
+   *
+   * ```
+   * ∂_r u^r = −P_z − 2q·P_qz      ∂_z u^r = −r·P_zz
+   * ∂_r u^θ = h + 2q·h_q          ∂_z u^θ = r·h_z
+   * ∂_r u^z = 2r(4P_q + 2q·P_qq)  ∂_z u^z = 2P_z + 2q·P_qz
+   * ```
+   *
+   * — note `∂_r u^r + u^r/r + ∂_z u^z = 0` identically, whatever the profiles are. The `r`
+   * dependence and the frame are always exact; only the profile's own second derivatives fall back
+   * to differences, and only when it does not supply `dqq`/`dqz`/`dzz`.
+   */
+  protected override dcyl(r: number, z: number, out6: number[]): void {
+    const q = r * r;
+    out6[0] = out6[1] = out6[2] = out6[3] = out6[4] = out6[5] = 0;
+    if (this.P) {
+      const Pz = this.dz(this.P, q, z), Pq = this.dq(this.P, q, z);
+      const Pqz = this.dqz(this.P, q, z), Pqq = this.dqq(this.P, q, z), Pzz = this.dzz(this.P, q, z);
+      out6[0] = -Pz - 2 * q * Pqz;
+      out6[3] = -r * Pzz;
+      out6[2] = 2 * r * (4 * Pq + 2 * q * Pqq);
+      out6[5] = 2 * Pz + 2 * q * Pqz;
+    }
+    if (this.h) {
+      out6[1] = this.h(q, z) + 2 * q * this.dq(this.h, q, z);
+      out6[4] = r * this.dz(this.h, q, z);
+    }
+  }
+
   protected pot(r: number, z: number, out: number[]): void {
     const q = r * r;
     out[0] = this.P ? r * this.P(q, z) : 0;                      // A_θ = ψ/r = r P
@@ -677,6 +729,18 @@ class StrainedColumnField extends AxisBase {
     out[2] = 2 * this.a * z;                                     // u^z
     out[3] = 0; out[4] = 0;
     out[5] = (this.eps * this.a) / this.nu * e;                  // ω purely axial and Gaussian
+  }
+
+  protected override dcyl(r: number, _z: number, out6: number[]): void {
+    const x = this.b * r * r, e = Math.exp(-x);
+    // (1 − e^(−x))/x, written with expm1 so the axis stays accurate instead of cancelling.
+    const E = x > 1e-300 ? -Math.expm1(-x) / x : 1;
+    out6[0] = -this.a;                                           // ∂_r u^r
+    out6[1] = this.eps * this.b * (2 * e - E);                   // ∂_r u^θ → εb on the axis
+    out6[2] = 0;                                                 // ∂_r u^z
+    out6[3] = 0;                                                 // ∂_z u^r
+    out6[4] = 0;                                                 // ∂_z u^θ
+    out6[5] = 2 * this.a;                                        // ∂_z u^z
   }
 
   protected pot(r: number, z: number, out: number[]): void {
