@@ -1,4 +1,5 @@
 import { BoundedFieldImpl } from "./boundary";
+import { lambda2FromGrad, qFromGrad, stretchFromGrad } from "./diagnostics";
 import type {
   Bake2DResult,
   Bake3DResult,
@@ -136,6 +137,8 @@ export function dssCollapse(field: FlowField, opts: DssOptions = {}): FlowField 
 }
 
 const _w6: number[] = [0, 0, 0, 0, 0, 0];
+const _w9: number[] = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+const _g9: number[] = [0, 0, 0, 0, 0, 0, 0, 0, 0];
 
 /**
  * `u(x,t) = A(t)·U((x−c)/L(t), t)`. Velocity scales by `A`; vorticity picks up an extra `1/L` from
@@ -169,6 +172,32 @@ class WarpField implements FlowField {
     const aScale = amp * l;
     out6[3] = aScale * _w6[3]; out6[4] = aScale * _w6[4]; out6[5] = aScale * _w6[5];
     return out6;
+  }
+
+  /**
+   * `u = A·U(ξ)` with `ξ = (x−c)/L`, so the chain rule gives `∇u = (A/L)·∇U` — the same `A/L` the
+   * vorticity carries, for the same reason. Exact whenever the wrapped field's gradient is.
+   */
+  sampleGrad<T extends Out6>(x: number, y: number, z: number, out9: T, t = 0): T {
+    if (out9.length < 9) throw new Error("helix-noise: sampleGrad needs 9 floats");
+    const l = this.L(t), amp = this.A(t), k = amp / l;
+    this.base.sampleGrad((x - this.c[0]) / l, (y - this.c[1]) / l, (z - this.c[2]) / l, _w9,
+      this.freeze ? 0 : t);
+    for (let i = 0; i < 9; i++) out9[i] = k * _w9[i];
+    return out9;
+  }
+
+  qCriterion(x: number, y: number, z: number, t = 0): number {
+    return qFromGrad(this.sampleGrad(x, y, z, _g9, t));
+  }
+
+  lambda2(x: number, y: number, z: number, t = 0): number {
+    return lambda2FromGrad(this.sampleGrad(x, y, z, _g9, t));
+  }
+
+  stretching(x: number, y: number, z: number, t = 0): number {
+    this.sampleUW(x, y, z, _t6, t);
+    return stretchFromGrad(this.sampleGrad(x, y, z, _g9, t), _t6[3], _t6[4], _t6[5]);
   }
 
   sample(x: number, y: number, z: number, t = 0): Vec3 {

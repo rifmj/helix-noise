@@ -13,6 +13,7 @@ import type {
   Vec3,
 } from "./types";
 import { BoundedFieldImpl } from "./boundary";
+import { lambda2FromGrad, qFromGrad, stretchFromGrad } from "./diagnostics";
 
 /**
  * Ready-made shapes for the per-wavenumber dials (`spectrum`, `coherence`, `helicity`) plus two
@@ -112,6 +113,9 @@ export function twoScale(base: FlowField, detail: FlowField, opts?: { detailGain
 const _a6: number[] = [0, 0, 0, 0, 0, 0];
 const _b6: number[] = [0, 0, 0, 0, 0, 0];
 const _t6: number[] = [0, 0, 0, 0, 0, 0];
+const _a9: number[] = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+const _b9: number[] = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+const _g9: number[] = [0, 0, 0, 0, 0, 0, 0, 0, 0];
 
 /** Componentwise sum of two flow fields. @internal */
 class TwoScaleField implements FlowField {
@@ -147,6 +151,29 @@ class TwoScaleField implements FlowField {
 
   sampleUA<T extends Out6>(x: number, y: number, z: number, out6: T, t = 0): T {
     return this._sum("ua", x, y, z, out6, t);
+  }
+
+  /** Both scales are analytic, so their weighted sum is too. */
+  sampleGrad<T extends Out6>(x: number, y: number, z: number, out9: T, t = 0): T {
+    if (out9.length < 9) throw new Error("helix-noise: sampleGrad needs 9 floats");
+    this.base.sampleGrad(x, y, z, _a9, t);
+    this.detail.sampleGrad(x, y, z, _b9, t);
+    const g = this.detailGain;
+    for (let i = 0; i < 9; i++) out9[i] = _a9[i] + g * _b9[i];
+    return out9;
+  }
+
+  qCriterion(x: number, y: number, z: number, t = 0): number {
+    return qFromGrad(this.sampleGrad(x, y, z, _g9, t));
+  }
+
+  lambda2(x: number, y: number, z: number, t = 0): number {
+    return lambda2FromGrad(this.sampleGrad(x, y, z, _g9, t));
+  }
+
+  stretching(x: number, y: number, z: number, t = 0): number {
+    this.sampleUW(x, y, z, _t6, t);
+    return stretchFromGrad(this.sampleGrad(x, y, z, _g9, t), _t6[3], _t6[4], _t6[5]);
   }
 
   sample(x: number, y: number, z: number, t = 0): Vec3 {

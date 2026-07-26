@@ -3,6 +3,7 @@ import { mulberry32 } from "./rng";
 import { frame } from "./field";
 import { BoundedFieldImpl } from "./boundary";
 import { atomsToGLSL } from "./atoms-glsl";
+import { lambda2FromGrad, qFromGrad, stretchFromGrad } from "./diagnostics";
 import type {
   AtomField,
   Bake2DResult,
@@ -57,6 +58,9 @@ function hcell(i: number, j: number, k: number, seed: number): number {
  * per sample, and any region can carry its own helicity/gain. Divergence-free exactly — every
  * atom is a curl.
  */
+const _ag9: number[] = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+const _aw6: number[] = [0, 0, 0, 0, 0, 0];
+
 export class HelixAtoms implements AtomField {
   params: AtomField["params"];
   private _scale = 1;
@@ -210,6 +214,90 @@ export class HelixAtoms implements AtomField {
     }
     out[0] = ux * sc; out[1] = uy * sc; out[2] = uz * sc;
     if (mode !== 0) { out[3] = vx * sc; out[4] = vy * sc; out[5] = vz * sc; }
+  }
+
+  /**
+   * Analytic velocity gradient, atom by atom. Each atom contributes `u = ∇W×A + W·T` with `T` the
+   * wave and `A = (s/|k|)·T` its potential, so differentiating gives five closed-form pieces:
+   *
+   * ```
+   * ∂_m u_n = gw·(ê_m×A)_n + G·d_m·(d×A)_n + k_m·(∇W×A′)_n + (∇W)_m·T_n + W·k_m·T′_n
+   * ```
+   *
+   * with `∇W = gw·d`, the window Hessian `H = gw·I + G·d⊗d`, and `A′ = ∂_φ A`. The trace vanishes
+   * identically because `k × A′ = T` — the same identity that makes the atom a curl in the first
+   * place — so this is divergence-free to machine precision rather than approximately.
+   */
+  sampleGrad<T extends Out6>(x: number, y: number, z: number, out9: T, t = 0): T {
+    if (out9.length < 9) throw new Error("helix-noise: sampleGrad needs 9 floats");
+    const p = this.params, sc = this._scale;
+    for (let i = 0; i < 9; i++) out9[i] = 0;
+    for (let o = 0; o < p.octaves; o++) {
+      const rho = p.radius / (1 << o), L = 2 * rho, rho2 = rho * rho;
+      const bi = Math.floor(x / L - 0.5), bj = Math.floor(y / L - 0.5), bk = Math.floor(z / L - 0.5);
+      for (let dc = 0; dc < 8; dc++) {
+        const at = this._cell(o, bi + (dc & 1), bj + ((dc >> 1) & 1), bk + (dc >> 2));
+        for (let b = 0; b < at.length; b += STRIDE) {
+          const dx = x - at[b], dy = y - at[b + 1], dz = z - at[b + 2];
+          const r2 = dx * dx + dy * dy + dz * dz;
+          if (r2 >= rho2) continue;
+          const beta = 1 - r2 / rho2, b2 = beta * beta, w = b2 * beta;
+          const kx = at[b + 3], ky = at[b + 4], kz = at[b + 5];
+          const phi = kx * dx + ky * dy + kz * dz + at[b + 9] + at[b + 10] * t;
+          const c = Math.cos(phi), sn = Math.sin(phi);
+          const s = at[b + 7], a = at[b + 8], gsk = at[b + 11];
+          const e1x = at[b + 12], e1y = at[b + 13], e1z = at[b + 14];
+          const e2x = at[b + 15], e2y = at[b + 16], e2z = at[b + 17];
+          // the wave T and its phase derivative T′
+          const Tx = a * (c * e1x - s * sn * e2x);
+          const Ty = a * (c * e1y - s * sn * e2y);
+          const Tz = a * (c * e1z - s * sn * e2z);
+          const Px = a * (-sn * e1x - s * c * e2x);
+          const Py = a * (-sn * e1y - s * c * e2y);
+          const Pz = a * (-sn * e1z - s * c * e2z);
+          const Ax = gsk * Tx, Ay = gsk * Ty, Az = gsk * Tz;      // A  = (s/|k|)·T
+          const Bx = gsk * Px, By = gsk * Py, Bz = gsk * Pz;      // A′ = ∂_φ A
+          const gw = (-6 * b2) / rho2;                            // ∇W = gw·d
+          const G = (24 * beta) / (rho2 * rho2);                  // H  = gw·I + G·d⊗d
+          const gwx = gw * dx, gwy = gw * dy, gwz = gw * dz;
+          const dAx = dy * Az - dz * Ay, dAy = dz * Ax - dx * Az, dAz = dx * Ay - dy * Ax;
+          // ∇W × A′ = gw·(d × A′)
+          const wBx = gw * (dy * Bz - dz * By);
+          const wBy = gw * (dz * Bx - dx * Bz);
+          const wBz = gw * (dx * By - dy * Bx);
+          const kv = [kx, ky, kz], dv = [dx, dy, dz], gv = [gwx, gwy, gwz];
+          const Tv = [Tx, Ty, Tz], Pv = [Px, Py, Pz];
+          const dA = [dAx, dAy, dAz], wB = [wBx, wBy, wBz];
+          // ê_m × A, row by row
+          const em = [[0, -Az, Ay], [Az, 0, -Ax], [-Ay, Ax, 0]];
+          for (let mm = 0; mm < 3; mm++) {
+            for (let nn = 0; nn < 3; nn++) {
+              out9[3 * mm + nn] +=
+                gw * em[mm][nn] +
+                G * dv[mm] * dA[nn] +
+                kv[mm] * wB[nn] +
+                gv[mm] * Tv[nn] +
+                w * kv[mm] * Pv[nn];
+            }
+          }
+        }
+      }
+    }
+    for (let i = 0; i < 9; i++) out9[i] *= sc;
+    return out9;
+  }
+
+  qCriterion(x: number, y: number, z: number, t = 0): number {
+    return qFromGrad(this.sampleGrad(x, y, z, _ag9, t));
+  }
+
+  lambda2(x: number, y: number, z: number, t = 0): number {
+    return lambda2FromGrad(this.sampleGrad(x, y, z, _ag9, t));
+  }
+
+  stretching(x: number, y: number, z: number, t = 0): number {
+    this.sampleUW(x, y, z, _aw6, t);
+    return stretchFromGrad(this.sampleGrad(x, y, z, _ag9, t), _aw6[3], _aw6[4], _aw6[5]);
   }
 
   sample(x: number, y: number, z: number, t = 0): Vec3 {

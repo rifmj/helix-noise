@@ -1,4 +1,5 @@
 import { BoundedFieldImpl } from "./boundary";
+import { axisymGrad, lambda2FromGrad, qFromGrad, stretchFromGrad } from "./diagnostics";
 import type {
   Bake2DResult,
   Bake3DResult,
@@ -99,11 +100,34 @@ function norm3(v: Vec3): Vec3 {
 
 const _t6: number[] = [0, 0, 0, 0, 0, 0];
 const _s6: number[] = [0, 0, 0, 0, 0, 0];
+const _g9: number[] = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+const _e9: number[] = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+const _d6: number[] = [0, 0, 0, 0, 0, 0];
 
 /** Shared bake/boundary plumbing for the closed-form primitives. @internal */
 abstract class BaseFlow implements FlowField {
   abstract sampleUW<T extends Out6>(x: number, y: number, z: number, out6: T, t?: number): T;
   abstract sampleUA<T extends Out6>(x: number, y: number, z: number, out6: T, t?: number): T;
+  /**
+   * Abstract on purpose. Every primitive here has a closed-form gradient, and the alternative — a
+   * silently-inherited approximation — is exactly the gap that let the structure primitives ship
+   * without any way to colour them.
+   */
+  abstract sampleGrad<T extends Out6>(x: number, y: number, z: number, out9: T, t?: number): T;
+
+  qCriterion(x: number, y: number, z: number, t = 0): number {
+    return qFromGrad(this.sampleGrad(x, y, z, _g9, t));
+  }
+
+  lambda2(x: number, y: number, z: number, t = 0): number {
+    return lambda2FromGrad(this.sampleGrad(x, y, z, _g9, t));
+  }
+
+  stretching(x: number, y: number, z: number, t = 0): number {
+    this.sampleUW(x, y, z, _s6, t);
+    const wx = _s6[3], wy = _s6[4], wz = _s6[5];
+    return stretchFromGrad(this.sampleGrad(x, y, z, _g9, t), wx, wy, wz);
+  }
 
   sample(x: number, y: number, z: number, t = 0): Vec3 {
     this.sampleUW(x, y, z, _t6, t);
@@ -245,6 +269,43 @@ class RingField extends BaseFlow {
   sampleUA<T extends Out6>(x: number, y: number, z: number, out6: T, t = 0): T {
     return this._eval(x, y, z, out6, t, false);
   }
+
+  /**
+   * Closed form. The ring has no swirl, so in its own cylindrical frame only four partials are
+   * non-zero, and every one of them is a polynomial in the same window derivatives the velocity
+   * already uses — `h`, `H1` and `H2`. Outside the core all three vanish, so the gradient goes to
+   * exactly zero at the support boundary rather than stepping.
+   */
+  sampleGrad<T extends Out6>(x: number, y: number, z: number, out9: T, t = 0): T {
+    if (out9.length < 9) throw new Error("helix-noise: sampleGrad needs 9 floats");
+    for (let i = 0; i < 9; i++) out9[i] = 0;
+    const sh = this.speed * t;
+    const dx = x - (this.cx + sh * this.nx);
+    const dy = y - (this.cy + sh * this.ny);
+    const dz = z - (this.cz + sh * this.nz);
+    const nx = this.nx, ny = this.ny, nz = this.nz;
+    const zc = dx * nx + dy * ny + dz * nz;
+    let rx = dx - zc * nx, ry = dy - zc * ny, rz = dz - zc * nz;
+    const rho = Math.hypot(rx, ry, rz);
+    if (rho < 1e-12) return out9;
+    rx /= rho; ry /= rho; rz /= rho;
+    const dr = rho - this.R, q2 = dr * dr + zc * zc, c2 = this.c * this.c;
+    if (q2 >= c2) return out9;
+    const s = 1 - q2 / c2;
+    const h = this.G * s * s * s;
+    const H1 = (-6 * this.G * s * s) / c2;
+    const H2 = (24 * this.G * s) / (c2 * c2);   // = ∂H1/∂q² · 1, so ∂_ρH1 = H2·dr, ∂_zH1 = H2·zc
+    const ur = -H1 * zc;
+    _e9[0] = rx; _e9[1] = ry; _e9[2] = rz;
+    _e9[3] = ny * rz - nz * ry; _e9[4] = nz * rx - nx * rz; _e9[5] = nx * ry - ny * rx;
+    _e9[6] = nx; _e9[7] = ny; _e9[8] = nz;
+    return axisymGrad(
+      ur, 0, rho,
+      -H2 * dr * zc, 0, H1 * dr / rho - h / (rho * rho) + H2 * dr * dr + H1,
+      -H1 - H2 * zc * zc, 0, H1 * zc / rho + H2 * zc * dr,
+      _e9, out9
+    );
+  }
 }
 
 /** @internal */
@@ -270,7 +331,20 @@ class ComposedField extends BaseFlow {
   sampleUA<T extends Out6>(x: number, y: number, z: number, out6: T, t = 0): T {
     return this._sum("ua", x, y, z, out6, t);
   }
+
+  /** The gradient of a sum is the sum of the gradients — so a composed field stays analytic. */
+  sampleGrad<T extends Out6>(x: number, y: number, z: number, out9: T, t = 0): T {
+    if (out9.length < 9) throw new Error("helix-noise: sampleGrad needs 9 floats");
+    for (let i = 0; i < 9; i++) out9[i] = 0;
+    for (const f of this.parts) {
+      f.sampleGrad(x, y, z, _c9, t);
+      for (let i = 0; i < 9; i++) out9[i] += _c9[i];
+    }
+    return out9;
+  }
 }
+
+const _c9: number[] = [0, 0, 0, 0, 0, 0, 0, 0, 0];
 
 // ---------------------------------------------------------------------------
 // Axisymmetric chassis and the columns it unlocks (design doc 14)
@@ -485,6 +559,42 @@ abstract class AxisBase extends BaseFlow {
     this._frame(x, y, z, fr);
     this.cyl(fr[0], fr[1], c);
     this._world(c[0], c[1], c[2], fr, out, 0);
+  }
+
+  /**
+   * Cylindrical partials at a point, written as
+   * `[∂_r u^r, ∂_r u^θ, ∂_r u^z, ∂_z u^r, ∂_z u^θ, ∂_z u^z]`.
+   *
+   * The default differences {@link cyl} in the `(r, z)` half-plane — two dimensions rather than
+   * three, and on the profile rather than the assembled field. Subclasses with a closed form
+   * override it.
+   */
+  protected dcyl(r: number, z: number, out6: number[]): void {
+    const h = FD, a = [0, 0, 0, 0, 0, 0], b = [0, 0, 0, 0, 0, 0];
+    this.cyl(r + h, z, a); this.cyl(r - h, z, b);
+    out6[0] = (a[0] - b[0]) / (2 * h); out6[1] = (a[1] - b[1]) / (2 * h); out6[2] = (a[2] - b[2]) / (2 * h);
+    this.cyl(r, z + h, a); this.cyl(r, z - h, b);
+    out6[3] = (a[0] - b[0]) / (2 * h); out6[4] = (a[1] - b[1]) / (2 * h); out6[5] = (a[2] - b[2]) / (2 * h);
+  }
+
+  /**
+   * The gradient of an axisymmetric field, assembled from its cylindrical partials — see
+   * {@link axisymGrad} for why the middle row is not a derivative of anything.
+   */
+  sampleGrad<T extends Out6>(x: number, y: number, z: number, out9: T, _t = 0): T {
+    if (out9.length < 9) throw new Error("helix-noise: sampleGrad needs 9 floats");
+    this._frame(x, y, z, this._fr);
+    const r = this._fr[0], zc = this._fr[1];
+    const rx = this._fr[2], ry = this._fr[3], rz = this._fr[4];
+    this._c.fill(0);
+    this.cyl(r, zc, this._c);
+    this.dcyl(r, zc, _d6);
+    _e9[0] = rx; _e9[1] = ry; _e9[2] = rz;
+    _e9[3] = this.ny * rz - this.nz * ry;
+    _e9[4] = this.nz * rx - this.nx * rz;
+    _e9[5] = this.nx * ry - this.ny * rx;
+    _e9[6] = this.nx; _e9[7] = this.ny; _e9[8] = this.nz;
+    return axisymGrad(this._c[0], this._c[1], r, _d6[0], _d6[1], _d6[2], _d6[3], _d6[4], _d6[5], _e9, out9);
   }
 
   /** (A_θ, A_z) of the vector potential in cylindrical components. */

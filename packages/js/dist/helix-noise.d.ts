@@ -178,6 +178,20 @@ interface FlowField {
     bake2D(nx: number, ny: number, z?: number, t?: number): Bake2DResult;
     /** Bake rgb = vector potential A (FD-curl it in the shader → discretely div-free velocity). */
     bakePotential3D(n: number, t?: number): Bake3DResult;
+    /**
+     * Velocity gradient, row-major `out9[3m + n] = ∂u_n/∂x_m` (9 floats).
+     *
+     * Closed-form for every field here except a boundary-constrained one, whose SDF is supplied by
+     * you and generally has no analytic derivative — that case uses the same central differences its
+     * `vorticity` already uses, so the two agree.
+     */
+    sampleGrad<T extends Out6>(x: number, y: number, z: number, out9: T, t?: number): T;
+    /** Q-criterion `½(|Ω|² − |S|²)` — positive inside vortex cores. */
+    qCriterion(x: number, y: number, z: number, t?: number): number;
+    /** λ₂ criterion — the middle eigenvalue of `S² + Ω²`; negative inside a vortex core. */
+    lambda2(x: number, y: number, z: number, t?: number): number;
+    /** Vortex stretching `ξ̂·S·ξ̂` — positive where the vorticity is being spun up. */
+    stretching(x: number, y: number, z: number, t?: number): number;
     /** Constrain the field with an SDF obstacle (free-slip, still exactly divergence-free). */
     withBoundary(sdf: Sdf, opts?: BoundaryOptions): BoundedField;
 }
@@ -199,14 +213,6 @@ interface Field extends FlowField {
     relativeHelicity(ng?: number): number;
     /** Relative helicity straight from the mode arrays — the exact, grid-free value at time t. */
     relativeHelicitySpectral(t?: number): number;
-    /** Analytic velocity gradient, row-major `out9[3m + n] = ∂u_n/∂x_m` (9 floats). */
-    sampleGrad<T extends Out6>(x: number, y: number, z: number, out9: T, t?: number): T;
-    /** Q-criterion `½(|Ω|² − |S|²)` — positive inside vortex cores. */
-    qCriterion(x: number, y: number, z: number, t?: number): number;
-    /** λ₂ criterion — the middle eigenvalue of `S² + Ω²`; negative inside a vortex core. */
-    lambda2(x: number, y: number, z: number, t?: number): number;
-    /** Vortex stretching `ξ̂·S·ξ̂` — positive where the vorticity is being spun up. */
-    stretching(x: number, y: number, z: number, t?: number): number;
     /** Emit self-contained GLSL (WebGL2) defining `vec3 <name>(vec3 p)` + `(vec3 p, float t)` (+ curl). */
     glsl(opts?: GlslOptions): string;
 }
@@ -507,17 +513,6 @@ declare class HelixField implements Field, ModeData {
     glsl(opts?: GlslOptions): string;
 }
 
-/**
- * The sparse-atom engine. The field is a sum of compactly-supported helical wavelets ("atoms"):
- *
- *   u_atom = ∇×(W·A) = ∇W×A + W·u_wave
- *
- * where u_wave is a helical plane wave, A = (s/|k|)·u_wave its exact Beltrami potential, and
- * W = (1−q²)³ a C² window vanishing at the support radius. Atoms are drawn deterministically
- * from a spatial hash (one PRNG per cell), so the field is infinite, grid-free, amortized O(1)
- * per sample, and any region can carry its own helicity/gain. Divergence-free exactly — every
- * atom is a curl.
- */
 declare class HelixAtoms implements AtomField {
     params: AtomField["params"];
     private _scale;
@@ -536,6 +531,22 @@ declare class HelixAtoms implements AtomField {
      * mode 2: u + potential ΣW·A → out[0..5].
      */
     private _eval;
+    /**
+     * Analytic velocity gradient, atom by atom. Each atom contributes `u = ∇W×A + W·T` with `T` the
+     * wave and `A = (s/|k|)·T` its potential, so differentiating gives five closed-form pieces:
+     *
+     * ```
+     * ∂_m u_n = gw·(ê_m×A)_n + G·d_m·(d×A)_n + k_m·(∇W×A′)_n + (∇W)_m·T_n + W·k_m·T′_n
+     * ```
+     *
+     * with `∇W = gw·d`, the window Hessian `H = gw·I + G·d⊗d`, and `A′ = ∂_φ A`. The trace vanishes
+     * identically because `k × A′ = T` — the same identity that makes the atom a curl in the first
+     * place — so this is divergence-free to machine precision rather than approximately.
+     */
+    sampleGrad<T extends Out6>(x: number, y: number, z: number, out9: T, t?: number): T;
+    qCriterion(x: number, y: number, z: number, t?: number): number;
+    lambda2(x: number, y: number, z: number, t?: number): number;
+    stretching(x: number, y: number, z: number, t?: number): number;
     sample(x: number, y: number, z: number, t?: number): Vec3;
     private _t6;
     sampleUW<T extends Out6>(x: number, y: number, z: number, out6: T, t?: number): T;

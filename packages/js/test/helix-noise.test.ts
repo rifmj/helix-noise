@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert";
 import type { AxiProfile } from "../src/index";
-import HelixNoise, { create, createAtoms, HelixField, abc, twoScale, shellPeak, rolloff, condensate, C_TWO_SCALE, exactNS, nsDeveloped, nsForced, NS_TARGETS, createRing, collidingRings, compose, ringSpeed, axisymmetric, strainedColumn, counterSwirlColumns, columnCore, columnPeakVorticity, collapse, dssCollapse } from "../src/index";
+import HelixNoise, { create, createAtoms, HelixField, abc, twoScale, shellPeak, rolloff, condensate, C_TWO_SCALE, exactNS, nsDeveloped, nsForced, NS_TARGETS, createRing, collidingRings, compose, ringSpeed, axisymmetric, strainedColumn, counterSwirlColumns, columnCore, columnPeakVorticity, collapse, dssCollapse, twoScale } from "../src/index";
 import type { Vec3, FlowField, Field } from "../src/types";
 import { runWasm } from "../src/wasm";
 
@@ -1681,4 +1681,151 @@ test("warps compose with the closed-form primitives", () => {
   assert.ok(maxDiv(f, SCATTER, 1.0) < 1e-6, "a collapsing tornado is still divergence-free");
   const g = dssCollapse(compose(createRing({ radius: 1.5, core: 0.4, circulation: 2 })), { T: 1 });
   assert.ok(maxDiv(g, SCATTER, 0.5) < 1e-5, "so is a log-periodic ring");
+});
+
+// ---------------------------------------------------------------------------
+// Gradient parity — every field answers sampleGrad, so every field can be coloured
+// ---------------------------------------------------------------------------
+
+/** Central-difference gradient, for checking the analytic ones against. */
+function fdGrad9(f: FlowField, x: number, y: number, z: number, t: number, h: number): number[] {
+  const g: number[] = new Array(9).fill(0);
+  for (let m = 0; m < 3; m++) {
+    const p = [x, y, z], q = [x, y, z];
+    p[m] += h; q[m] -= h;
+    const a = f.sample(p[0], p[1], p[2], t), b = f.sample(q[0], q[1], q[2], t);
+    for (let n = 0; n < 3; n++) g[3 * m + n] = (a[n] - b[n]) / (2 * h);
+  }
+  return g;
+}
+
+/** Points where the field is actually non-negligible — a gradient test on a zero proves nothing. */
+function livePoints(f: FlowField, want = 12, span = 2.6): [number, number, number][] {
+  const out: [number, number, number][] = [];
+  for (let i = 0; i < 9000 && out.length < want; i++) {
+    const p: [number, number, number] = [
+      Math.sin(i * 1.7) * span, Math.cos(i * 2.3) * span, Math.sin(i * 0.9) * span * 0.6];
+    if (Math.hypot(...f.sample(...p)) > 1e-3) out.push(p);
+  }
+  return out;
+}
+
+const GRID: [number, number, number][] = Array.from({ length: 12 }, (_, i) =>
+  [Math.sin(i * 1.7) * 1.3, Math.cos(i * 2.3) * 1.3, Math.sin(i * 0.9) * 0.9]);
+
+/**
+ * The three things an analytic gradient must satisfy: it matches finite differences, its trace is
+ * the divergence (zero), and its curl is the vorticity the field reports independently. The last
+ * is the strongest — `sampleGrad` and `sampleUW` are separate derivations, so agreement between
+ * them is a real cross-check rather than a restatement.
+ */
+function checkGrad(name: string, f: FlowField, pts: [number, number, number][], t = 0): void {
+  assert.ok(pts.length >= 8, `${name}: need live points to test on, got ${pts.length}`);
+  const g: number[] = new Array(9).fill(0), uw: number[] = new Array(6).fill(0);
+  let err = 0, scale = 0, tr = 0, curlErr = 0, wScale = 0;
+  for (const [x, y, z] of pts) {
+    f.sampleGrad(x, y, z, g, t);
+    const G = fdGrad9(f, x, y, z, t, 1e-6);
+    for (let i = 0; i < 9; i++) { err = Math.max(err, Math.abs(g[i] - G[i])); scale = Math.max(scale, Math.abs(G[i])); }
+    tr = Math.max(tr, Math.abs(g[0] + g[4] + g[8]));
+    f.sampleUW(x, y, z, uw, t);
+    const c = [g[5] - g[7], g[6] - g[2], g[1] - g[3]];
+    for (let i = 0; i < 3; i++) { curlErr = Math.max(curlErr, Math.abs(c[i] - uw[3 + i])); wScale = Math.max(wScale, Math.abs(uw[3 + i])); }
+  }
+  // The guard that matters: a field that is zero on every test point would pass everything below.
+  assert.ok(scale > 1e-3, `${name}: the test points carry no gradient (${scale}) — vacuous`);
+  assert.ok(wScale > 1e-6, `${name}: the test points carry no vorticity (${wScale}) — vacuous`);
+  assert.ok(err / scale < 1e-6, `${name}: analytic vs finite differences ${err / scale}`);
+  assert.ok(tr < 1e-8 * Math.max(1, scale), `${name}: trace is the divergence, must vanish (${tr})`);
+  assert.ok(curlErr < 1e-7 * Math.max(1, wScale), `${name}: curl of the gradient vs vorticity (${curlErr})`);
+}
+
+test("gradient parity: every field type answers sampleGrad, analytically", () => {
+  const base = create({ modes: 24, seed: 5, coherence: 0.4, tileable: true });
+  const ring = createRing({ radius: 1.5, core: 0.4, circulation: 2 });
+  const coll = collidingRings({ radius: 1.2, core: 0.35, circulation: 1.5, separation: 1.4 });
+  const stream: AxiProfile = Object.assign((q: number, z: number) => Math.exp(-q) * Math.sin(z), {
+    dq: (q: number, z: number) => -Math.exp(-q) * Math.sin(z),
+    dz: (q: number, z: number) => Math.exp(-q) * Math.cos(z),
+  });
+  const swirl: AxiProfile = Object.assign((q: number) => Math.exp(-2 * q), {
+    dq: (q: number) => -2 * Math.exp(-2 * q), dz: () => 0,
+  });
+
+  checkGrad("create()", base, GRID);
+  checkGrad("createAtoms()", createAtoms({ seed: 3 }), GRID);
+  checkGrad("twoScale", twoScale(create({ modes: 8, seed: 1 }), create({ modes: 16, seed: 2 }), { detailGain: 0.5 }), GRID);
+  checkGrad("ring", ring, livePoints(ring));
+  checkGrad("ring advected", createRing({ radius: 1.5, core: 0.4, circulation: 2, advect: true }), livePoints(ring), 0.7);
+  checkGrad("collidingRings", coll, livePoints(coll));
+  checkGrad("strainedColumn", strainedColumn({ strain: 0.7, viscosity: 0.05, circulation: 1.3 }), GRID);
+  checkGrad("strainedColumn tilted", strainedColumn({ strain: 0.9, viscosity: 0.08, axis: [1, 1, 0.5], center: [0.2, -0.1, 0.3] }), GRID);
+  checkGrad("counterSwirlColumns", counterSwirlColumns({ separation: 1.6, offsetAxis: [1, 0, 0] }), GRID);
+  checkGrad("axisymmetric", axisymmetric({ stream, swirl }), GRID);
+  checkGrad("compose", compose(strainedColumn({ strain: 0.5, viscosity: 0.06 }), ring), livePoints(ring));
+  checkGrad("collapse", collapse(base, { T: 2 }), GRID, 0.6);
+  checkGrad("dssCollapse", dssCollapse(base, { T: 1 }), GRID, 0.5);
+});
+
+test("gradient parity: the diagnostics work on a primitive, not only on a mode sum", () => {
+  // The whole point of the change. A strained column has an exact Gaussian vorticity core, so Q
+  // must be strongly positive on its axis and fall off — a tornado you can actually colour.
+  const f = strainedColumn({ strain: 0.7, viscosity: 0.05, circulation: 1.3 });
+  const core = columnCore(0.7, 0.05);
+  assert.ok(f.qCriterion(0, 0, 0) > 0, "rotation dominates on the axis");
+  assert.ok(f.qCriterion(4 * core, 0, 0) < 0, "strain dominates well outside it");
+
+  // The real cross-check: Q is built from the new gradient, while the core radius √(2ν/a) comes
+  // from the closed-form Gaussian vorticity — different derivations entirely. Where Q changes sign
+  // should therefore land on the core, and it does, at 1.13 core radii. λ₂ flips at the same place.
+  let cross = -1;
+  for (let i = 1; i <= 60 && cross < 0; i++) {
+    const r = (i * core) / 8;
+    if (f.qCriterion(r, 0, 0) <= 0) cross = r;
+  }
+  assert.ok(cross > 0.7 * core && cross < 1.6 * core,
+    `Q locates the analytic core radius: crossing at ${(cross / core).toFixed(2)} core radii`);
+  assert.ok(f.lambda2(0, 0, 0) < 0, "λ₂ finds the same core the other standard way");
+  assert.ok(f.lambda2(2 * core, 0, 0) > 0, "and agrees on where it ends");
+  // The strain is axial and steady, so the column's own vorticity is being stretched, not squashed.
+  assert.ok(f.stretching(0, 0, 0) > 0, "and the filament reads as being spun up");
+
+  // A ring is exactly zero outside its core, so every diagnostic must be exactly zero there too.
+  const r = createRing({ radius: 1.5, core: 0.4, circulation: 2 });
+  assert.equal(r.qCriterion(9, 9, 9), 0);
+  assert.equal(r.lambda2(9, 9, 9), 0);
+  assert.equal(r.stretching(9, 9, 9), 0);
+  const pts = livePoints(r, 6);
+  assert.ok(pts.some((p) => Math.abs(r.qCriterion(...p)) > 1e-6), "but not inside it");
+});
+
+test("gradient parity: a boundary-constrained field is the one approximate case, and says so", () => {
+  const base = create({ modes: 20, seed: 4, tileable: true });
+  const sdf = (x: number, y: number, z: number): number => Math.hypot(x, y, z) - 0.8;
+  const rough = base.withBoundary(sdf, { thickness: 0.6 });
+  const sharp = base.withBoundary(sdf, {
+    thickness: 0.6, fdStep: 1e-4,
+    gradient: (x, y, z) => { const n = Math.hypot(x, y, z) || 1; return [x / n, y / n, z / n]; },
+  });
+  const band = GRID.filter(([x, y, z]) => { const d = sdf(x, y, z); return d > 0 && d < 0.6; });
+  assert.ok(band.length >= 3, "test points must actually sit in the influence band");
+
+  const g: number[] = new Array(9).fill(0);
+  const worstDiv = (f: FlowField): number => {
+    let d = 0;
+    for (const [x, y, z] of band) { f.sampleGrad(x, y, z, g); d = Math.max(d, Math.abs(g[0] + g[4] + g[8])); }
+    return d;
+  };
+  const dRough = worstDiv(rough), dSharp = worstDiv(sharp);
+  assert.ok(dRough < 1e-3, `central differences, so small but not zero (${dRough})`);
+  assert.ok(dSharp < dRough / 10, `and it sharpens when you supply ∇d (${dSharp} vs ${dRough})`);
+
+  // What the docstring promises: sampleGrad and vorticity use the same scheme, so they agree exactly.
+  const uw: number[] = new Array(6).fill(0);
+  for (const [x, y, z] of band) {
+    rough.sampleGrad(x, y, z, g);
+    rough.sampleUW(x, y, z, uw);
+    const c = [g[5] - g[7], g[6] - g[2], g[1] - g[3]];
+    for (let i = 0; i < 3; i++) assert.ok(Math.abs(c[i] - uw[3 + i]) < 1e-12, "curl of the gradient is the vorticity");
+  }
 });

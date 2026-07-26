@@ -3,6 +3,42 @@
 All notable changes to this project are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [1.11.0]
+
+### Added
+
+- **Gradient parity.** `sampleGrad`, `qCriterion`, `lambda2` and `stretching` move from `Field` onto
+  **`FlowField`** — so every field in the library answers them, not just the mode sum. Until now the
+  structure primitives and the time warps had no diagnostic to colour by at all: doc 11 and doc 14
+  shipped the shapes, doc 02 shipped the colour channels, and the two never met. A tornado you could
+  not Q-criterion. Now `strainedColumn(...).qCriterion(x, y, z)` is an ordinary call, and the same
+  goes for rings, colliding rings, the axisymmetric chassis, counter-swirling pairs, `compose`,
+  `twoScale`, `collapse`, `dssCollapse`, `createAtoms` and a boundary-constrained field.
+
+### Notes
+
+- **Closed-form everywhere except one place.** The axisymmetric family (rings, chassis, columns)
+  assembles its Cartesian gradient from cylindrical partials — including the middle row `−u^θ/r`,
+  `u^r/r`, which is where an axisymmetric gradient is usually got wrong: nothing varies with `φ`,
+  yet the `φ`-derivative is non-zero because the basis vectors themselves turn. `HelixAtoms`
+  differentiates each atom analytically (`∂_m u_n = gw·(ê_m×A)_n + G·d_m·(d×A)_n + k_m·(∇W×A′)_n +
+  (∇W)_m·T_n + W·k_m·T′_n`), whose trace vanishes identically because `k × A′ = T` — the same
+  identity that makes an atom a curl. Warps use `∇u = (A/L)·∇U`, the same `A/L` the vorticity carries.
+- **The exception is `withBoundary`**, and it is stated rather than hidden: the bounded velocity
+  depends on `∇d` of an SDF you supply, which in general has no closed form. It uses the same
+  central differences and the same step its `vorticity` already used, so the two agree exactly; with
+  an exact `gradient` and a finer `fdStep` the divergence tightens from `1e-6` to `4e-8`.
+- Verified for all thirteen analytic field types against finite differences (`≤ 4e-10` relative),
+  with the trace vanishing and — the real cross-check — the **curl of `sampleGrad` matching the
+  independently-derived `sampleUW` vorticity** to `1e-14`. The tests refuse to pass on a field that
+  is zero at the sample points, which is how a vacuous version of this check was caught while writing it.
+- A physical receipt rather than a tautology: on a strained column, `Q` changes sign at **1.13 core
+  radii**. `Q` comes from the new gradient, the core radius `√(2ν/a)` comes from the closed-form
+  Gaussian vorticity, and the two derivations share nothing.
+- The diagnostics themselves are now one shared implementation (`src/diagnostics.ts`) rather than a
+  method on one class, so `qCriterion` means the same thing on a tornado as on a noise field.
+  `examples/columns.html` gains a **colour by** row to show it. Parity fixtures unchanged.
+
 ## [1.10.0]
 
 ### Added

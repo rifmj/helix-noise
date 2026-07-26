@@ -1,4 +1,5 @@
 import { TAU } from "./constants";
+import { fdGrad, lambda2FromGrad, qFromGrad, stretchFromGrad } from "./diagnostics";
 import type { Bake3DResult, BoundaryOptions, BoundedField, FlowField, Out6, Sdf, Vec3 } from "./types";
 
 // Bridson's free-slip ramp (the curl-noise boundary quintic): r(0) = 0 but r'(0) = 15/8 > 0, so
@@ -24,6 +25,9 @@ function dramp(x: number): number {
  * carries a factor ramp(0) = 0), zero inside, and bit-identical to the base field beyond the
  * influence band.
  */
+const _g9: number[] = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+const _sw6: number[] = [0, 0, 0, 0, 0, 0];
+
 export class BoundedFieldImpl implements BoundedField {
   readonly base: FlowField;
   readonly sdf: Sdf;
@@ -73,6 +77,30 @@ export class BoundedFieldImpl implements BoundedField {
     const f = this._fa;
     this._u(x, y, z, t, f);
     return [f[0], f[1], f[2]];
+  }
+
+  /**
+   * The one approximate gradient in the library, and deliberately so: the bounded velocity depends
+   * on `∇d` of *your* SDF, which in general has no closed form. It uses the same central
+   * differences and the same step as {@link vorticity}, so the two are consistent with each other
+   * — pass `gradient` in the options for an exact `∇d` and both sharpen together.
+   */
+  sampleGrad<T extends Out6>(x: number, y: number, z: number, out9: T, t = 0): T {
+    if (out9.length < 9) throw new Error("helix-noise: sampleGrad needs 9 floats");
+    return fdGrad((px, py, pz, out) => this._u(px, py, pz, t, out), x, y, z, out9, this.h);
+  }
+
+  qCriterion(x: number, y: number, z: number, t = 0): number {
+    return qFromGrad(this.sampleGrad(x, y, z, _g9, t));
+  }
+
+  lambda2(x: number, y: number, z: number, t = 0): number {
+    return lambda2FromGrad(this.sampleGrad(x, y, z, _g9, t));
+  }
+
+  stretching(x: number, y: number, z: number, t = 0): number {
+    this.sampleUW(x, y, z, _sw6, t);
+    return stretchFromGrad(this.sampleGrad(x, y, z, _g9, t), _sw6[3], _sw6[4], _sw6[5]);
   }
 
   sampleUW<T extends Out6>(x: number, y: number, z: number, out6: T, t = 0): T {

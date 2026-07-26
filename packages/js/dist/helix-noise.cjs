@@ -255,6 +255,93 @@ function toGLSL(f, opts = {}) {
   return L.join("\n");
 }
 
+// src/diagnostics.ts
+function eigMid3(m) {
+  const p1 = m[1] * m[1] + m[2] * m[2] + m[5] * m[5];
+  const q = (m[0] + m[4] + m[8]) / 3;
+  if (p1 <= 1e-300) {
+    const d = [m[0], m[4], m[8]].sort((a, b2) => a - b2);
+    return d[1];
+  }
+  const d0 = m[0] - q, d4 = m[4] - q, d8 = m[8] - q;
+  const p2 = d0 * d0 + d4 * d4 + d8 * d8 + 2 * p1;
+  const p = Math.sqrt(p2 / 6);
+  const b = [d0 / p, m[1] / p, m[2] / p, m[1] / p, d4 / p, m[5] / p, m[2] / p, m[5] / p, d8 / p];
+  const det = b[0] * (b[4] * b[8] - b[5] * b[7]) - b[1] * (b[3] * b[8] - b[5] * b[6]) + b[2] * (b[3] * b[7] - b[4] * b[6]);
+  const r = Math.min(1, Math.max(-1, det / 2));
+  const phi = Math.acos(r) / 3;
+  const e1 = q + 2 * p * Math.cos(phi);
+  const e3 = q + 2 * p * Math.cos(phi + 2 * Math.PI / 3);
+  return 3 * q - e1 - e3;
+}
+function qFromGrad(g) {
+  let tr2 = 0;
+  for (let m = 0; m < 3; m++) for (let n = 0; n < 3; n++) tr2 += g[3 * m + n] * g[3 * n + m];
+  return -0.5 * tr2;
+}
+function lambda2FromGrad(g) {
+  const s = [], o = [];
+  for (let m = 0; m < 3; m++) for (let n = 0; n < 3; n++) {
+    s[3 * m + n] = 0.5 * (g[3 * m + n] + g[3 * n + m]);
+    o[3 * m + n] = 0.5 * (g[3 * m + n] - g[3 * n + m]);
+  }
+  const M = [];
+  for (let m = 0; m < 3; m++) for (let n = 0; n < 3; n++) {
+    let v = 0;
+    for (let k = 0; k < 3; k++) v += s[3 * m + k] * s[3 * k + n] + o[3 * m + k] * o[3 * k + n];
+    M[3 * m + n] = v;
+  }
+  return eigMid3(M);
+}
+function stretchFromGrad(g, wx, wy, wz) {
+  const wm = Math.hypot(wx, wy, wz);
+  if (wm < 1e-300) return 0;
+  const e = [wx / wm, wy / wm, wz / wm];
+  let v = 0;
+  for (let m = 0; m < 3; m++) for (let n = 0; n < 3; n++) {
+    v += e[m] * 0.5 * (g[3 * m + n] + g[3 * n + m]) * e[n];
+  }
+  return v;
+}
+function fdGrad(vel, x, y, z, out9, h) {
+  const a = [0, 0, 0], b = [0, 0, 0];
+  for (let m = 0; m < 3; m++) {
+    const p = [x, y, z], q = [x, y, z];
+    p[m] += h;
+    q[m] -= h;
+    vel(p[0], p[1], p[2], a);
+    vel(q[0], q[1], q[2], b);
+    for (let n = 0; n < 3; n++) out9[3 * m + n] = (a[n] - b[n]) / (2 * h);
+  }
+  return out9;
+}
+function axisymGrad(ur, ut, r, dur_dr, dut_dr, duz_dr, dur_dz, dut_dz, duz_dz, e, out9) {
+  const inv = r > 1e-9 ? 1 / r : 0;
+  const L = [
+    dur_dr,
+    dut_dr,
+    duz_dr,
+    r > 1e-9 ? -ut * inv : -dut_dr,
+    r > 1e-9 ? ur * inv : dur_dr,
+    0,
+    dur_dz,
+    dut_dz,
+    duz_dz
+  ];
+  for (let m = 0; m < 3; m++) {
+    for (let n = 0; n < 3; n++) {
+      let v = 0;
+      for (let a = 0; a < 3; a++) {
+        const eam = e[3 * a + m];
+        if (eam === 0) continue;
+        for (let b = 0; b < 3; b++) v += eam * L[3 * a + b] * e[3 * b + n];
+      }
+      out9[3 * m + n] = v;
+    }
+  }
+  return out9;
+}
+
 // src/boundary.ts
 function ramp(x) {
   if (x <= 0) return 0;
@@ -267,6 +354,8 @@ function dramp(x) {
   const w = 1 - x * x;
   return 15 / 8 * w * w;
 }
+var _g9 = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+var _sw6 = [0, 0, 0, 0, 0, 0];
 var BoundedFieldImpl = class {
   constructor(base, sdf, opts) {
     this._ua = [0, 0, 0, 0, 0, 0];
@@ -320,6 +409,26 @@ var BoundedFieldImpl = class {
     const f = this._fa;
     this._u(x, y, z, t, f);
     return [f[0], f[1], f[2]];
+  }
+  /**
+   * The one approximate gradient in the library, and deliberately so: the bounded velocity depends
+   * on `∇d` of *your* SDF, which in general has no closed form. It uses the same central
+   * differences and the same step as {@link vorticity}, so the two are consistent with each other
+   * — pass `gradient` in the options for an exact `∇d` and both sharpen together.
+   */
+  sampleGrad(x, y, z, out9, t = 0) {
+    if (out9.length < 9) throw new Error("helix-noise: sampleGrad needs 9 floats");
+    return fdGrad((px, py, pz, out) => this._u(px, py, pz, t, out), x, y, z, out9, this.h);
+  }
+  qCriterion(x, y, z, t = 0) {
+    return qFromGrad(this.sampleGrad(x, y, z, _g9, t));
+  }
+  lambda2(x, y, z, t = 0) {
+    return lambda2FromGrad(this.sampleGrad(x, y, z, _g9, t));
+  }
+  stretching(x, y, z, t = 0) {
+    this.sampleUW(x, y, z, _sw6, t);
+    return stretchFromGrad(this.sampleGrad(x, y, z, _g9, t), _sw6[3], _sw6[4], _sw6[5]);
   }
   sampleUW(x, y, z, out6, t = 0) {
     this._u(x, y, z, t, out6, 0);
@@ -543,24 +652,6 @@ function runWasm(field, amps, phases, pos, out, t, uw, sc) {
 // src/field.ts
 var _tmp6 = [0, 0, 0, 0, 0, 0];
 var _tmp9 = [0, 0, 0, 0, 0, 0, 0, 0, 0];
-function eigMid3(m) {
-  const p1 = m[1] * m[1] + m[2] * m[2] + m[5] * m[5];
-  const q = (m[0] + m[4] + m[8]) / 3;
-  if (p1 <= 1e-300) {
-    const d = [m[0], m[4], m[8]].sort((a, b2) => a - b2);
-    return d[1];
-  }
-  const d0 = m[0] - q, d4 = m[4] - q, d8 = m[8] - q;
-  const p2 = d0 * d0 + d4 * d4 + d8 * d8 + 2 * p1;
-  const p = Math.sqrt(p2 / 6);
-  const b = [d0 / p, m[1] / p, m[2] / p, m[1] / p, d4 / p, m[5] / p, m[2] / p, m[5] / p, d8 / p];
-  const det = b[0] * (b[4] * b[8] - b[5] * b[7]) - b[1] * (b[3] * b[8] - b[5] * b[6]) + b[2] * (b[3] * b[7] - b[4] * b[6]);
-  const r = Math.min(1, Math.max(-1, det / 2));
-  const phi = Math.acos(r) / 3;
-  const e1 = q + 2 * p * Math.cos(phi);
-  const e3 = q + 2 * p * Math.cos(phi + 2 * Math.PI / 3);
-  return 3 * q - e1 - e3;
-}
 var GA = Math.PI * (3 - Math.sqrt(5));
 var TILE = 256;
 var TWO_OVER_PI = 0.6366197723675814;
@@ -1283,29 +1374,14 @@ var HelixField = class {
    * cheapest good thing to colour particles by.
    */
   qCriterion(x, y, z, t = 0) {
-    const g = this.sampleGrad(x, y, z, _tmp9, t);
-    let tr2 = 0;
-    for (let m = 0; m < 3; m++) for (let n = 0; n < 3; n++) tr2 += g[3 * m + n] * g[3 * n + m];
-    return -0.5 * tr2;
+    return qFromGrad(this.sampleGrad(x, y, z, _tmp9, t));
   }
   /**
    * The **λ₂ criterion**: the middle eigenvalue of `S² + Ω²`. Negative inside a vortex core.
    * Stricter than {@link qCriterion} — it ignores swirl that is really just shear.
    */
   lambda2(x, y, z, t = 0) {
-    const g = this.sampleGrad(x, y, z, _tmp9, t);
-    const s = [], o = [];
-    for (let m = 0; m < 3; m++) for (let n = 0; n < 3; n++) {
-      s[3 * m + n] = 0.5 * (g[3 * m + n] + g[3 * n + m]);
-      o[3 * m + n] = 0.5 * (g[3 * m + n] - g[3 * n + m]);
-    }
-    const M = [];
-    for (let m = 0; m < 3; m++) for (let n = 0; n < 3; n++) {
-      let v = 0;
-      for (let k = 0; k < 3; k++) v += s[3 * m + k] * s[3 * k + n] + o[3 * m + k] * o[3 * k + n];
-      M[3 * m + n] = v;
-    }
-    return eigMid3(M);
+    return lambda2FromGrad(this.sampleGrad(x, y, z, _tmp9, t));
   }
   /**
    * Vortex **stretching** `ξ̂·S·ξ̂`: the strain felt along the local vorticity direction.
@@ -1314,16 +1390,7 @@ var HelixField = class {
    */
   stretching(x, y, z, t = 0) {
     this.sampleUW(x, y, z, _tmp6, t);
-    const wm = Math.hypot(_tmp6[3], _tmp6[4], _tmp6[5]);
-    if (wm < 1e-300) return 0;
-    const ex = _tmp6[3] / wm, ey = _tmp6[4] / wm, ez = _tmp6[5] / wm;
-    const g = this.sampleGrad(x, y, z, _tmp9, t);
-    const e = [ex, ey, ez];
-    let v = 0;
-    for (let m = 0; m < 3; m++) for (let n = 0; n < 3; n++) {
-      v += e[m] * 0.5 * (g[3 * m + n] + g[3 * n + m]) * e[n];
-    }
-    return v;
+    return stretchFromGrad(this.sampleGrad(x, y, z, _tmp9, t), _tmp6[3], _tmp6[4], _tmp6[5]);
   }
   relativeHelicitySpectral(t = 0) {
     let H = 0, E = 0, Z = 0;
@@ -1570,6 +1637,8 @@ function hcell(i, j, k, seed) {
   h = Math.imul(h, 3266489909);
   return (h ^ h >>> 16) >>> 0;
 }
+var _ag9 = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+var _aw6 = [0, 0, 0, 0, 0, 0];
 var HelixAtoms = class {
   constructor(opts) {
     this._scale = 1;
@@ -1732,6 +1801,78 @@ var HelixAtoms = class {
       out[5] = vz * sc;
     }
   }
+  /**
+   * Analytic velocity gradient, atom by atom. Each atom contributes `u = ∇W×A + W·T` with `T` the
+   * wave and `A = (s/|k|)·T` its potential, so differentiating gives five closed-form pieces:
+   *
+   * ```
+   * ∂_m u_n = gw·(ê_m×A)_n + G·d_m·(d×A)_n + k_m·(∇W×A′)_n + (∇W)_m·T_n + W·k_m·T′_n
+   * ```
+   *
+   * with `∇W = gw·d`, the window Hessian `H = gw·I + G·d⊗d`, and `A′ = ∂_φ A`. The trace vanishes
+   * identically because `k × A′ = T` — the same identity that makes the atom a curl in the first
+   * place — so this is divergence-free to machine precision rather than approximately.
+   */
+  sampleGrad(x, y, z, out9, t = 0) {
+    if (out9.length < 9) throw new Error("helix-noise: sampleGrad needs 9 floats");
+    const p = this.params, sc = this._scale;
+    for (let i = 0; i < 9; i++) out9[i] = 0;
+    for (let o = 0; o < p.octaves; o++) {
+      const rho = p.radius / (1 << o), L = 2 * rho, rho2 = rho * rho;
+      const bi = Math.floor(x / L - 0.5), bj = Math.floor(y / L - 0.5), bk = Math.floor(z / L - 0.5);
+      for (let dc = 0; dc < 8; dc++) {
+        const at = this._cell(o, bi + (dc & 1), bj + (dc >> 1 & 1), bk + (dc >> 2));
+        for (let b = 0; b < at.length; b += STRIDE) {
+          const dx = x - at[b], dy = y - at[b + 1], dz = z - at[b + 2];
+          const r2 = dx * dx + dy * dy + dz * dz;
+          if (r2 >= rho2) continue;
+          const beta = 1 - r2 / rho2, b2 = beta * beta, w = b2 * beta;
+          const kx = at[b + 3], ky = at[b + 4], kz = at[b + 5];
+          const phi = kx * dx + ky * dy + kz * dz + at[b + 9] + at[b + 10] * t;
+          const c = Math.cos(phi), sn = Math.sin(phi);
+          const s = at[b + 7], a = at[b + 8], gsk = at[b + 11];
+          const e1x = at[b + 12], e1y = at[b + 13], e1z = at[b + 14];
+          const e2x = at[b + 15], e2y = at[b + 16], e2z = at[b + 17];
+          const Tx = a * (c * e1x - s * sn * e2x);
+          const Ty = a * (c * e1y - s * sn * e2y);
+          const Tz = a * (c * e1z - s * sn * e2z);
+          const Px = a * (-sn * e1x - s * c * e2x);
+          const Py = a * (-sn * e1y - s * c * e2y);
+          const Pz = a * (-sn * e1z - s * c * e2z);
+          const Ax = gsk * Tx, Ay = gsk * Ty, Az = gsk * Tz;
+          const Bx = gsk * Px, By = gsk * Py, Bz = gsk * Pz;
+          const gw = -6 * b2 / rho2;
+          const G = 24 * beta / (rho2 * rho2);
+          const gwx = gw * dx, gwy = gw * dy, gwz = gw * dz;
+          const dAx = dy * Az - dz * Ay, dAy = dz * Ax - dx * Az, dAz = dx * Ay - dy * Ax;
+          const wBx = gw * (dy * Bz - dz * By);
+          const wBy = gw * (dz * Bx - dx * Bz);
+          const wBz = gw * (dx * By - dy * Bx);
+          const kv = [kx, ky, kz], dv = [dx, dy, dz], gv = [gwx, gwy, gwz];
+          const Tv = [Tx, Ty, Tz], Pv = [Px, Py, Pz];
+          const dA = [dAx, dAy, dAz], wB = [wBx, wBy, wBz];
+          const em = [[0, -Az, Ay], [Az, 0, -Ax], [-Ay, Ax, 0]];
+          for (let mm = 0; mm < 3; mm++) {
+            for (let nn = 0; nn < 3; nn++) {
+              out9[3 * mm + nn] += gw * em[mm][nn] + G * dv[mm] * dA[nn] + kv[mm] * wB[nn] + gv[mm] * Tv[nn] + w * kv[mm] * Pv[nn];
+            }
+          }
+        }
+      }
+    }
+    for (let i = 0; i < 9; i++) out9[i] *= sc;
+    return out9;
+  }
+  qCriterion(x, y, z, t = 0) {
+    return qFromGrad(this.sampleGrad(x, y, z, _ag9, t));
+  }
+  lambda2(x, y, z, t = 0) {
+    return lambda2FromGrad(this.sampleGrad(x, y, z, _ag9, t));
+  }
+  stretching(x, y, z, t = 0) {
+    this.sampleUW(x, y, z, _aw6, t);
+    return stretchFromGrad(this.sampleGrad(x, y, z, _ag9, t), _aw6[3], _aw6[4], _aw6[5]);
+  }
   sample(x, y, z, t = 0) {
     const o = this._t6;
     this._eval(x, y, z, t, o, 0);
@@ -1891,6 +2032,9 @@ function twoScale(base, detail, opts) {
 var _a6 = [0, 0, 0, 0, 0, 0];
 var _b6 = [0, 0, 0, 0, 0, 0];
 var _t6 = [0, 0, 0, 0, 0, 0];
+var _a9 = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+var _b9 = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+var _g92 = [0, 0, 0, 0, 0, 0, 0, 0, 0];
 var TwoScaleField = class {
   constructor(base, detail, detailGain) {
     this.base = base;
@@ -1914,6 +2058,25 @@ var TwoScaleField = class {
   }
   sampleUA(x, y, z, out6, t = 0) {
     return this._sum("ua", x, y, z, out6, t);
+  }
+  /** Both scales are analytic, so their weighted sum is too. */
+  sampleGrad(x, y, z, out9, t = 0) {
+    if (out9.length < 9) throw new Error("helix-noise: sampleGrad needs 9 floats");
+    this.base.sampleGrad(x, y, z, _a9, t);
+    this.detail.sampleGrad(x, y, z, _b9, t);
+    const g = this.detailGain;
+    for (let i = 0; i < 9; i++) out9[i] = _a9[i] + g * _b9[i];
+    return out9;
+  }
+  qCriterion(x, y, z, t = 0) {
+    return qFromGrad(this.sampleGrad(x, y, z, _g92, t));
+  }
+  lambda2(x, y, z, t = 0) {
+    return lambda2FromGrad(this.sampleGrad(x, y, z, _g92, t));
+  }
+  stretching(x, y, z, t = 0) {
+    this.sampleUW(x, y, z, _t6, t);
+    return stretchFromGrad(this.sampleGrad(x, y, z, _g92, t), _t6[3], _t6[4], _t6[5]);
   }
   sample(x, y, z, t = 0) {
     this.sampleUW(x, y, z, _t6, t);
@@ -2057,7 +2220,21 @@ function norm3(v) {
 }
 var _t62 = [0, 0, 0, 0, 0, 0];
 var _s6 = [0, 0, 0, 0, 0, 0];
+var _g93 = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+var _e9 = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+var _d6 = [0, 0, 0, 0, 0, 0];
 var BaseFlow = class {
+  qCriterion(x, y, z, t = 0) {
+    return qFromGrad(this.sampleGrad(x, y, z, _g93, t));
+  }
+  lambda2(x, y, z, t = 0) {
+    return lambda2FromGrad(this.sampleGrad(x, y, z, _g93, t));
+  }
+  stretching(x, y, z, t = 0) {
+    this.sampleUW(x, y, z, _s6, t);
+    const wx = _s6[3], wy = _s6[4], wz = _s6[5];
+    return stretchFromGrad(this.sampleGrad(x, y, z, _g93, t), wx, wy, wz);
+  }
   sample(x, y, z, t = 0) {
     this.sampleUW(x, y, z, _t62, t);
     return [_t62[0], _t62[1], _t62[2]];
@@ -2191,6 +2368,57 @@ var RingField = class extends BaseFlow {
   sampleUA(x, y, z, out6, t = 0) {
     return this._eval(x, y, z, out6, t, false);
   }
+  /**
+   * Closed form. The ring has no swirl, so in its own cylindrical frame only four partials are
+   * non-zero, and every one of them is a polynomial in the same window derivatives the velocity
+   * already uses — `h`, `H1` and `H2`. Outside the core all three vanish, so the gradient goes to
+   * exactly zero at the support boundary rather than stepping.
+   */
+  sampleGrad(x, y, z, out9, t = 0) {
+    if (out9.length < 9) throw new Error("helix-noise: sampleGrad needs 9 floats");
+    for (let i = 0; i < 9; i++) out9[i] = 0;
+    const sh = this.speed * t;
+    const dx = x - (this.cx + sh * this.nx);
+    const dy = y - (this.cy + sh * this.ny);
+    const dz = z - (this.cz + sh * this.nz);
+    const nx = this.nx, ny = this.ny, nz = this.nz;
+    const zc = dx * nx + dy * ny + dz * nz;
+    let rx = dx - zc * nx, ry = dy - zc * ny, rz = dz - zc * nz;
+    const rho = Math.hypot(rx, ry, rz);
+    if (rho < 1e-12) return out9;
+    rx /= rho;
+    ry /= rho;
+    rz /= rho;
+    const dr = rho - this.R, q2 = dr * dr + zc * zc, c2 = this.c * this.c;
+    if (q2 >= c2) return out9;
+    const s = 1 - q2 / c2;
+    const h = this.G * s * s * s;
+    const H1 = -6 * this.G * s * s / c2;
+    const H2 = 24 * this.G * s / (c2 * c2);
+    const ur = -H1 * zc;
+    _e9[0] = rx;
+    _e9[1] = ry;
+    _e9[2] = rz;
+    _e9[3] = ny * rz - nz * ry;
+    _e9[4] = nz * rx - nx * rz;
+    _e9[5] = nx * ry - ny * rx;
+    _e9[6] = nx;
+    _e9[7] = ny;
+    _e9[8] = nz;
+    return axisymGrad(
+      ur,
+      0,
+      rho,
+      -H2 * dr * zc,
+      0,
+      H1 * dr / rho - h / (rho * rho) + H2 * dr * dr + H1,
+      -H1 - H2 * zc * zc,
+      0,
+      H1 * zc / rho + H2 * zc * dr,
+      _e9,
+      out9
+    );
+  }
 };
 var ComposedField = class extends BaseFlow {
   constructor(parts) {
@@ -2212,7 +2440,18 @@ var ComposedField = class extends BaseFlow {
   sampleUA(x, y, z, out6, t = 0) {
     return this._sum("ua", x, y, z, out6, t);
   }
+  /** The gradient of a sum is the sum of the gradients — so a composed field stays analytic. */
+  sampleGrad(x, y, z, out9, t = 0) {
+    if (out9.length < 9) throw new Error("helix-noise: sampleGrad needs 9 floats");
+    for (let i = 0; i < 9; i++) out9[i] = 0;
+    for (const f of this.parts) {
+      f.sampleGrad(x, y, z, _c9, t);
+      for (let i = 0; i < 9; i++) out9[i] += _c9[i];
+    }
+    return out9;
+  }
 };
+var _c9 = [0, 0, 0, 0, 0, 0, 0, 0, 0];
 var FD = 1e-5;
 function axisymmetric(opts = {}) {
   return new AxisymField(opts);
@@ -2325,6 +2564,50 @@ var AxisBase = class extends BaseFlow {
     this._frame(x, y, z, fr);
     this.cyl(fr[0], fr[1], c);
     this._world(c[0], c[1], c[2], fr, out, 0);
+  }
+  /**
+   * Cylindrical partials at a point, written as
+   * `[∂_r u^r, ∂_r u^θ, ∂_r u^z, ∂_z u^r, ∂_z u^θ, ∂_z u^z]`.
+   *
+   * The default differences {@link cyl} in the `(r, z)` half-plane — two dimensions rather than
+   * three, and on the profile rather than the assembled field. Subclasses with a closed form
+   * override it.
+   */
+  dcyl(r, z, out6) {
+    const h = FD, a = [0, 0, 0, 0, 0, 0], b = [0, 0, 0, 0, 0, 0];
+    this.cyl(r + h, z, a);
+    this.cyl(r - h, z, b);
+    out6[0] = (a[0] - b[0]) / (2 * h);
+    out6[1] = (a[1] - b[1]) / (2 * h);
+    out6[2] = (a[2] - b[2]) / (2 * h);
+    this.cyl(r, z + h, a);
+    this.cyl(r, z - h, b);
+    out6[3] = (a[0] - b[0]) / (2 * h);
+    out6[4] = (a[1] - b[1]) / (2 * h);
+    out6[5] = (a[2] - b[2]) / (2 * h);
+  }
+  /**
+   * The gradient of an axisymmetric field, assembled from its cylindrical partials — see
+   * {@link axisymGrad} for why the middle row is not a derivative of anything.
+   */
+  sampleGrad(x, y, z, out9, _t = 0) {
+    if (out9.length < 9) throw new Error("helix-noise: sampleGrad needs 9 floats");
+    this._frame(x, y, z, this._fr);
+    const r = this._fr[0], zc = this._fr[1];
+    const rx = this._fr[2], ry = this._fr[3], rz = this._fr[4];
+    this._c.fill(0);
+    this.cyl(r, zc, this._c);
+    this.dcyl(r, zc, _d6);
+    _e9[0] = rx;
+    _e9[1] = ry;
+    _e9[2] = rz;
+    _e9[3] = this.ny * rz - this.nz * ry;
+    _e9[4] = this.nz * rx - this.nx * rz;
+    _e9[5] = this.nx * ry - this.ny * rx;
+    _e9[6] = this.nx;
+    _e9[7] = this.ny;
+    _e9[8] = this.nz;
+    return axisymGrad(this._c[0], this._c[1], r, _d6[0], _d6[1], _d6[2], _d6[3], _d6[4], _d6[5], _e9, out9);
   }
   sampleUA(x, y, z, out6, _t = 0) {
     this._frame(x, y, z, this._fr);
@@ -2464,6 +2747,8 @@ function dssCollapse(field, opts = {}) {
   );
 }
 var _w6 = [0, 0, 0, 0, 0, 0];
+var _w9 = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+var _g94 = [0, 0, 0, 0, 0, 0, 0, 0, 0];
 var WarpField = class {
   constructor(base, c, L, A, freeze) {
     this.base = base;
@@ -2495,6 +2780,33 @@ var WarpField = class {
     out6[4] = aScale * _w6[4];
     out6[5] = aScale * _w6[5];
     return out6;
+  }
+  /**
+   * `u = A·U(ξ)` with `ξ = (x−c)/L`, so the chain rule gives `∇u = (A/L)·∇U` — the same `A/L` the
+   * vorticity carries, for the same reason. Exact whenever the wrapped field's gradient is.
+   */
+  sampleGrad(x, y, z, out9, t = 0) {
+    if (out9.length < 9) throw new Error("helix-noise: sampleGrad needs 9 floats");
+    const l = this.L(t), amp = this.A(t), k = amp / l;
+    this.base.sampleGrad(
+      (x - this.c[0]) / l,
+      (y - this.c[1]) / l,
+      (z - this.c[2]) / l,
+      _w9,
+      this.freeze ? 0 : t
+    );
+    for (let i = 0; i < 9; i++) out9[i] = k * _w9[i];
+    return out9;
+  }
+  qCriterion(x, y, z, t = 0) {
+    return qFromGrad(this.sampleGrad(x, y, z, _g94, t));
+  }
+  lambda2(x, y, z, t = 0) {
+    return lambda2FromGrad(this.sampleGrad(x, y, z, _g94, t));
+  }
+  stretching(x, y, z, t = 0) {
+    this.sampleUW(x, y, z, _t63, t);
+    return stretchFromGrad(this.sampleGrad(x, y, z, _g94, t), _t63[3], _t63[4], _t63[5]);
   }
   sample(x, y, z, t = 0) {
     this.sampleUW(x, y, z, _t63, t);
