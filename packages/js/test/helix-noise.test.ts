@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert";
-import HelixNoise, { create, createAtoms, HelixField, abc, twoScale, shellPeak, rolloff, condensate, C_TWO_SCALE, exactNS, nsDeveloped, nsForced, NS_TARGETS, createRing, collidingRings, compose, ringSpeed } from "../src/index";
+import type { AxiProfile } from "../src/index";
+import HelixNoise, { create, createAtoms, HelixField, abc, twoScale, shellPeak, rolloff, condensate, C_TWO_SCALE, exactNS, nsDeveloped, nsForced, NS_TARGETS, createRing, collidingRings, compose, ringSpeed, axisymmetric, strainedColumn, counterSwirlColumns, columnCore, columnPeakVorticity } from "../src/index";
 import type { Vec3, FlowField, Field } from "../src/types";
 import { runWasm } from "../src/wasm";
 
@@ -230,6 +231,39 @@ test("wasm SIMD kernel equals the JS batch kernel (forced side-by-side)", () => 
     for (let m = 0; m < 3; m++) w2 = Math.max(w2, Math.abs(e2e[3 * i + m] - uw[m]));
   }
   assert.ok(w2 < 1e-12, `default batch vs scalar mismatch ${w2}`);
+});
+
+test("batch sampler tracks the time-dependent mode slots (t = 0 after t > 0 is not stale)", () => {
+  // The wasm mode block is module-global, and `a` (viscous decay) / `ph` (flutter) are its only
+  // time-dependent slots. `_amps`/`_phases` hand back the baked arrays at t = 0, so a sweep that
+  // returns to 0 must still re-upload — otherwise the kernel keeps the previous frame's decayed /
+  // flutter-shifted modes and the batch path silently disagrees with the scalar sampler.
+  const n = 96; // ≥ 64 → the batch path routes through wasm where SIMD is available
+  const pos = new Float64Array(3 * n).map((_, i) => Math.sin(i * 12.9898) * 5);
+  const uw = [0, 0, 0, 0, 0, 0];
+  const agrees = (f: Field, t: number, tag: string): void => {
+    const b3 = f.sampleMany(pos, undefined, t);
+    const b6 = f.sampleManyUW(pos, undefined, t);
+    let w3 = 0, w6 = 0;
+    for (let i = 0; i < n; i++) {
+      f.sampleUW(pos[3 * i], pos[3 * i + 1], pos[3 * i + 2], uw, t);
+      for (let m = 0; m < 3; m++) w3 = Math.max(w3, Math.abs(b3[3 * i + m] - uw[m]));
+      for (let m = 0; m < 6; m++) w6 = Math.max(w6, Math.abs(b6[6 * i + m] - uw[m]));
+    }
+    assert.ok(w3 < 1e-12, `sampleMany ${tag} t=${t} mismatch ${w3}`);
+    assert.ok(w6 < 1e-12, `sampleManyUW ${tag} t=${t} mismatch ${w6}`);
+  };
+  const base = { modes: 48, seed: 7, churn: 1, coherence: rolloff(2.5) };
+  for (const p of [{ flutter: 1.5 }, { decay: 0.05 }, { flutter: 0.8, decay: 0.03 }, {}]) {
+    const f = create({ ...base, ...p });
+    // 0.9 twice: a repeated t must not need a re-upload but must still be right
+    for (const t of [0, 0.5, 0, 0.9, 0.9, 0]) agrees(f, t, JSON.stringify(p));
+  }
+  // Two fields alternating: the slot bookkeeping is global, so it has to survive owner changes
+  // (this pattern masked the original bug — the owner switch forced a full re-upload).
+  const fa = create({ ...base, flutter: 1.5 });
+  const fb = create({ ...base, seed: 8, decay: 0.05 });
+  for (const t of [0, 0.4, 0, 0.4]) { agrees(fa, t, "alt/a"); agrees(fb, t, "alt/b"); }
 });
 
 test("sampleManyUW equals per-point sampleUW (velocity + vorticity, Float32Array io)", () => {
@@ -1432,4 +1466,133 @@ test("flutter: batch kernels and the emitted GLSL carry the same phase", () => {
       for (let i = 0; i < 3; i++) assert.ok(Math.abs(u[i] * g._scale - U[i]) < 1e-12, `shader phase at t=${tt}`);
     }
   }
+});
+
+// ---------------------------------------------------------------------------
+// The axisymmetric chassis and the strained column
+// ---------------------------------------------------------------------------
+
+/** Divergence by central differences, maximised over a scatter of points. */
+function maxDiv(f: FlowField, pts: [number, number, number][], t = 0, h = 1e-5): number {
+  let d = 0;
+  for (const [x, y, z] of pts) {
+    const v =
+      (f.sample(x + h, y, z, t)[0] - f.sample(x - h, y, z, t)[0]) / (2 * h) +
+      (f.sample(x, y + h, z, t)[1] - f.sample(x, y - h, z, t)[1]) / (2 * h) +
+      (f.sample(x, y, z + h, t)[2] - f.sample(x, y, z - h, t)[2]) / (2 * h);
+    d = Math.max(d, Math.abs(v));
+  }
+  return d;
+}
+
+const SCATTER: [number, number, number][] = Array.from({ length: 24 }, (_, i) => [
+  Math.sin(i * 1.7) * 1.4, Math.cos(i * 2.3) * 1.4, Math.sin(i * 0.9) * 1.1,
+]);
+
+test("axisymmetric chassis: incompressible for arbitrary profiles, and smooth on its own axis", () => {
+  const stream: AxiProfile = Object.assign((q: number, z: number) => Math.exp(-q) * Math.sin(z), {
+    dq: (q: number, z: number) => -Math.exp(-q) * Math.sin(z),
+    dz: (q: number, z: number) => Math.exp(-q) * Math.cos(z),
+  });
+  const swirl: AxiProfile = Object.assign((q: number) => Math.exp(-2 * q), {
+    dq: (q: number) => -2 * Math.exp(-2 * q),
+    dz: () => 0,
+  });
+  const f = axisymmetric({ stream, swirl });
+  assert.ok(maxDiv(f, SCATTER) < 1e-6, "incompressible with profiles that solve nothing in particular");
+
+  // The whole point of the r² factorisation: the axis is an ordinary point. u^z there is 2P(0,z),
+  // and the transverse components vanish linearly rather than blowing up.
+  const z = 0.7, want = 2 * stream(0, z);
+  for (const r of [1e-2, 1e-3, 1e-4]) {
+    const u = f.sample(r, 0, z);
+    assert.ok(Math.abs(u[2] - want) < 1e-3, `axial limit at r=${r}: ${u[2]} vs ${want}`);
+    assert.ok(Math.abs(u[0]) < 2 * r && Math.abs(u[1]) < 2 * r, "transverse flow vanishes with r");
+  }
+  assert.ok(Number.isFinite(f.sample(0, 0, z)[2]), "and r = 0 itself is sampleable");
+});
+
+test("strained column: an exact NS solution — Gaussian axial vorticity and a true potential", () => {
+  const strain = 0.7, viscosity = 0.05, circulation = 1.3;
+  const f = strainedColumn({ strain, viscosity, circulation });
+  assert.ok(maxDiv(f, SCATTER) < 1e-6, "divergence-free");
+
+  const core = columnCore(strain, viscosity), peak = columnPeakVorticity(strain, viscosity, circulation);
+  assert.ok(Math.abs(core - Math.sqrt((2 * viscosity) / strain)) < 1e-12);
+  for (const [x, y, z] of SCATTER) {
+    const w = f.vorticity(x, y, z), r2 = x * x + y * y;
+    assert.ok(Math.hypot(w[0], w[1]) < 1e-12, "vorticity is purely axial");
+    assert.ok(Math.abs(w[2] - peak * Math.exp(-r2 / (core * core))) < 1e-12, "and exactly Gaussian");
+  }
+  // The helpers describe the field they claim to describe.
+  assert.ok(Math.abs(f.vorticity(0, 0, 0)[2] - peak) < 1e-12, "peak sits on the axis");
+  assert.ok(Math.abs(f.vorticity(core, 0, 0)[2] - peak / Math.E) < 1e-12, "1/e at the core radius");
+
+  // ∇×A = u, including the logarithmic swirl potential −(ε/2)·G(br²).
+  for (const [x, y, z] of SCATTER) {
+    const c = fdCurl((a, b, cc) => f.potential(a, b, cc), x, y, z, 1e-5);
+    const u = f.sample(x, y, z);
+    for (let i = 0; i < 3; i++) assert.ok(Math.abs(c[i] - u[i]) < 1e-6, "curl of the potential is the flow");
+  }
+});
+
+test("strained column: raising the strain makes the filament thinner and brighter at once", () => {
+  const nu = 0.05, eps = 1;
+  let prevCore = Infinity, prevPeak = 0;
+  for (const a of [0.4, 0.8, 1.6, 3.2]) {
+    const core = columnCore(a, nu), peak = columnPeakVorticity(a, nu, eps);
+    assert.ok(core < prevCore && peak > prevPeak, `a=${a}: core ${core} down, peak ${peak} up`);
+    prevCore = core; prevPeak = peak;
+  }
+});
+
+test("counter-rotating pair: the mid-plane is exactly impermeable, and only the mid-plane", () => {
+  const d = 1.6, strain = 0.7, viscosity = 0.05, circulation = 1.2;
+  const f = counterSwirlColumns({ separation: d, strain, viscosity, circulation, axis: [0, 0, 1], offsetAxis: [1, 0, 0] });
+  const peak = columnPeakVorticity(strain, viscosity, circulation);
+
+  // On the plane the two cores are equidistant, so the through-component of the swirl and of the
+  // strain both cancel: an invisible wall the flow never crosses.
+  let onN = 0, onW = 0, onT = 0;
+  for (let i = 0; i < 40; i++) {
+    const y = Math.sin(i * 1.3) * 2, z = Math.cos(i * 0.7) * 2;
+    const u = f.sample(0, y, z);
+    onN = Math.max(onN, Math.abs(u[0]));
+    onT = Math.max(onT, Math.hypot(u[1], u[2]));
+    onW = Math.max(onW, Math.hypot(...f.vorticity(0, y, z)));
+  }
+  assert.ok(onN < 1e-15, `nothing crosses the mid-plane (${onN})`);
+  assert.ok(onW < 1e-15, `and the vorticity vanishes on it (${onW})`);
+  assert.ok(onT > 1, "while the in-plane jet is very much alive");
+
+  // The quantifier that matters: *off* the plane both must come back. Stacking the pair along a
+  // shared axis instead would cancel the swirl everywhere, and the on-plane zeros above would be
+  // true but vacuous — this is the assertion that tells the two arrangements apart.
+  let offN = 0, offW = 0;
+  for (let i = 0; i < 60; i++) {
+    const x = (i % 2 ? 1 : -1) * (0.1 + (i % 9) * 0.2), y = Math.sin(i) * 1.2, z = Math.cos(i) * 1.2;
+    offN = Math.max(offN, Math.abs(f.sample(x, y, z)[0]));
+    offW = Math.max(offW, Math.hypot(...f.vorticity(x, y, z)));
+  }
+  assert.ok(offN > 1, `flow crosses every other plane (${offN})`);
+  assert.ok(offW > peak * 0.5, `and the filaments stay bright off it (${offW} vs peak ${peak})`);
+  // Each core carries the peak up to its partner's Gaussian tail — e^(−a·d²/2ν) here, about 1.6e-8.
+  // Small, but genuinely present: the pair is a superposition, not two isolated columns.
+  const tail = Math.exp((-strain * d * d) / (2 * viscosity));
+  assert.ok(Math.abs(f.vorticity(d / 2, 0, 0)[2] - peak * (1 - tail)) < 1e-9, "each core carries the peak,");
+  assert.ok(Math.abs(f.vorticity(-d / 2, 0, 0)[2] + peak * (1 - tail)) < 1e-9, "with opposite signs");
+
+  assert.ok(maxDiv(f, SCATTER) < 1e-6, "and the pair is still divergence-free");
+});
+
+test("counter-rotating pair: the invariant follows the geometry, not the coordinates", () => {
+  const f = counterSwirlColumns({ separation: 1.4, axis: [1, 1, 0], offsetAxis: [0, 0, 1] });
+  let on = 0, off = 0;
+  for (let i = 0; i < 30; i++) {
+    const s = Math.sin(i) * 1.5, c = Math.cos(i) * 1.5;
+    on = Math.max(on, Math.abs(f.sample(s, c, 0)[2]));            // plane z = 0, normal ẑ
+    off = Math.max(off, Math.abs(f.sample(s, c, 0.8)[2]));
+  }
+  assert.ok(on < 1e-15, `still impermeable when tilted (${on})`);
+  assert.ok(off > 0.5, "and still permeable elsewhere");
 });

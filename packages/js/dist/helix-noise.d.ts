@@ -737,6 +737,115 @@ declare function collidingRings(opts?: RingOptions & {
  * with each other or with a spectral field.
  */
 declare function compose(...fields: FlowField[]): FlowField;
+/**
+ * A profile in the chassis coordinates `(q, z)` with `q = r²`. Taking `r²` rather than `r` as the
+ * argument is what makes the axis behave: it forces the parity every smooth axisymmetric field
+ * must have, so no implementation ever has to special-case `r = 0`.
+ *
+ * Supply `dq` and `dz` to get an exactly divergence-free field. Without them the partials are
+ * estimated by central differences, and the divergence is then O(h²) rather than machine zero.
+ */
+interface AxiProfile {
+    (q: number, z: number): number;
+    /** ∂/∂q. Optional; central differences are used when absent. */
+    dq?: (q: number, z: number) => number;
+    /** ∂/∂z. Optional; central differences are used when absent. */
+    dz?: (q: number, z: number) => number;
+}
+/** Options for {@link axisymmetric}. */
+interface AxisymOptions {
+    /** Stream profile `P` in `ψ = r²·P(r², z)`. Default: none (no poloidal flow). */
+    stream?: AxiProfile;
+    /** Swirl profile `h` in `Γ = r²·h(r², z)`. Default: none (no rotation). */
+    swirl?: AxiProfile;
+    /**
+     * Antiderivative `H(q, z) = ∫₀^q h dt` of the swirl profile, used only by `potential()`.
+     * Supply it for an exact vector potential; without it a fixed Simpson rule is used.
+     */
+    swirlIntegral?: (q: number, z: number) => number;
+    center?: Vec3;
+    /** Symmetry axis; normalized internally. Default `[0, 0, 1]`. */
+    axis?: Vec3;
+}
+/**
+ * The **axisymmetric chassis**: any pair of smooth profiles becomes a swirling, exactly
+ * incompressible field that is smooth on its own axis.
+ *
+ * ```js
+ * const funnel = axisymmetric({
+ *   stream: (q, z) => Math.exp(-q) * z,      // ψ = r²·P
+ *   swirl: (q) => Math.exp(-2 * q),          // Γ = r²·h
+ * });
+ * ```
+ *
+ * With `ψ = r²P(r², z)` and `Γ = r²h(r², z)` the cylindrical formulas lose their division by `r`
+ * entirely — `u^r = −r·∂_z P`, `u^z = 2P + 2q·∂_q P`, `u^θ = r·h` — so the axis is an ordinary
+ * point rather than a removable singularity, and there is no seam down the middle.
+ *
+ * **This is not a Navier–Stokes solution.** An arbitrary pair of profiles gives a field that is
+ * exactly incompressible and smooth, nothing more. For one that does solve the equations, see
+ * {@link strainedColumn}.
+ */
+declare function axisymmetric(opts?: AxisymOptions): FlowField;
+/** Options for {@link strainedColumn}. */
+interface StrainedColumnOptions {
+    /** Inward strain rate `a` — how hard the flow squeezes toward the axis. Default 0.7. */
+    strain?: number;
+    /** Viscosity `ν`. With `strain` it fixes the core radius `√(2ν/a)`. Default 0.05. */
+    viscosity?: number;
+    /** Circulation `ε` — how fast the column spins. Default 1. */
+    circulation?: number;
+    center?: Vec3;
+    axis?: Vec3;
+}
+/**
+ * A **strained vortex column** — a tornado, and an *exact stationary solution* of the
+ * Navier–Stokes equations:
+ *
+ * ```
+ * u^r = −a·r,   u^z = 2a·z,   u^θ = ε(1 − e^(−a r²/2ν)) / r
+ * ```
+ *
+ * An inward strain holds the filament open against viscosity, and the balance is exact: the
+ * vorticity is purely axial and Gaussian, `ω_z = (εa/ν)·e^(−a r²/2ν)`, with core radius
+ * `√(2ν/a)`. Raise the strain and the filament gets **thinner and brighter at once**, because the
+ * peak `εa/ν` climbs as the width falls — which is how a real intensifying vortex reads.
+ *
+ * Note that the strain field grows with distance (`u ~ a·r`), so this is a **local-domain** object:
+ * bound the region you render, or the far field will dominate. Its vector potential is exact but
+ * grows logarithmically and is *not* compactly supported — a swirling column cannot have a compact
+ * one — so an obstacle far from the column is affected slightly, unlike with {@link createRing}.
+ */
+declare function strainedColumn(opts?: StrainedColumnOptions): FlowField;
+/** Core radius `√(2ν/a)` of a {@link strainedColumn} — where its Gaussian vorticity falls to 1/e. */
+declare function columnCore(strain: number, viscosity: number): number;
+/** Peak axial vorticity `εa/ν` at the axis of a {@link strainedColumn}. */
+declare function columnPeakVorticity(strain: number, viscosity: number, circulation: number): number;
+/**
+ * A **counter-rotating pair** — two parallel strained columns, side by side, spinning opposite ways.
+ *
+ * They are offset *across* the axis, not stacked along it. Stacking is the tempting arrangement and
+ * it is degenerate: a column's vorticity `ω_z = (εa/ν)·e^(−a r²/2ν)` depends on `r` alone and never
+ * decays along `z`, so two on a shared axis with opposite circulation cancel each other **globally**
+ * — every trace of rotation, everywhere, leaving nothing but a doubled strain.
+ *
+ * Offset laterally, they instead do what a real vortex pair does. On the mid-plane the two cores sit
+ * at equal distance, so the swirl contributions are mirror images: the component *through* the plane
+ * cancels identically while the in-plane component doubles. Two exact consequences, both worth
+ * checking rather than believing —
+ *
+ * - the mid-plane is **impermeable**: `u·n̂ = 0` on it exactly, an invisible wall the flow never
+ *   crosses, with the strain's own inflow cancelling there too;
+ * - the vorticity vanishes on that plane and *only* there, so the two filaments stay individually
+ *   bright — and between them the doubled swirl drives a **jet** along the plane.
+ *
+ * `separation` is the distance between the two axes; `offsetAxis` is the direction they are
+ * separated along (any vector not parallel to `axis` — its perpendicular part is used).
+ */
+declare function counterSwirlColumns(opts?: StrainedColumnOptions & {
+    separation?: number;
+    offsetAxis?: Vec3;
+}): FlowField;
 
 /** Create a Helix Noise field. */
 declare function create(options?: HelixNoiseOptions): Field;
@@ -754,4 +863,4 @@ declare const HelixNoise: {
     version: string;
 };
 
-export { type AtomField, type Bake2DResult, type Bake3DResult, type BoundaryOptions, type BoundedField, C_TWO_SCALE, type ExactNSOptions, type Field, type FlowField, type GlslOptions, HelixAtoms, type HelixAtomsOptions, HelixField, type HelixNoiseOptions, NS_TARGETS, type Out6, type RingOptions, type ScaleFn, type Sdf, type SelfTestReport, type Vec3, abc, collidingRings, compose, condensate, create, createAtoms, createRing, HelixNoise as default, exactNS, nsDeveloped, nsForced, ringSpeed, rolloff, selfTest, shellPeak, twoScale, version };
+export { type AtomField, type AxiProfile, type AxisymOptions, type Bake2DResult, type Bake3DResult, type BoundaryOptions, type BoundedField, C_TWO_SCALE, type ExactNSOptions, type Field, type FlowField, type GlslOptions, HelixAtoms, type HelixAtomsOptions, HelixField, type HelixNoiseOptions, NS_TARGETS, type Out6, type RingOptions, type ScaleFn, type Sdf, type SelfTestReport, type StrainedColumnOptions, type Vec3, abc, axisymmetric, collidingRings, columnCore, columnPeakVorticity, compose, condensate, counterSwirlColumns, create, createAtoms, createRing, HelixNoise as default, exactNS, nsDeveloped, nsForced, ringSpeed, rolloff, selfTest, shellPeak, strainedColumn, twoScale, version };

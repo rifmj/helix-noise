@@ -1,0 +1,308 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Helix Noise — vortex columns (an exact Navier–Stokes solution)</title>
+<style>
+  html,body{margin:0;background:#070a0e;color:#cdd6dd;font-family:system-ui,sans-serif}
+  .wrap{max-width:980px;margin:0 auto;padding:22px 16px}
+  h1{font-size:19px;font-weight:600;margin:0 0 6px}
+  h1 code{color:#f4a13c}
+  p{color:#8a97a2;font-size:13.5px;line-height:1.6;margin:0 0 14px}
+  p b{color:#cdd6dd;font-weight:500}
+  code{font-family:ui-monospace,Menlo,monospace;color:#f4a13c;font-size:12.5px}
+  #stage{position:relative;width:100%;aspect-ratio:16/10;border:1px solid rgba(150,180,200,.15);border-radius:10px;overflow:hidden;background:#070a0e}
+  .badge{position:absolute;top:10px;left:12px;font-family:ui-monospace,monospace;font-size:10.5px;
+    letter-spacing:.12em;text-transform:uppercase;color:#93a3b0;background:rgba(7,10,14,.55);
+    border:1px solid rgba(150,180,200,.14);border-radius:6px;padding:4px 8px;pointer-events:none}
+  .ro{position:absolute;top:10px;right:12px;font-family:ui-monospace,monospace;font-size:11px;color:#93a3b0;
+    background:rgba(7,10,14,.55);border:1px solid rgba(150,180,200,.14);border-radius:6px;padding:5px 9px;
+    text-align:right;line-height:1.5;pointer-events:none}
+  .ro b{font-weight:400;color:#2fd6bf}
+  .ro .zero{color:#f4a13c}
+  .row{display:flex;flex-wrap:wrap;gap:14px;align-items:center;margin-top:12px;font-family:ui-monospace,monospace;font-size:12px;color:#93a3b0}
+  .row label{display:flex;align-items:center;gap:8px}
+  input[type=range]{width:120px}
+  button{font-family:ui-monospace,monospace;font-size:11.5px;color:#cdd6dd;background:#0c1016;
+    border:1px solid rgba(150,180,200,.22);border-radius:7px;padding:6px 11px;cursor:pointer}
+  button:hover{border-color:#38d9d1}
+  button.on{border-color:#38d9d1;color:#fff}
+  .note{margin-top:12px;font-size:12px;color:#5d6b77;font-family:ui-monospace,monospace}
+  .key{display:inline-flex;align-items:center;gap:6px;margin-right:14px}
+  .sw{width:10px;height:10px;border-radius:2px;display:inline-block}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Vortex columns — <code>strainedColumn</code>, <code>counterSwirlColumns</code>, <code>axisymmetric</code></h1>
+  <p>A tornado, and — unlike everything else in this library — an <b>exact stationary solution of the
+    Navier–Stokes equations</b>: an inward strain holds the filament open against viscosity, and the balance
+    is exact. Its vorticity is purely axial and exactly Gaussian, <code>ω_z = (εa/ν)·e^(−a r²/2ν)</code>, so
+    raising the <b>strain</b> makes the filament <b>thinner and brighter at the same time</b> — the peak
+    <code>εa/ν</code> climbs as the width <code>√(2ν/a)</code> falls. That coupling is what a real
+    intensifying vortex looks like, and here it is not art-directed.</p>
+  <p><b>Counter-rotating pair</b> sets two of them side by side, spinning opposite ways. Between the cores
+    the swirl doubles into a <b>jet</b>; across the mid-plane it cancels <em>identically</em>, so that plane
+    is <b>impermeable</b> — nothing crosses it, ever. The readout measures both halves live: <code>u·n</code>
+    and <code>|ω|</code> read machine zero <em>on</em> the plane while staying large <em>off</em> it, which is
+    what separates a real invariant from a vacuous one. (Stacking the pair along a shared axis instead is
+    degenerate — a column's vorticity never decays along its own axis, so the two would cancel everywhere.)
+    <b>Funnel</b> drops the physics and uses the bare <code>axisymmetric</code> chassis: any two profiles
+    you like, still exactly incompressible, and still <b>smooth on the axis</b> — the <code>r²</code>
+    factorisation removes the division by <code>r</code>, so there is no seam down the middle. Drag to orbit.</p>
+  <div id="stage"><div class="badge">helix-noise · vortex columns</div><div class="ro" id="ro">—</div></div>
+  <div class="row">
+    <button id="s-one" class="on">one column</button>
+    <button id="s-two">counter-rotating pair</button>
+    <button id="s-fun">funnel (chassis)</button>
+    <label>strain a <input id="strain" type="range" min="0.2" max="3" step="0.05" value="0.7"><span id="v-strain">0.70</span></label>
+    <label>ν <input id="nu" type="range" min="0.01" max="0.3" step="0.005" value="0.05"><span id="v-nu">0.050</span></label>
+    <label>circulation ε <input id="circ" type="range" min="0.2" max="3" step="0.1" value="1.0"><span id="v-circ">1.0</span></label>
+  </div>
+  <div class="note" style="margin-top:10px">
+    <span class="key"><span class="sw" style="background:#2fd6bf"></span>weak vorticity</span>
+    <span class="key"><span class="sw" style="background:#f4a13c"></span>inside the core (|ω| near peak)</span>
+    <span class="key"><span class="sw" style="background:#4a5a66"></span>core radius guide</span>
+  </div>
+  <div class="note" id="note">loading three.js…</div>
+</div>
+
+<script src="../dist/helix-noise.global.js"></script>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+  import * as THREE from "three";
+  import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+  const TAU = Math.PI * 2;
+  const SEP = 2.4;
+  const params = { scene: "one", strain: 0.7, nu: 0.05, circ: 1.0 };
+
+  // ---- the field ---------------------------------------------------------
+  let field, core = 0, peak = 0;
+  function build() {
+    const o = { strain: params.strain, viscosity: params.nu, circulation: params.circ, axis: [0, 0, 1] };
+    core = HelixNoise.columnCore(params.strain, params.nu);
+    peak = HelixNoise.columnPeakVorticity(params.strain, params.nu, params.circ);
+    if (params.scene === "one") field = HelixNoise.strainedColumn(o);
+    else if (params.scene === "two") field = HelixNoise.counterSwirlColumns({ ...o, separation: SEP, offsetAxis: [1, 0, 0] });
+    else {
+      // The bare chassis: ψ = r²·P(r², z), Γ = r²·h(r², z). Nothing here solves NS — it is only
+      // exactly divergence-free and smooth on the axis. Analytic partials keep it exact.
+      const k = params.strain;
+      const stream = Object.assign((q, z) => Math.exp(-q) * Math.sin(k * z), {
+        dq: (q, z) => -Math.exp(-q) * Math.sin(k * z),
+        dz: (q, z) => k * Math.exp(-q) * Math.cos(k * z),
+      });
+      // Concentrate the swirl near the axis, so the bright part of the picture is exactly the
+      // region where a naive ψ/r formulation would have its seam — and here there is none.
+      const swirl = Object.assign((q) => params.circ * Math.exp(-7 * q), {
+        dq: (q) => -7 * params.circ * Math.exp(-7 * q),
+        dz: () => 0,
+      });
+      field = HelixNoise.axisymmetric({ stream, swirl, axis: [0, 0, 1] });
+    }
+  }
+  build();
+
+  // ---- particles ---------------------------------------------------------
+  const N = 11000;
+  const pos = new Float32Array(3 * N);
+  const posD = new Float64Array(3 * N);
+  const life = new Float32Array(N);
+  const col = new Float32Array(3 * N);
+  let rs = 20260726;
+  const rnd = () => ((rs = (rs * 1664525 + 1013904223) >>> 0) / 4294967296);
+
+  /** The strain field grows with distance (u ~ a·r), so this is a local-domain object: seed and
+   *  recycle inside a bounded box, or the far field simply throws everything off screen. */
+  const BOX_R = 2.6, BOX_Z = 2.8;
+  function spawn(i, fresh) {
+    // Two populations. An area-uniform outer one shows the strain sweeping everything inward; a
+    // concentrated inner one actually occupies the core, which is only √(2ν/a) wide — seed by area
+    // alone and the filament stays empty, so the thing the demo is about never lights up.
+    if (params.scene === "fun") {
+      // A thin sheet *through* the axis rather than a cloud around it: the point of the chassis is
+      // that streamlines cross r = 0 like any other point, so put particles where a seam would show.
+      posD[3 * i] = (rnd() * 2 - 1) * BOX_R;
+      posD[3 * i + 1] = (rnd() - 0.5) * 0.10;
+      posD[3 * i + 2] = (rnd() * 2 - 1) * BOX_Z;
+      life[i] = fresh ? 20 + rnd() * 200 : 90 + rnd() * 150;
+      return;
+    }
+    const inner = rnd() < 0.55;
+    const th = rnd() * TAU;
+    const rr = inner ? core * (0.05 + 2.6 * rnd() * rnd()) : 0.3 + Math.sqrt(rnd()) * (BOX_R - 0.3);
+    // The pair is offset across the axis, so each population belongs to one of the two cores.
+    const x0 = params.scene === "two" ? (rnd() < 0.5 ? -1 : 1) * SEP / 2 : 0;
+    posD[3 * i] = x0 + rr * Math.cos(th);
+    posD[3 * i + 1] = rr * Math.sin(th);
+    // The axial flow u^z = 2az ejects the inner ones quickly, so start those near the stagnation
+    // plane where the inflow actually is.
+    posD[3 * i + 2] = (rnd() - 0.5) * (inner ? 2.4 : 1.6);
+    life[i] = fresh ? 20 + rnd() * 160 : 60 + rnd() * 120;
+  }
+  for (let i = 0; i < N; i++) spawn(i, true);
+
+  // ---- three.js ----------------------------------------------------------
+  const stage = document.getElementById("stage");
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(Math.min(2, devicePixelRatio));
+  stage.appendChild(renderer.domElement);
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x070a0e);
+  const camera = new THREE.PerspectiveCamera(45, 16 / 10, 0.1, 100);
+  camera.position.set(5.4, 2.6, 6.6);
+  const controls = new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true; controls.autoRotate = true; controls.autoRotateSpeed = 0.45;
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute("color", new THREE.BufferAttribute(col, 3));
+  scene.add(new THREE.Points(geo, new THREE.PointsMaterial({
+    size: 0.032, vertexColors: true, transparent: true, opacity: 0.85,
+    blending: THREE.AdditiveBlending, depthWrite: false,
+  })));
+
+  // A cylinder at the analytic core radius √(2ν/a) — so "thinner as it brightens" is checkable
+  // against a number, not just an impression.
+  const guideMat = new THREE.MeshBasicMaterial({ color: 0x4a5a66, wireframe: true, transparent: true, opacity: 0.4 });
+  const guides = [new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 1, 24, 1, true), guideMat),
+                  new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 1, 24, 1, true), guideMat)];
+  for (const g of guides) { g.rotation.x = Math.PI / 2; scene.add(g); }
+
+  // The collision plane, drawn only when it means something.
+  const disk = new THREE.Mesh(
+    new THREE.PlaneGeometry(2 * BOX_R, 2 * BOX_Z),
+    new THREE.MeshBasicMaterial({ color: 0x1d3a42, transparent: true, opacity: 0.42, side: THREE.DoubleSide })
+  );
+  disk.rotation.y = Math.PI / 2;      // the mid-plane x = 0, the one nothing crosses
+  scene.add(disk);
+
+  function layoutGuides() {
+    const two = params.scene === "two", fun = params.scene === "fun";
+    for (let i = 0; i < 2; i++) {
+      const g = guides[i];
+      g.visible = !fun && (i === 0 || two);
+      g.scale.set(core, 2 * BOX_Z, core);
+      g.position.set(two ? (i ? SEP / 2 : -SEP / 2) : 0, 0, 0);
+    }
+    disk.visible = two;
+  }
+  layoutGuides();
+
+  function resize() {
+    renderer.setSize(stage.clientWidth, stage.clientHeight);
+    camera.aspect = stage.clientWidth / stage.clientHeight;
+    camera.updateProjectionMatrix();
+  }
+  addEventListener("resize", resize); resize();
+
+  // ---- the live receipt --------------------------------------------------
+  // On the plane between two counter-swirling columns the tangential and axial components are not
+  // "nearly" zero, they are zero. Measure it every frame rather than asserting it in prose.
+  function planeCheck() {
+    let onN = 0, onW = 0, onT = 0, offN = 0, offW = 0;
+    for (let i = 1; i <= 26; i++) {
+      const y = Math.sin(i * 1.3) * 1.9, z = Math.cos(i * 0.7) * 1.9;
+      const u = field.sample(0, y, z);                     // on the mid-plane x = 0
+      onN = Math.max(onN, Math.abs(u[0]));
+      onT = Math.max(onT, Math.hypot(u[1], u[2]));
+      onW = Math.max(onW, Math.hypot(...field.vorticity(0, y, z)));
+      const x = (i % 2 ? 1 : -1) * (0.15 + (i % 8) * 0.18);  // and just off it
+      offN = Math.max(offN, Math.abs(field.sample(x, y, z)[0]));
+      offW = Math.max(offW, Math.hypot(...field.vorticity(x, y, z)));
+    }
+    return { onN, onW, onT, offN, offW };
+  }
+
+  // ---- advection ---------------------------------------------------------
+  const uw = [0, 0, 0, 0, 0, 0];
+  let wmax = 0, umax = 0;
+  // The column scenes have an exact peak to normalise against; the chassis has none, so track a
+  // decaying observed maximum rather than colouring everything against a number that means nothing.
+  let wref = 1;
+  function step() {
+    // The peak speed scales with the strain, so shrink the step as the field gets fiercer —
+    // otherwise a strong column simply steps particles straight through its own core.
+    const dt = Math.min(0.02, 0.02 * (0.7 / params.strain));
+    wmax = 0; umax = 0;
+    for (let i = 0; i < N; i++) {
+      const x = posD[3 * i], y = posD[3 * i + 1], z = posD[3 * i + 2];
+      field.sampleUW(x, y, z, uw, 0);   // these fields are stationary — t does nothing
+      posD[3 * i] = x + uw[0] * dt;
+      posD[3 * i + 1] = y + uw[1] * dt;
+      posD[3 * i + 2] = z + uw[2] * dt;
+      const w = Math.hypot(uw[3], uw[4], uw[5]);
+      if (w > wmax) wmax = w;
+      const sp = Math.hypot(uw[0], uw[1], uw[2]);
+      if (sp > umax) umax = sp;
+      const r = Math.hypot(posD[3 * i], posD[3 * i + 1]);
+      if (--life[i] <= 0 || r > BOX_R * 1.3 || Math.abs(posD[3 * i + 2]) > BOX_Z * 1.2) spawn(i, false);
+      pos[3 * i] = posD[3 * i]; pos[3 * i + 1] = posD[3 * i + 1]; pos[3 * i + 2] = posD[3 * i + 2];
+      // Colour by the analytic vorticity magnitude, normalised to the analytic peak — so the
+      // amber region *is* the core, by construction.
+      const q = params.scene === "fun" ? Math.hypot(uw[0], uw[1], uw[2]) : w;
+      const f = Math.pow(Math.min(1, q / wref), 0.55);
+      const g = 0.16 + 0.84 * f;
+      col[3 * i] = (0.184 + (0.957 - 0.184) * f) * g;
+      col[3 * i + 1] = (0.839 + (0.631 - 0.839) * f) * g;
+      col[3 * i + 2] = (0.749 + (0.235 - 0.749) * f) * g;
+    }
+    wref = params.scene === "fun" ? Math.max(umax, 0.9 * wref, 1e-6) : Math.max(peak, 1e-9);
+    geo.attributes.position.needsUpdate = true;
+    geo.attributes.color.needsUpdate = true;
+  }
+
+  const ro = document.getElementById("ro");
+  const fmt = (v) => (v < 1e-12 ? `<span class="zero">${v.toExponential(1)}</span>` : v.toFixed(3));
+  function readout() {
+    if (params.scene === "fun") {
+      // u^z on the axis is the finite limit 2P(0, z), not a singularity — measure it right there.
+      const uz = field.sample(0, 0, 0.7)[2], uz2 = field.sample(1e-7, 0, 0.7)[2];
+      ro.innerHTML = `ψ = r²·P, Γ = r²·h<br>no NS balance<br>div-free <b>&amp; axis-smooth</b><br>` +
+        `u<sup>z</sup> at r=0 <b>${uz.toFixed(4)}</b><br>u<sup>z</sup> at r=1e−7 <b>${uz2.toFixed(4)}</b>`;
+      return;
+    }
+    let s = `core √(2ν/a) <b>${core.toFixed(3)}</b><br>peak εa/ν <b>${peak.toFixed(1)}</b><br>|ω|max <b>${wmax.toFixed(1)}</b>`;
+    if (params.scene === "two") {
+      const m = planeCheck();
+      s += `<br>on plane u·n ${fmt(m.onN)}<br>on plane |ω| ${fmt(m.onW)}<br>on plane jet <b>${m.onT.toFixed(2)}</b>` +
+           `<br>off plane u·n <b>${m.offN.toFixed(2)}</b><br>off plane |ω| <b>${m.offW.toFixed(1)}</b>`;
+    }
+    ro.innerHTML = s;
+  }
+
+  function frame() { step(); readout(); controls.update(); renderer.render(scene, camera); requestAnimationFrame(frame); }
+  frame();
+
+  // ---- controls ----------------------------------------------------------
+  const $ = (id) => document.getElementById(id);
+  function reset() {
+    build(); layoutGuides();
+    for (let i = 0; i < N; i++) spawn(i, true);
+  }
+  function pickScene(name) {
+    params.scene = name;
+    for (const id of ["s-one", "s-two", "s-fun"]) $(id).classList.toggle("on", id === "s-" + name);
+    reset();
+  }
+  $("s-one").onclick = () => pickScene("one");
+  $("s-two").onclick = () => pickScene("two");
+  $("s-fun").onclick = () => pickScene("fun");
+  $("strain").oninput = (e) => { params.strain = +e.target.value; $("v-strain").textContent = params.strain.toFixed(2); reset(); };
+  $("nu").oninput = (e) => { params.nu = +e.target.value; $("v-nu").textContent = params.nu.toFixed(3); reset(); };
+  $("circ").oninput = (e) => { params.circ = +e.target.value; $("v-circ").textContent = params.circ.toFixed(1); reset(); };
+
+  document.getElementById("note").textContent =
+    `${N.toLocaleString()} particles advected by field.sampleUW() · in the column scenes colour is the analytic |ω| ` +
+    "normalised to the closed-form peak εa/ν, and the wireframe cylinder is the analytic core radius √(2ν/a) · " +
+    "the chassis scene is a sheet through the axis, coloured by speed · three.js r160";
+</script>
+</body>
+</html>

@@ -3,7 +3,39 @@
 All notable changes to this project are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.9.0]
+
+### Added
+
+- **The axisymmetric chassis.** `axisymmetric({ stream, swirl })` turns any pair of smooth profiles
+  into a swirling, exactly incompressible field. Writing `ψ = r²·P(r², z)` and `Γ = r²·h(r², z)`
+  rather than `ψ(r, z)` removes the division by `r` from every cylindrical formula —
+  `u^r = −r·∂_z P`, `u^z = 2P + 2q·∂_q P`, `u^θ = r·h` — so the axis is an ordinary point instead of
+  a removable singularity, and there is no seam down the middle of the picture. Supply `dq`/`dz` on
+  a profile for exact partials, or leave them off and get central differences.
+- **`strainedColumn`** — a tornado, and the second object here that *solves* the Navier–Stokes
+  equations rather than resembling them. An inward strain holds the filament open against
+  viscosity, exactly: the vorticity is purely axial and exactly Gaussian, `ω_z = (εa/ν)·e^(−a r²/2ν)`.
+  The visual consequence is that raising the strain makes the filament **thinner and brighter at
+  the same time** — the peak `εa/ν` climbs as the width `√(2ν/a)` falls, which is how a real
+  intensifying vortex reads and is not something you would think to art-direct. `columnCore` and
+  `columnPeakVorticity` return those two numbers so a demo can be checked against them.
+- **`counterSwirlColumns`** — two of them side by side, spinning opposite ways. Between the cores
+  the swirl doubles into a jet; across the mid-plane it cancels identically, making that plane
+  **impermeable** (`u·n̂ = 0` on it, exactly), with the vorticity vanishing there and only there.
+
+### Notes
+
+- The pair is offset *across* the axis, not stacked along it. Stacking is the tempting arrangement
+  and it is degenerate: a column's vorticity depends on `r` alone and never decays along `z`, so two
+  on a shared axis with opposite circulation cancel **globally** — every trace of rotation, leaving
+  a doubled strain. The tests assert the mid-plane zeros *and* that they fail off the plane, which
+  is what tells the two arrangements apart; the on-plane half alone is true of the degenerate one too.
+- A column's vector potential is exact but grows logarithmically and is **not** compactly supported
+  — a swirling column cannot have one. Unlike `createRing`, an obstacle far away is still affected.
+- The strain grows with distance (`u ~ a·r`), so this is a local-domain object: bound the region you
+  render or the far field dominates.
+- New demo `examples/columns.html`; parity fixtures unchanged (`max |Δ| = 0.000e+0`).
 
 ### Fixed
 

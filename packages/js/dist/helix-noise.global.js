@@ -26,9 +26,13 @@ var HelixNoise = (() => {
     HelixField: () => HelixField,
     NS_TARGETS: () => NS_TARGETS,
     abc: () => abc,
+    axisymmetric: () => axisymmetric,
     collidingRings: () => collidingRings,
+    columnCore: () => columnCore,
+    columnPeakVorticity: () => columnPeakVorticity,
     compose: () => compose,
     condensate: () => condensate,
+    counterSwirlColumns: () => counterSwirlColumns,
     create: () => create,
     createAtoms: () => createAtoms,
     createRing: () => createRing,
@@ -40,6 +44,7 @@ var HelixNoise = (() => {
     rolloff: () => rolloff,
     selfTest: () => selfTest,
     shellPeak: () => shellPeak,
+    strainedColumn: () => strainedColumn,
     twoScale: () => twoScale,
     version: () => version
   });
@@ -416,6 +421,8 @@ var HelixNoise = (() => {
   var PHI_MAX = 1e6;
   var owner = null;
   var ownerStamp = -1;
+  var ownerAmpT = NaN;
+  var ownerPhT = NaN;
   var capN = 0;
   var capPts = 0;
   var f64 = null;
@@ -459,6 +466,8 @@ var HelixNoise = (() => {
     const n2 = n + (n & 1);
     ensure(k, N, n2);
     const m = f64;
+    const ampT = amps === field.a ? 0 : t;
+    const phT = phases === field.ph ? 0 : t;
     if (owner !== field || ownerStamp !== field._buildStamp) {
       for (let ai = 0; ai < ARRS.length; ai++) {
         const src = ARRS[ai] === "a" ? amps : ARRS[ai] === "ph" ? phases : field[ARRS[ai]];
@@ -466,9 +475,17 @@ var HelixNoise = (() => {
       }
       owner = field;
       ownerStamp = field._buildStamp;
+      ownerAmpT = ampT;
+      ownerPhT = phT;
     } else {
-      if (amps !== field.a) m.set(amps, (mdO >> 3) + 6 * N);
-      if (phases !== field.ph) m.set(phases, (mdO >> 3) + 3 * N);
+      if (ownerAmpT !== ampT) {
+        m.set(amps, (mdO >> 3) + 6 * N);
+        ownerAmpT = ampT;
+      }
+      if (ownerPhT !== phT) {
+        m.set(phases, (mdO >> 3) + 3 * N);
+        ownerPhT = phT;
+      }
     }
     const xb = pxO >> 3, yb = pyO >> 3, zb = pzO >> 3;
     let mx = 0;
@@ -2194,6 +2211,218 @@ var HelixNoise = (() => {
       return this._sum("ua", x, y, z, out6, t);
     }
   };
+  var FD = 1e-5;
+  function axisymmetric(opts = {}) {
+    return new AxisymField(opts);
+  }
+  function strainedColumn(opts = {}) {
+    return new StrainedColumnField(opts);
+  }
+  function columnCore(strain, viscosity) {
+    return Math.sqrt(2 * Math.max(viscosity, 0) / Math.max(strain, 1e-12));
+  }
+  function columnPeakVorticity(strain, viscosity, circulation) {
+    return circulation * strain / Math.max(viscosity, 1e-12);
+  }
+  function expInt1(x) {
+    if (x <= 0) return Infinity;
+    if (x <= 1) {
+      let s = -0.5772156649015329 - Math.log(x), term = 1;
+      for (let k = 1; k < 30; k++) {
+        term *= -x / k;
+        s -= term / k;
+      }
+      return s;
+    }
+    let cf = 0;
+    for (let k = 20; k >= 1; k--) cf = k * k / (x + 2 * k + 1 - cf);
+    return Math.exp(-x) / (x + 1 - cf);
+  }
+  function gLog(u) {
+    if (u < 1e-8) return u - u * u / 4;
+    return 0.5772156649015329 + Math.log(u) + expInt1(u);
+  }
+  var AxisBase = class extends BaseFlow {
+    constructor(center, axis) {
+      super();
+      /** Whether {@link cyl} also wrote a vorticity triple into out[3..5]. */
+      this.analyticVorticity = false;
+      this._c = [0, 0, 0, 0, 0, 0];
+      this._fr = [0, 0, 0, 0, 0];
+      const c = center ?? [0, 0, 0];
+      const a = norm3(axis ?? [0, 0, 1]);
+      this.cx = c[0];
+      this.cy = c[1];
+      this.cz = c[2];
+      this.nx = a[0];
+      this.ny = a[1];
+      this.nz = a[2];
+    }
+    _frame(x, y, z, fr) {
+      const dx = x - this.cx, dy = y - this.cy, dz = z - this.cz;
+      const zc = dx * this.nx + dy * this.ny + dz * this.nz;
+      let rx = dx - zc * this.nx, ry = dy - zc * this.ny, rz = dz - zc * this.nz;
+      const r = Math.hypot(rx, ry, rz);
+      if (r > 1e-12) {
+        rx /= r;
+        ry /= r;
+        rz /= r;
+      } else {
+        rx = Math.abs(this.nz) < 0.9 ? -this.ny : 0;
+        ry = Math.abs(this.nz) < 0.9 ? this.nx : 1;
+        rz = 0;
+        const n = Math.hypot(rx, ry, rz) || 1;
+        rx /= n;
+        ry /= n;
+        rz /= n;
+      }
+      fr[0] = r;
+      fr[1] = zc;
+      fr[2] = rx;
+      fr[3] = ry;
+      fr[4] = rz;
+    }
+    /** Assemble a cylindrical triple (radial, azimuthal, axial) into world coordinates. */
+    _world(vr, vt, vz, fr, out, o) {
+      const rx = fr[2], ry = fr[3], rz = fr[4];
+      const px = this.ny * rz - this.nz * ry;
+      const py = this.nz * rx - this.nx * rz;
+      const pz = this.nx * ry - this.ny * rx;
+      out[o] = vr * rx + vt * px + vz * this.nx;
+      out[o + 1] = vr * ry + vt * py + vz * this.ny;
+      out[o + 2] = vr * rz + vt * pz + vz * this.nz;
+    }
+    // These fields are stationary, so `t` is accepted for interface compatibility and unused.
+    sampleUW(x, y, z, out6, _t = 0) {
+      this._frame(x, y, z, this._fr);
+      const r = this._fr[0];
+      this._c.fill(0);
+      this.cyl(r, this._fr[1], this._c);
+      this._world(this._c[0], this._c[1], this._c[2], this._fr, out6, 0);
+      if (this.analyticVorticity) {
+        this._world(this._c[3], this._c[4], this._c[5], this._fr, out6, 3);
+      } else {
+        const h = FD, a = [0, 0, 0, 0, 0, 0], b = [0, 0, 0, 0, 0, 0];
+        const d = (i, ax) => {
+          const p = [x, y, z], m = [x, y, z];
+          p[ax] += h;
+          m[ax] -= h;
+          this._vel(p[0], p[1], p[2], a);
+          this._vel(m[0], m[1], m[2], b);
+          return (a[i] - b[i]) / (2 * h);
+        };
+        out6[3] = d(2, 1) - d(1, 2);
+        out6[4] = d(0, 2) - d(2, 0);
+        out6[5] = d(1, 0) - d(0, 1);
+      }
+      return out6;
+    }
+    /** Velocity only, into out[0..2]. @internal */
+    _vel(x, y, z, out) {
+      const fr = [0, 0, 0, 0, 0], c = [0, 0, 0, 0, 0, 0];
+      this._frame(x, y, z, fr);
+      this.cyl(fr[0], fr[1], c);
+      this._world(c[0], c[1], c[2], fr, out, 0);
+    }
+    sampleUA(x, y, z, out6, _t = 0) {
+      this._frame(x, y, z, this._fr);
+      const c = [0, 0];
+      this.pot(this._fr[0], this._fr[1], c);
+      this._vel(x, y, z, out6);
+      this._world(0, c[0], c[1], this._fr, out6, 3);
+      return out6;
+    }
+  };
+  var AxisymField = class extends AxisBase {
+    constructor(o) {
+      super(o.center, o.axis);
+      this.P = o.stream;
+      this.h = o.swirl;
+      this.H = o.swirlIntegral;
+    }
+    dq(f, q, z) {
+      if (f.dq) return f.dq(q, z);
+      const h = FD * (1 + Math.abs(q));
+      return (f(q + h, z) - f(Math.max(0, q - h), z)) / (q - h < 0 ? q + h : 2 * h);
+    }
+    dz(f, q, z) {
+      if (f.dz) return f.dz(q, z);
+      return (f(q, z + FD) - f(q, z - FD)) / (2 * FD);
+    }
+    cyl(r, z, out) {
+      const q = r * r;
+      if (this.P) {
+        out[0] = -r * this.dz(this.P, q, z);
+        out[2] = 2 * this.P(q, z) + 2 * q * this.dq(this.P, q, z);
+      }
+      if (this.h) out[1] = r * this.h(q, z);
+    }
+    pot(r, z, out) {
+      const q = r * r;
+      out[0] = this.P ? r * this.P(q, z) : 0;
+      if (!this.h) {
+        out[1] = 0;
+        return;
+      }
+      if (this.H) {
+        out[1] = -0.5 * this.H(q, z);
+        return;
+      }
+      const N = 24, dt = q / N;
+      let s = 0;
+      for (let i = 0; i <= N; i++) {
+        const w = i === 0 || i === N ? 1 : i % 2 ? 4 : 2;
+        s += w * this.h(i * dt, z);
+      }
+      out[1] = -0.5 * (s * dt / 3);
+    }
+  };
+  var StrainedColumnField = class extends AxisBase {
+    constructor(o) {
+      super(o.center, o.axis);
+      this.a = o.strain ?? 0.7;
+      this.nu = Math.max(o.viscosity ?? 0.05, 1e-9);
+      this.eps = o.circulation ?? 1;
+      this.b = this.a / (2 * this.nu);
+      this.analyticVorticity = true;
+    }
+    cyl(r, z, out) {
+      const q = r * r, e = Math.exp(-this.b * q);
+      out[0] = -this.a * r;
+      out[1] = q < 1e-12 ? this.eps * this.b * r : this.eps * (1 - e) / r;
+      out[2] = 2 * this.a * z;
+      out[3] = 0;
+      out[4] = 0;
+      out[5] = this.eps * this.a / this.nu * e;
+    }
+    pot(r, z, out) {
+      out[0] = this.a * r * z;
+      out[1] = -0.5 * this.eps * gLog(this.b * r * r);
+    }
+  };
+  function counterSwirlColumns(opts = {}) {
+    const sep = opts.separation ?? 2;
+    const ax = norm3(opts.axis ?? [0, 0, 1]);
+    const n = norm3(perp(ax, opts.offsetAxis));
+    const c = opts.center ?? [0, 0, 0];
+    const at = (s) => [c[0] + s * n[0], c[1] + s * n[1], c[2] + s * n[2]];
+    const G = opts.circulation ?? 1;
+    return compose(
+      strainedColumn({ ...opts, center: at(sep / 2), circulation: G }),
+      strainedColumn({ ...opts, center: at(-sep / 2), circulation: -G })
+    );
+  }
+  function perp(ax, hint) {
+    const cand = hint ? [hint] : [];
+    const m = Math.abs(ax[0]) < Math.abs(ax[1]) ? Math.abs(ax[0]) < Math.abs(ax[2]) ? 0 : 2 : Math.abs(ax[1]) < Math.abs(ax[2]) ? 1 : 2;
+    cand.push([m === 0 ? 1 : 0, m === 1 ? 1 : 0, m === 2 ? 1 : 0]);
+    for (const v of cand) {
+      const d = v[0] * ax[0] + v[1] * ax[1] + v[2] * ax[2];
+      const p = [v[0] - d * ax[0], v[1] - d * ax[1], v[2] - d * ax[2]];
+      if (Math.hypot(p[0], p[1], p[2]) > 1e-9) return p;
+    }
+    return [1, 0, 0];
+  }
 
   // src/index.ts
   function create(options) {

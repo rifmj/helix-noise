@@ -271,3 +271,361 @@ class ComposedField extends BaseFlow {
     return this._sum("ua", x, y, z, out6, t);
   }
 }
+
+// ---------------------------------------------------------------------------
+// Axisymmetric chassis and the columns it unlocks (design doc 14)
+// ---------------------------------------------------------------------------
+
+/**
+ * A profile in the chassis coordinates `(q, z)` with `q = r²`. Taking `r²` rather than `r` as the
+ * argument is what makes the axis behave: it forces the parity every smooth axisymmetric field
+ * must have, so no implementation ever has to special-case `r = 0`.
+ *
+ * Supply `dq` and `dz` to get an exactly divergence-free field. Without them the partials are
+ * estimated by central differences, and the divergence is then O(h²) rather than machine zero.
+ */
+export interface AxiProfile {
+  (q: number, z: number): number;
+  /** ∂/∂q. Optional; central differences are used when absent. */
+  dq?: (q: number, z: number) => number;
+  /** ∂/∂z. Optional; central differences are used when absent. */
+  dz?: (q: number, z: number) => number;
+}
+
+/** Options for {@link axisymmetric}. */
+export interface AxisymOptions {
+  /** Stream profile `P` in `ψ = r²·P(r², z)`. Default: none (no poloidal flow). */
+  stream?: AxiProfile;
+  /** Swirl profile `h` in `Γ = r²·h(r², z)`. Default: none (no rotation). */
+  swirl?: AxiProfile;
+  /**
+   * Antiderivative `H(q, z) = ∫₀^q h dt` of the swirl profile, used only by `potential()`.
+   * Supply it for an exact vector potential; without it a fixed Simpson rule is used.
+   */
+  swirlIntegral?: (q: number, z: number) => number;
+  center?: Vec3;
+  /** Symmetry axis; normalized internally. Default `[0, 0, 1]`. */
+  axis?: Vec3;
+}
+
+const FD = 1e-5;
+
+/**
+ * The **axisymmetric chassis**: any pair of smooth profiles becomes a swirling, exactly
+ * incompressible field that is smooth on its own axis.
+ *
+ * ```js
+ * const funnel = axisymmetric({
+ *   stream: (q, z) => Math.exp(-q) * z,      // ψ = r²·P
+ *   swirl: (q) => Math.exp(-2 * q),          // Γ = r²·h
+ * });
+ * ```
+ *
+ * With `ψ = r²P(r², z)` and `Γ = r²h(r², z)` the cylindrical formulas lose their division by `r`
+ * entirely — `u^r = −r·∂_z P`, `u^z = 2P + 2q·∂_q P`, `u^θ = r·h` — so the axis is an ordinary
+ * point rather than a removable singularity, and there is no seam down the middle.
+ *
+ * **This is not a Navier–Stokes solution.** An arbitrary pair of profiles gives a field that is
+ * exactly incompressible and smooth, nothing more. For one that does solve the equations, see
+ * {@link strainedColumn}.
+ */
+export function axisymmetric(opts: AxisymOptions = {}): FlowField {
+  return new AxisymField(opts);
+}
+
+/** Options for {@link strainedColumn}. */
+export interface StrainedColumnOptions {
+  /** Inward strain rate `a` — how hard the flow squeezes toward the axis. Default 0.7. */
+  strain?: number;
+  /** Viscosity `ν`. With `strain` it fixes the core radius `√(2ν/a)`. Default 0.05. */
+  viscosity?: number;
+  /** Circulation `ε` — how fast the column spins. Default 1. */
+  circulation?: number;
+  center?: Vec3;
+  axis?: Vec3;
+}
+
+/**
+ * A **strained vortex column** — a tornado, and an *exact stationary solution* of the
+ * Navier–Stokes equations:
+ *
+ * ```
+ * u^r = −a·r,   u^z = 2a·z,   u^θ = ε(1 − e^(−a r²/2ν)) / r
+ * ```
+ *
+ * An inward strain holds the filament open against viscosity, and the balance is exact: the
+ * vorticity is purely axial and Gaussian, `ω_z = (εa/ν)·e^(−a r²/2ν)`, with core radius
+ * `√(2ν/a)`. Raise the strain and the filament gets **thinner and brighter at once**, because the
+ * peak `εa/ν` climbs as the width falls — which is how a real intensifying vortex reads.
+ *
+ * Note that the strain field grows with distance (`u ~ a·r`), so this is a **local-domain** object:
+ * bound the region you render, or the far field will dominate. Its vector potential is exact but
+ * grows logarithmically and is *not* compactly supported — a swirling column cannot have a compact
+ * one — so an obstacle far from the column is affected slightly, unlike with {@link createRing}.
+ */
+export function strainedColumn(opts: StrainedColumnOptions = {}): FlowField {
+  return new StrainedColumnField(opts);
+}
+
+/** Core radius `√(2ν/a)` of a {@link strainedColumn} — where its Gaussian vorticity falls to 1/e. */
+export function columnCore(strain: number, viscosity: number): number {
+  return Math.sqrt((2 * Math.max(viscosity, 0)) / Math.max(strain, 1e-12));
+}
+
+/** Peak axial vorticity `εa/ν` at the axis of a {@link strainedColumn}. */
+export function columnPeakVorticity(strain: number, viscosity: number, circulation: number): number {
+  return (circulation * strain) / Math.max(viscosity, 1e-12);
+}
+
+/**
+ * Exponential integral E₁(x), x > 0 — series below 1, continued fraction above. Needed only for
+ * the column's vector potential.
+ * @internal
+ */
+function expInt1(x: number): number {
+  if (x <= 0) return Infinity;
+  if (x <= 1) {
+    let s = -0.5772156649015329 - Math.log(x), term = 1;
+    for (let k = 1; k < 30; k++) { term *= -x / k; s -= term / k; }
+    return s;
+  }
+  let cf = 0;
+  for (let k = 20; k >= 1; k--) cf = (k * k) / (x + 2 * k + 1 - cf);
+  return Math.exp(-x) / (x + 1 - cf);
+}
+
+/**
+ * `G(u) = γ + ln u + E₁(u)`, the antiderivative behind the swirl potential. The logarithms cancel
+ * at the origin — `G(0) = 0`, `G(u) ≈ u` for small `u` — so the potential is regular on the axis;
+ * outside, `G` grows like `ln u`, which is the solenoid obstruction and is unavoidable.
+ * @internal
+ */
+function gLog(u: number): number {
+  if (u < 1e-8) return u - (u * u) / 4;              // series: G(u) = u − u²/4 + …
+  return 0.5772156649015329 + Math.log(u) + expInt1(u);
+}
+
+/** Shared cylindrical frame + sampling for the axisymmetric family. @internal */
+abstract class AxisBase extends BaseFlow {
+  protected cx: number; protected cy: number; protected cz: number;
+  protected nx: number; protected ny: number; protected nz: number;
+
+  constructor(center: Vec3 | undefined, axis: Vec3 | undefined) {
+    super();
+    const c = center ?? [0, 0, 0];
+    const a = norm3(axis ?? [0, 0, 1]);
+    this.cx = c[0]; this.cy = c[1]; this.cz = c[2];
+    this.nx = a[0]; this.ny = a[1]; this.nz = a[2];
+  }
+
+  /** Cylindrical components at a point; subclasses fill (u^r, u^θ, u^z) and optionally ω. */
+  protected abstract cyl(r: number, z: number, out: number[]): void;
+
+  /** Whether {@link cyl} also wrote a vorticity triple into out[3..5]. */
+  protected analyticVorticity = false;
+
+  private _frame(x: number, y: number, z: number, fr: number[]): void {
+    const dx = x - this.cx, dy = y - this.cy, dz = z - this.cz;
+    const zc = dx * this.nx + dy * this.ny + dz * this.nz;
+    let rx = dx - zc * this.nx, ry = dy - zc * this.ny, rz = dz - zc * this.nz;
+    const r = Math.hypot(rx, ry, rz);
+    if (r > 1e-12) { rx /= r; ry /= r; rz /= r; }
+    else { // on the axis any transverse direction will do; the field vanishes there anyway
+      rx = Math.abs(this.nz) < 0.9 ? -this.ny : 0;
+      ry = Math.abs(this.nz) < 0.9 ? this.nx : 1;
+      rz = 0;
+      const n = Math.hypot(rx, ry, rz) || 1;
+      rx /= n; ry /= n; rz /= n;
+    }
+    fr[0] = r; fr[1] = zc; fr[2] = rx; fr[3] = ry; fr[4] = rz;
+  }
+
+  /** Assemble a cylindrical triple (radial, azimuthal, axial) into world coordinates. */
+  private _world(vr: number, vt: number, vz: number, fr: number[], out: number[], o: number): void {
+    const rx = fr[2], ry = fr[3], rz = fr[4];
+    const px = this.ny * rz - this.nz * ry;      // ê_φ = n̂ × ê_ρ
+    const py = this.nz * rx - this.nx * rz;
+    const pz = this.nx * ry - this.ny * rx;
+    out[o] = vr * rx + vt * px + vz * this.nx;
+    out[o + 1] = vr * ry + vt * py + vz * this.ny;
+    out[o + 2] = vr * rz + vt * pz + vz * this.nz;
+  }
+
+  private _c = [0, 0, 0, 0, 0, 0];
+  private _fr = [0, 0, 0, 0, 0];
+
+  // These fields are stationary, so `t` is accepted for interface compatibility and unused.
+  sampleUW<T extends Out6>(x: number, y: number, z: number, out6: T, _t = 0): T {
+    this._frame(x, y, z, this._fr);
+    const r = this._fr[0];
+    this._c.fill(0);
+    this.cyl(r, this._fr[1], this._c);
+    this._world(this._c[0], this._c[1], this._c[2], this._fr, out6 as unknown as number[], 0);
+    if (this.analyticVorticity) {
+      this._world(this._c[3], this._c[4], this._c[5], this._fr, out6 as unknown as number[], 3);
+    } else {
+      // no closed form for this chassis instance — central differences of the analytic velocity
+      const h = FD, a = [0, 0, 0, 0, 0, 0], b = [0, 0, 0, 0, 0, 0];
+      const d = (i: number, ax: 0 | 1 | 2): number => {
+        const p: [number, number, number] = [x, y, z], m: [number, number, number] = [x, y, z];
+        p[ax] += h; m[ax] -= h;
+        this._vel(p[0], p[1], p[2], a); this._vel(m[0], m[1], m[2], b);
+        return (a[i] - b[i]) / (2 * h);
+      };
+      out6[3] = d(2, 1) - d(1, 2);
+      out6[4] = d(0, 2) - d(2, 0);
+      out6[5] = d(1, 0) - d(0, 1);
+    }
+    return out6;
+  }
+
+  /** Velocity only, into out[0..2]. @internal */
+  private _vel(x: number, y: number, z: number, out: number[]): void {
+    const fr = [0, 0, 0, 0, 0], c = [0, 0, 0, 0, 0, 0];
+    this._frame(x, y, z, fr);
+    this.cyl(fr[0], fr[1], c);
+    this._world(c[0], c[1], c[2], fr, out, 0);
+  }
+
+  /** (A_θ, A_z) of the vector potential in cylindrical components. */
+  protected abstract pot(r: number, z: number, out: number[]): void;
+
+  sampleUA<T extends Out6>(x: number, y: number, z: number, out6: T, _t = 0): T {
+    this._frame(x, y, z, this._fr);
+    const c = [0, 0];
+    this.pot(this._fr[0], this._fr[1], c);
+    this._vel(x, y, z, out6 as unknown as number[]);
+    this._world(0, c[0], c[1], this._fr, out6 as unknown as number[], 3);
+    return out6;
+  }
+}
+
+/** @internal */
+class AxisymField extends AxisBase {
+  private P?: AxiProfile;
+  private h?: AxiProfile;
+  private H?: (q: number, z: number) => number;
+
+  constructor(o: AxisymOptions) {
+    super(o.center, o.axis);
+    this.P = o.stream; this.h = o.swirl; this.H = o.swirlIntegral;
+  }
+
+  private dq(f: AxiProfile, q: number, z: number): number {
+    if (f.dq) return f.dq(q, z);
+    const h = FD * (1 + Math.abs(q));
+    return (f(q + h, z) - f(Math.max(0, q - h), z)) / (q - h < 0 ? q + h : 2 * h);
+  }
+  private dz(f: AxiProfile, q: number, z: number): number {
+    if (f.dz) return f.dz(q, z);
+    return (f(q, z + FD) - f(q, z - FD)) / (2 * FD);
+  }
+
+  protected cyl(r: number, z: number, out: number[]): void {
+    const q = r * r;
+    if (this.P) {
+      out[0] = -r * this.dz(this.P, q, z);                       // u^r = −r ∂_z P
+      out[2] = 2 * this.P(q, z) + 2 * q * this.dq(this.P, q, z); // u^z = 2P + 2q ∂_q P
+    }
+    if (this.h) out[1] = r * this.h(q, z);                       // u^θ = r h
+  }
+
+  protected pot(r: number, z: number, out: number[]): void {
+    const q = r * r;
+    out[0] = this.P ? r * this.P(q, z) : 0;                      // A_θ = ψ/r = r P
+    if (!this.h) { out[1] = 0; return; }
+    // A_z = −½ ∫₀^q h dt — exact when the caller supplies it, Simpson otherwise
+    if (this.H) { out[1] = -0.5 * this.H(q, z); return; }
+    const N = 24, dt = q / N;
+    let s = 0;
+    for (let i = 0; i <= N; i++) {
+      const w = i === 0 || i === N ? 1 : i % 2 ? 4 : 2;
+      s += w * this.h(i * dt, z);
+    }
+    out[1] = -0.5 * ((s * dt) / 3);
+  }
+}
+
+/** @internal */
+class StrainedColumnField extends AxisBase {
+  private a: number; private nu: number; private eps: number; private b: number;
+
+  constructor(o: StrainedColumnOptions) {
+    super(o.center, o.axis);
+    this.a = o.strain ?? 0.7;
+    this.nu = Math.max(o.viscosity ?? 0.05, 1e-9);
+    this.eps = o.circulation ?? 1;
+    this.b = this.a / (2 * this.nu);
+    this.analyticVorticity = true;   // everything below is closed form
+  }
+
+  protected cyl(r: number, z: number, out: number[]): void {
+    const q = r * r, e = Math.exp(-this.b * q);
+    out[0] = -this.a * r;                                        // u^r
+    // u^θ = ε(1 − e^(−b r²))/r, regular at the axis where it tends to ε b r
+    out[1] = q < 1e-12 ? this.eps * this.b * r : (this.eps * (1 - e)) / r;
+    out[2] = 2 * this.a * z;                                     // u^z
+    out[3] = 0; out[4] = 0;
+    out[5] = (this.eps * this.a) / this.nu * e;                  // ω purely axial and Gaussian
+  }
+
+  protected pot(r: number, z: number, out: number[]): void {
+    out[0] = this.a * r * z;                                     // A_θ = a r z, exact
+    out[1] = -0.5 * this.eps * gLog(this.b * r * r);             // A_z = −(ε/2) G(b r²)
+  }
+}
+
+/**
+ * A **counter-rotating pair** — two parallel strained columns, side by side, spinning opposite ways.
+ *
+ * They are offset *across* the axis, not stacked along it. Stacking is the tempting arrangement and
+ * it is degenerate: a column's vorticity `ω_z = (εa/ν)·e^(−a r²/2ν)` depends on `r` alone and never
+ * decays along `z`, so two on a shared axis with opposite circulation cancel each other **globally**
+ * — every trace of rotation, everywhere, leaving nothing but a doubled strain.
+ *
+ * Offset laterally, they instead do what a real vortex pair does. On the mid-plane the two cores sit
+ * at equal distance, so the swirl contributions are mirror images: the component *through* the plane
+ * cancels identically while the in-plane component doubles. Two exact consequences, both worth
+ * checking rather than believing —
+ *
+ * - the mid-plane is **impermeable**: `u·n̂ = 0` on it exactly, an invisible wall the flow never
+ *   crosses, with the strain's own inflow cancelling there too;
+ * - the vorticity vanishes on that plane and *only* there, so the two filaments stay individually
+ *   bright — and between them the doubled swirl drives a **jet** along the plane.
+ *
+ * `separation` is the distance between the two axes; `offsetAxis` is the direction they are
+ * separated along (any vector not parallel to `axis` — its perpendicular part is used).
+ */
+export function counterSwirlColumns(
+  opts: StrainedColumnOptions & { separation?: number; offsetAxis?: Vec3 } = {}
+): FlowField {
+  const sep = opts.separation ?? 2;
+  const ax = norm3(opts.axis ?? [0, 0, 1]);
+  const n = norm3(perp(ax, opts.offsetAxis));
+  const c = opts.center ?? [0, 0, 0];
+  const at = (s: number): Vec3 => [c[0] + s * n[0], c[1] + s * n[1], c[2] + s * n[2]];
+  const G = opts.circulation ?? 1;
+  return compose(
+    strainedColumn({ ...opts, center: at(sep / 2), circulation: G }),
+    strainedColumn({ ...opts, center: at(-sep / 2), circulation: -G })
+  );
+}
+
+/**
+ * The component of `hint` perpendicular to the unit vector `ax`, falling back to whichever
+ * coordinate axis is least aligned with `ax` when no usable hint is given.
+ * @internal
+ */
+function perp(ax: Vec3, hint?: Vec3): Vec3 {
+  const cand: Vec3[] = hint ? [hint] : [];
+  const m = Math.abs(ax[0]) < Math.abs(ax[1])
+    ? (Math.abs(ax[0]) < Math.abs(ax[2]) ? 0 : 2)
+    : (Math.abs(ax[1]) < Math.abs(ax[2]) ? 1 : 2);
+  cand.push([m === 0 ? 1 : 0, m === 1 ? 1 : 0, m === 2 ? 1 : 0]);
+  for (const v of cand) {
+    const d = v[0] * ax[0] + v[1] * ax[1] + v[2] * ax[2];
+    const p: Vec3 = [v[0] - d * ax[0], v[1] - d * ax[1], v[2] - d * ax[2]];
+    if (Math.hypot(p[0], p[1], p[2]) > 1e-9) return p;
+  }
+  return [1, 0, 0];
+}
