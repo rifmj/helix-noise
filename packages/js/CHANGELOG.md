@@ -3,6 +3,42 @@
 All notable changes to this project are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [1.10.0]
+
+### Added
+
+- **`collapse(field, { T, q, center, tieAmplitude })`** — a *time warp*: not new content, a new way
+  of moving through what is already there. The whole pattern shrinks toward a point like `(T−t)^q`
+  while speeding up like `(T−t)^(q−1)`, focus and acceleration locked together, so it reads as
+  gathering rather than as a zoom. `q < 1` completes in finite time; near 1 it is a slow drift.
+- **`dssCollapse(field, { lambda, a, b, scaleProfile, ampProfile })`** — the log-periodic version,
+  and the one worth having. Driven by the renormalisation time `s = −log(T−t)` with 1-periodic
+  modulation, advancing `s` by `log λ` returns the field to **exactly** what it was, rescaled by
+  `λ^(−b)` in space and `λ^a` in amplitude. One rendered period therefore tiles the entire collapse:
+  an infinite zoom with no cross-fade and no drift, which is the difference between a Droste zoom
+  that is faked and one that closes. Measured loop error is `~1e-16` over one period and over two.
+
+### Notes
+
+- Velocity scales by `A`, vorticity by `A/L` and the vector potential by `A·L`. Those two extra
+  factors are the whole content of the chain rule here and the only real way to get this wrong, so
+  each is asserted separately, along with `∇×A = u` still holding after the warp. Divergence-freedom
+  survives *any* positive scale and amplitude — no setting can break the library's one guarantee.
+- `freezeProfile` (default true) stops the wrapped field's own clock so the warp supplies all the
+  motion. It is what makes the loop exact: self-similarity says the profile repeats, which it cannot
+  do if the profile is itself churning. Setting it false is a supported non-looping mode, and the
+  tests assert that it deliberately *fails* to close — the contrast is what makes the guarantee mean
+  something.
+- Sampling at or past `T` is clamped by `minTau` rather than returning `Infinity`.
+- The exponents are free parameters. A hypothetical Navier–Stokes singularity would have to satisfy
+  `1/2 < b < 1` and `b < a < (1+b)/2`, but that is a necessary budget constraint on an object nobody
+  has exhibited — the defaults sit in that range as a sane starting point, nothing is enforced, and
+  this is a kinematic animation law, not a claim about turbulence.
+- Because the warp samples the wrapped field at `(x−c)/L` with `L → 0`, it walks ever further into
+  that field's far reaches: wrap a `tileable` field or a closed-form primitive to keep finding
+  structure at depth instead of dissolving into hash.
+- New demo `examples/collapse.html`; parity fixtures unchanged (`max |Δ| = 0.000e+0`).
+
 ## [1.9.0]
 
 ### Added

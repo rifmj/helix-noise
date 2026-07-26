@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert";
 import type { AxiProfile } from "../src/index";
-import HelixNoise, { create, createAtoms, HelixField, abc, twoScale, shellPeak, rolloff, condensate, C_TWO_SCALE, exactNS, nsDeveloped, nsForced, NS_TARGETS, createRing, collidingRings, compose, ringSpeed, axisymmetric, strainedColumn, counterSwirlColumns, columnCore, columnPeakVorticity } from "../src/index";
+import HelixNoise, { create, createAtoms, HelixField, abc, twoScale, shellPeak, rolloff, condensate, C_TWO_SCALE, exactNS, nsDeveloped, nsForced, NS_TARGETS, createRing, collidingRings, compose, ringSpeed, axisymmetric, strainedColumn, counterSwirlColumns, columnCore, columnPeakVorticity, collapse, dssCollapse } from "../src/index";
 import type { Vec3, FlowField, Field } from "../src/types";
 import { runWasm } from "../src/wasm";
 
@@ -1595,4 +1595,90 @@ test("counter-rotating pair: the invariant follows the geometry, not the coordin
   }
   assert.ok(on < 1e-15, `still impermeable when tilted (${on})`);
   assert.ok(off > 0.5, "and still permeable elsewhere");
+});
+
+// ---------------------------------------------------------------------------
+// Time warps — focusing collapse and its log-periodic loop
+// ---------------------------------------------------------------------------
+
+test("collapse: divergence-free throughout, with velocity, vorticity and potential each scaled right", () => {
+  const T = 1, q = 0.6;
+  const base = create({ modes: 24, seed: 5, coherence: 0.4, tileable: true });
+  const f = collapse(base, { T, q });
+  for (const t of [0, 0.5, 0.9, 0.99]) {
+    assert.ok(maxDiv(f, SCATTER, t) < 1e-5, `still incompressible at t=${t} — a warp cannot break that`);
+  }
+  // u ∝ A, ω ∝ A/L, A_pot ∝ A·L. Getting the last two wrong is the only real way to break this.
+  for (const t of [0.3, 0.7, 0.95]) {
+    const L = Math.pow(T - t, q), A = q * Math.pow(T - t, q - 1);
+    const [x, y, z] = [0.3, 0.4, 0.5];
+    const u = f.sample(x, y, z, t), ub = base.sample(x / L, y / L, z / L);
+    const w = f.vorticity(x, y, z, t), wb = base.vorticity(x / L, y / L, z / L);
+    const p = f.potential(x, y, z, t), pb = base.potential(x / L, y / L, z / L);
+    for (let i = 0; i < 3; i++) {
+      assert.ok(Math.abs(u[i] - A * ub[i]) < 1e-12, "velocity");
+      assert.ok(Math.abs(w[i] - (A / L) * wb[i]) < 1e-12, "vorticity picks up 1/L");
+      assert.ok(Math.abs(p[i] - A * L * pb[i]) < 1e-12, "the potential picks up L");
+    }
+  }
+  // and the potential still generates the flow after warping
+  const c = fdCurl((a, b, cc) => f.potential(a, b, cc, 0.6), 0.3, 0.4, 0.5, 1e-5);
+  const u = f.sample(0.3, 0.4, 0.5, 0.6);
+  for (let i = 0; i < 3; i++) assert.ok(Math.abs(c[i] - u[i]) < 1e-6, "∇×A = u survives the warp");
+});
+
+test("collapse: the amplitude law, and no divergence at (or past) T", () => {
+  const T = 2, q = 0.55;
+  const base = create({ modes: 16, seed: 3, tileable: true });
+  const tied = collapse(base, { T, q }), loose = collapse(base, { T, q, tieAmplitude: false });
+  const ratio = (f: FlowField, t: number): number =>
+    Math.hypot(...f.sample(0.2, 0.3, 0.4, t)) / Math.hypot(...f.sample(0.2, 0.3, 0.4, 0));
+  assert.ok(ratio(tied, 1.9) > 3, "tied amplitude accelerates as it shrinks");
+  // Untied still zooms, so the sampled point moves; what must hold is that it is not blowing up.
+  assert.ok(ratio(loose, 1.9) < 3, "untied does not");
+  for (const t of [T, T + 5]) {
+    const u = tied.sample(0.2, 0.3, 0.4, t);
+    assert.ok(u.every(Number.isFinite), `minTau keeps t=${t} finite rather than infinite`);
+  }
+});
+
+test("dssCollapse: the loop closes — one period tiles the whole collapse, exactly", () => {
+  const T = 1, lambda = 2, b = 0.6, a = 0.8;
+  const base = create({ modes: 24, seed: 5, coherence: 0.4, tileable: true, churn: 1 });
+  const f = dssCollapse(base, { T, lambda, b, a });
+  // Advancing the renormalisation time s = −log(T−t) by log λ means τ → τ/λ. After that step the
+  // field is *identical* to what it was, rescaled by λ^(−b) in space and λ^a in amplitude.
+  const check = (n: number): number => {
+    let err = 0;
+    for (let i = 0; i < 24; i++) {
+      const x = Math.sin(i * 1.7) * 0.6, y = Math.cos(i * 2.3) * 0.6, z = Math.sin(i * 0.9) * 0.6;
+      const s = Math.pow(lambda, -n * b);
+      const u0 = f.sample(x, y, z, T - 0.3);
+      const un = f.sample(x * s, y * s, z * s, T - 0.3 / Math.pow(lambda, n));
+      for (let c = 0; c < 3; c++) err = Math.max(err, Math.abs(un[c] - Math.pow(lambda, n * a) * u0[c]));
+    }
+    return err;
+  };
+  assert.ok(check(1) < 1e-12, `one period: ${check(1)}`);
+  assert.ok(check(2) < 1e-12, `two periods: ${check(2)}`);
+  for (const t of [0.2, 0.6, 0.9]) assert.ok(maxDiv(f, SCATTER, t) < 1e-5, "and it stays incompressible");
+
+  // The contrast that makes the guarantee meaningful: let the wrapped field churn on its own clock
+  // and self-similarity is gone, because the profile no longer repeats.
+  const live = dssCollapse(base, { T, lambda, b, a, freezeProfile: false });
+  let drift = 0;
+  for (let i = 0; i < 16; i++) {
+    const x = Math.sin(i) * 0.6, y = Math.cos(i) * 0.6;
+    const u0 = live.sample(x, y, 0.3, T - 0.3);
+    const u1 = live.sample(x * Math.pow(lambda, -b), y * Math.pow(lambda, -b), 0.3 * Math.pow(lambda, -b), T - 0.3 / lambda);
+    for (let c = 0; c < 3; c++) drift = Math.max(drift, Math.abs(u1[c] - Math.pow(lambda, a) * u0[c]));
+  }
+  assert.ok(drift > 1e-3, "freezeProfile:false deliberately does not close");
+});
+
+test("warps compose with the closed-form primitives", () => {
+  const f = collapse(strainedColumn({ strain: 0.7, viscosity: 0.05 }), { T: 2 });
+  assert.ok(maxDiv(f, SCATTER, 1.0) < 1e-6, "a collapsing tornado is still divergence-free");
+  const g = dssCollapse(compose(createRing({ radius: 1.5, core: 0.4, circulation: 2 })), { T: 1 });
+  assert.ok(maxDiv(g, SCATTER, 0.5) < 1e-5, "so is a log-periodic ring");
 });

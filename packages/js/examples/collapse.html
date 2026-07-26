@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Helix Noise — self-similar collapse and the log-periodic loop</title>
+<style>
+  html,body{margin:0;background:#070a0e;color:#cdd6dd;font-family:system-ui,sans-serif}
+  .wrap{max-width:980px;margin:0 auto;padding:22px 16px}
+  h1{font-size:19px;font-weight:600;margin:0 0 6px}
+  h1 code{color:#f4a13c}
+  p{color:#8a97a2;font-size:13.5px;line-height:1.6;margin:0 0 14px}
+  p b{color:#cdd6dd;font-weight:500}
+  code{font-family:ui-monospace,Menlo,monospace;color:#f4a13c;font-size:12.5px}
+  #stage{position:relative;width:100%;aspect-ratio:16/10;border:1px solid rgba(150,180,200,.15);border-radius:10px;overflow:hidden;background:#070a0e}
+  #main{width:100%;height:100%;display:block;image-rendering:auto}
+  .badge{position:absolute;top:10px;left:12px;font-family:ui-monospace,monospace;font-size:10.5px;
+    letter-spacing:.12em;text-transform:uppercase;color:#93a3b0;background:rgba(7,10,14,.55);
+    border:1px solid rgba(150,180,200,.14);border-radius:6px;padding:4px 8px;pointer-events:none}
+  .ro{position:absolute;top:10px;right:12px;font-family:ui-monospace,monospace;font-size:11px;color:#93a3b0;
+    background:rgba(7,10,14,.55);border:1px solid rgba(150,180,200,.14);border-radius:6px;padding:6px 9px;
+    text-align:right;line-height:1.55;pointer-events:none}
+  .ro b{font-weight:400;color:#2fd6bf}
+  .ro .zero{color:#f4a13c}
+  .proof{position:absolute;left:12px;bottom:12px;display:flex;gap:8px;align-items:flex-end;
+    background:rgba(7,10,14,.6);border:1px solid rgba(150,180,200,.14);border-radius:8px;padding:8px;pointer-events:none}
+  .proof figure{margin:0;text-align:center}
+  .proof canvas{width:76px;height:76px;display:block;border-radius:4px;background:#04070a}
+  .proof figcaption{font-family:ui-monospace,monospace;font-size:9px;color:#6c7d8a;margin-top:4px;letter-spacing:.04em}
+  .phase{position:absolute;left:0;right:0;bottom:0;height:3px;background:rgba(150,180,200,.1)}
+  .phase i{display:block;height:100%;background:#38d9d1;width:0}
+  .row{display:flex;flex-wrap:wrap;gap:14px;align-items:center;margin-top:12px;font-family:ui-monospace,monospace;font-size:12px;color:#93a3b0}
+  .row label{display:flex;align-items:center;gap:8px}
+  input[type=range]{width:110px}
+  button{font-family:ui-monospace,monospace;font-size:11.5px;color:#cdd6dd;background:#0c1016;
+    border:1px solid rgba(150,180,200,.22);border-radius:7px;padding:6px 11px;cursor:pointer}
+  button:hover{border-color:#38d9d1}
+  button.on{border-color:#38d9d1;color:#fff}
+  .note{margin-top:12px;font-size:12px;color:#5d6b77;font-family:ui-monospace,monospace}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Self-similar collapse — <code>collapse</code>, <code>dssCollapse</code></h1>
+  <p>A <b>time warp</b>: not new content, a new way of moving through what is already there.
+    <code>collapse</code> shrinks the whole pattern toward a point like <code>(T−t)^q</code> while speeding
+    it up like <code>(T−t)^(q−1)</code> — focus and acceleration locked together, so it reads as gathering
+    rather than as a zoom. Scaling velocity by <code>A</code>, vorticity by <code>A/L</code> and the
+    potential by <code>A·L</code> keeps the field <b>exactly divergence-free at every instant</b>; that
+    guarantee cannot be broken by any setting on this page.</p>
+  <p><code>dssCollapse</code> adds the interesting part. Driven by the renormalisation time
+    <code>s = −log(T−t)</code> with 1-periodic modulation, advancing <code>s</code> by
+    <code>log λ</code> returns the field to <b>exactly</b> what it was, rescaled by <code>λ^(−b)</code> in
+    space and <code>λ^a</code> in amplitude. So one period tiles the entire collapse — an infinite zoom
+    with no cross-fade and no drift. The three panels check it live: <em>now</em>, <em>one period later
+    rescaled</em>, and their difference, with the measured error printed. It reads
+    <code>~1e-16</code>. Turn off <b>frozen profile</b> and watch the loop deliberately fail.</p>
+  <div id="stage">
+    <canvas id="main"></canvas>
+    <div class="badge">helix-noise · log-periodic collapse</div>
+    <div class="ro" id="ro">—</div>
+    <div class="proof">
+      <figure><canvas id="pa" width="64" height="64"></canvas><figcaption>now</figcaption></figure>
+      <figure><canvas id="pb" width="64" height="64"></canvas><figcaption>+1 period</figcaption></figure>
+      <figure><canvas id="pd" width="64" height="64"></canvas><figcaption>difference</figcaption></figure>
+    </div>
+    <div class="phase"><i id="ph"></i></div>
+  </div>
+  <div class="row">
+    <button id="m-dss" class="on">dssCollapse</button>
+    <button id="m-col">collapse</button>
+    <button id="frz" class="on">frozen profile ✓</button>
+    <label>λ <input id="lam" type="range" min="1.3" max="4" step="0.1" value="2.0"><span id="v-lam">2.0</span></label>
+    <label>b <input id="b" type="range" min="0.35" max="0.95" step="0.01" value="0.60"><span id="v-b">0.60</span></label>
+    <label>a <input id="a" type="range" min="0.4" max="1.4" step="0.01" value="0.80"><span id="v-a">0.80</span></label>
+    <label>speed <input id="sp" type="range" min="0.1" max="2" step="0.05" value="0.6"><span id="v-sp">0.6</span></label>
+  </div>
+  <div class="note" id="note">—</div>
+</div>
+
+<script src="../dist/helix-noise.global.js"></script>
+<script>
+(() => {
+  const T = 1;
+  const params = { mode: "dss", frozen: true, lambda: 2, b: 0.6, a: 0.8, speed: 0.6 };
+
+  // A tileable base, so that focusing ever deeper keeps finding structure instead of running off
+  // into unpatterned distance. The warp supplies all the motion; this field is only the content.
+  const base = HelixNoise.create({ modes: 28, seed: 11, coherence: 0.45, slope: 1.9, tileable: true, churn: 1 });
+
+  let field;
+  function build() {
+    const o = { T, center: [0, 0, 0], freezeProfile: params.frozen };
+    field = params.mode === "dss"
+      ? HelixNoise.dssCollapse(base, { ...o, lambda: params.lambda, b: params.b, a: params.a })
+      : HelixNoise.collapse(base, { ...o, q: params.b });
+  }
+  build();
+
+  // ---- rendering ---------------------------------------------------------
+  // A slice of the helicity density u·ω at z = 0: signed, so the two handednesses separate, and it
+  // is the quantity the rest of the library colours by.
+  const RES = 220, HALF = 4.5;
+  const main = document.getElementById("main");
+  const mctx = main.getContext("2d", { alpha: false });
+  main.width = RES; main.height = RES;
+  const img = mctx.createImageData(RES, RES);
+  const uw = [0, 0, 0, 0, 0, 0];
+
+  /** Fill `data` with the slice, sampled on a box of half-width `half`, at time `t`. */
+  function renderSlice(data, res, half, t, scale) {
+    let p = 0, peak = 1e-9;
+    const buf = new Float64Array(res * res);
+    for (let j = 0; j < res; j++) {
+      const y = ((j + 0.5) / res * 2 - 1) * half;
+      for (let i = 0; i < res; i++) {
+        const x = ((i + 0.5) / res * 2 - 1) * half;
+        field.sampleUW(x, y, 0, uw, t);
+        const h = uw[0] * uw[3] + uw[1] * uw[4] + uw[2] * uw[5];
+        buf[j * res + i] = h;
+        const m = Math.abs(h);
+        if (m > peak) peak = m;
+      }
+    }
+    // Normalise per frame: the amplitude law makes the raw magnitude sweep many decades, and the
+    // point here is the *pattern*, not the brightness.
+    const k = 1 / (peak * (scale ?? 1));
+    for (let n = 0; n < res * res; n++) {
+      const v = Math.sign(buf[n]) * Math.pow(Math.min(1, Math.abs(buf[n]) * k), 0.55);
+      const pos = Math.max(0, v), neg = Math.max(0, -v);
+      data[p++] = 20 + neg * 224;
+      data[p++] = 26 + pos * 190 + neg * 135;
+      data[p++] = 32 + pos * 165 + neg * 28;
+      data[p++] = 255;
+    }
+    return peak;
+  }
+
+  // ---- the receipt -------------------------------------------------------
+  // Self-similarity says: step s forward by log λ and the field is identical after rescaling.
+  // Rather than assert it, sample both and subtract.
+  const P = 64;
+  const pcv = ["pa", "pb", "pd"].map((id) => {
+    const c = document.getElementById(id);
+    return { ctx: c.getContext("2d"), img: c.getContext("2d").createImageData(P, P) };
+  });
+
+  function loopError(t) {
+    if (params.mode !== "dss") return null;
+    const t2 = T - (T - t) / params.lambda;                   // s → s + log λ
+    const sSp = Math.pow(params.lambda, -params.b);           // space rescale
+    const sAm = Math.pow(params.lambda, params.a);            // amplitude rescale
+    let err = 0, mag = 1e-12;
+    for (let i = 0; i < 40; i++) {
+      const x = Math.sin(i * 1.7) * 1.1, y = Math.cos(i * 2.3) * 1.1, z = Math.sin(i * 0.9) * 0.7;
+      const u0 = field.sample(x, y, z, t);
+      const u1 = field.sample(x * sSp, y * sSp, z * sSp, t2);
+      for (let c = 0; c < 3; c++) {
+        err = Math.max(err, Math.abs(u1[c] - sAm * u0[c]));
+        mag = Math.max(mag, Math.abs(u1[c]));
+      }
+    }
+    return { abs: err, rel: err / mag };
+  }
+
+  /** The same three panels, as pictures: now · one period later, rescaled · |difference|. */
+  function renderProof(t) {
+    if (params.mode !== "dss") { for (const p of pcv) { p.ctx.clearRect(0, 0, P, P); } return; }
+    const t2 = T - (T - t) / params.lambda;
+    const sSp = Math.pow(params.lambda, -params.b), sAm = Math.pow(params.lambda, params.a);
+    const A = new Float64Array(P * P), B = new Float64Array(P * P);
+    let pk = 1e-12;
+    for (let j = 0; j < P; j++) for (let i = 0; i < P; i++) {
+      const x = ((i + 0.5) / P * 2 - 1) * HALF, y = ((j + 0.5) / P * 2 - 1) * HALF;
+      field.sampleUW(x, y, 0, uw, t);
+      const h0 = uw[0] * uw[3] + uw[1] * uw[4] + uw[2] * uw[5];
+      field.sampleUW(x * sSp, y * sSp, 0, uw, t2);
+      // helicity is u·ω, so it carries A²/L — rescale by λ^(2a)·λ^b to compare like with like
+      const h1 = (uw[0] * uw[3] + uw[1] * uw[4] + uw[2] * uw[5]) /
+                 (sAm * sAm * Math.pow(params.lambda, params.b));
+      A[j * P + i] = h0; B[j * P + i] = h1;
+      pk = Math.max(pk, Math.abs(h0));
+    }
+    const put = (arr, idx, gain) => {
+      const d = pcv[idx].img.data;
+      let p = 0;
+      for (let n = 0; n < P * P; n++) {
+        const v = Math.sign(arr[n]) * Math.pow(Math.min(1, Math.abs(arr[n]) / pk * gain), 0.55);
+        const pos = Math.max(0, v), neg = Math.max(0, -v);
+        d[p++] = 20 + neg * 224; d[p++] = 26 + pos * 190 + neg * 135; d[p++] = 32 + pos * 165 + neg * 28; d[p++] = 255;
+      }
+      pcv[idx].ctx.putImageData(pcv[idx].img, 0, 0);
+    };
+    const D = new Float64Array(P * P);
+    for (let n = 0; n < P * P; n++) D[n] = A[n] - B[n];
+    put(A, 0, 1); put(B, 1, 1);
+    put(D, 2, 1e6);   // ×10⁶ gain: if anything at all were there, it would be blinding
+  }
+
+  // ---- loop --------------------------------------------------------------
+  const ro = document.getElementById("ro"), ph = document.getElementById("ph");
+  let t = 0, last = performance.now(), proofClock = 1;   // fire on the first frame, then throttle
+
+  function frame(now) {
+    const dt = Math.min(0.05, (now - last) / 1000); last = now;
+    // Advance in renormalisation time, so the motion is uniform on the log clock and the collapse
+    // never "arrives" — it just keeps folding.
+    const s = -Math.log(Math.max(T - t, 1e-9)) + dt * params.speed;
+    t = T - Math.exp(-s);
+    if (T - t < 1e-6) t = T - 0.5;      // recycle far from the guard, seamlessly for dss
+
+    const peak = renderSlice(img.data, RES, HALF, t);
+    mctx.putImageData(img, 0, 0);
+
+    proofClock += dt;
+    if (proofClock > 0.12) { proofClock = 0; renderProof(t); }
+
+    const tau = T - t;
+    const logL = Math.log(params.lambda);
+    const phase = params.mode === "dss" ? ((-Math.log(tau) / logL) % 1 + 1) % 1 : 0;
+    ph.style.width = (params.mode === "dss" ? phase * 100 : 0) + "%";
+
+    const L = params.mode === "dss"
+      ? Math.pow(tau, params.b) * (1 + 0.25 * Math.cos(2 * Math.PI * phase))
+      : Math.pow(tau, params.b);
+    const Amp = params.mode === "dss" ? Math.pow(tau, -params.a) : params.b * Math.pow(tau, params.b - 1);
+
+    let s2 = `τ = T−t <b>${tau.toExponential(2)}</b><br>L(t) <b>${L.toExponential(2)}</b><br>A(t) <b>${Amp.toExponential(2)}</b><br>|u·ω|peak <b>${peak.toExponential(1)}</b>`;
+    const e = loopError(t);
+    if (e) {
+      const cls = e.rel < 1e-12 ? "zero" : "";
+      s2 += `<br>φ <b>${phase.toFixed(3)}</b><br>loop err <span class="${cls}">${e.rel.toExponential(1)}</span>`;
+    }
+    ro.innerHTML = s2;
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  // ---- controls ----------------------------------------------------------
+  const $ = (id) => document.getElementById(id);
+  const setMode = (m) => {
+    params.mode = m;
+    $("m-dss").classList.toggle("on", m === "dss");
+    $("m-col").classList.toggle("on", m === "col");
+    $("frz").style.opacity = m === "dss" ? 1 : 0.45;
+    build();
+  };
+  $("m-dss").onclick = () => setMode("dss");
+  $("m-col").onclick = () => setMode("col");
+  $("frz").onclick = () => {
+    params.frozen = !params.frozen;
+    $("frz").classList.toggle("on", params.frozen);
+    $("frz").textContent = params.frozen ? "frozen profile ✓" : "frozen profile";
+    build();
+  };
+  $("lam").oninput = (e) => { params.lambda = +e.target.value; $("v-lam").textContent = params.lambda.toFixed(1); build(); };
+  $("b").oninput = (e) => { params.b = +e.target.value; $("v-b").textContent = params.b.toFixed(2); build(); };
+  $("a").oninput = (e) => { params.a = +e.target.value; $("v-a").textContent = params.a.toFixed(2); build(); };
+  $("sp").oninput = (e) => { params.speed = +e.target.value; $("v-sp").textContent = params.speed.toFixed(1); };
+
+  $("note").innerHTML =
+    "slice of the helicity density u·ω at z = 0, renormalised per frame · the exponents are free here: " +
+    "a hypothetical Navier–Stokes singularity would need ½ &lt; b &lt; 1 and b &lt; a &lt; (1+b)/2, but " +
+    "that is a necessary budget for an object nobody has exhibited — this is an animation law, not a claim about turbulence";
+})();
+</script>
+</body>
+</html>

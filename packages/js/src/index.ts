@@ -27,6 +27,8 @@ export { shellPeak, rolloff, condensate, abc, twoScale, C_TWO_SCALE, exactNS, ns
 export type { ExactNSOptions } from "./presets";
 export { createRing, collidingRings, compose, ringSpeed, axisymmetric, strainedColumn, counterSwirlColumns, columnCore, columnPeakVorticity } from "./primitives";
 export type { RingOptions, AxiProfile, AxisymOptions, StrainedColumnOptions } from "./primitives";
+export { collapse, dssCollapse } from "./warps";
+export type { CollapseOptions, DssOptions } from "./warps";
 
 /** Create a Helix Noise field. */
 export function create(options?: HelixNoiseOptions): Field {

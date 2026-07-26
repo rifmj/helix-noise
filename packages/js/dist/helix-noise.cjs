@@ -26,6 +26,7 @@ __export(src_exports, {
   NS_TARGETS: () => NS_TARGETS,
   abc: () => abc,
   axisymmetric: () => axisymmetric,
+  collapse: () => collapse,
   collidingRings: () => collidingRings,
   columnCore: () => columnCore,
   columnPeakVorticity: () => columnPeakVorticity,
@@ -36,6 +37,7 @@ __export(src_exports, {
   createAtoms: () => createAtoms,
   createRing: () => createRing,
   default: () => src_default,
+  dssCollapse: () => dssCollapse,
   exactNS: () => exactNS,
   nsDeveloped: () => nsDeveloped,
   nsForced: () => nsForced,
@@ -2424,6 +2426,139 @@ function perp(ax, hint) {
   return [1, 0, 0];
 }
 
+// src/warps.ts
+var TAU3 = 2 * Math.PI;
+function collapse(field, opts = {}) {
+  const T = opts.T ?? 1;
+  const q = opts.q ?? 0.6;
+  const tie = opts.tieAmplitude !== false;
+  const minTau = opts.minTau ?? 1e-4;
+  return new WarpField(
+    field,
+    opts.center ?? [0, 0, 0],
+    (t) => Math.pow(Math.max(T - t, minTau), q),
+    (t) => tie ? q * Math.pow(Math.max(T - t, minTau), q - 1) : 1,
+    opts.freezeProfile !== false
+  );
+}
+function dssCollapse(field, opts = {}) {
+  const T = opts.T ?? 1;
+  const lambda = Math.max(opts.lambda ?? 2, 1.0000001);
+  const b = opts.b ?? 0.6;
+  const a = opts.a ?? 0.8;
+  const minTau = opts.minTau ?? 1e-4;
+  const logL = Math.log(lambda);
+  const theta = opts.scaleProfile ?? ((p) => 1 + 0.25 * Math.cos(TAU3 * p));
+  const alpha = opts.ampProfile ?? (() => 1);
+  const phase = (t) => {
+    const s = -Math.log(Math.max(T - t, minTau));
+    const p = s / logL % 1;
+    return p < 0 ? p + 1 : p;
+  };
+  return new WarpField(
+    field,
+    opts.center ?? [0, 0, 0],
+    (t) => Math.pow(Math.max(T - t, minTau), b) * theta(phase(t)),
+    (t) => Math.pow(Math.max(T - t, minTau), -a) * alpha(phase(t)),
+    opts.freezeProfile !== false
+  );
+}
+var _w6 = [0, 0, 0, 0, 0, 0];
+var WarpField = class {
+  constructor(base, c, L, A, freeze) {
+    this.base = base;
+    this.c = c;
+    this.L = L;
+    this.A = A;
+    this.freeze = freeze;
+  }
+  sampleUW(x, y, z, out6, t = 0) {
+    const l = this.L(t), amp = this.A(t);
+    this.base.sampleUW((x - this.c[0]) / l, (y - this.c[1]) / l, (z - this.c[2]) / l, _w6, this.freeze ? 0 : t);
+    out6[0] = amp * _w6[0];
+    out6[1] = amp * _w6[1];
+    out6[2] = amp * _w6[2];
+    const wScale = amp / l;
+    out6[3] = wScale * _w6[3];
+    out6[4] = wScale * _w6[4];
+    out6[5] = wScale * _w6[5];
+    return out6;
+  }
+  sampleUA(x, y, z, out6, t = 0) {
+    const l = this.L(t), amp = this.A(t);
+    this.base.sampleUA((x - this.c[0]) / l, (y - this.c[1]) / l, (z - this.c[2]) / l, _w6, this.freeze ? 0 : t);
+    out6[0] = amp * _w6[0];
+    out6[1] = amp * _w6[1];
+    out6[2] = amp * _w6[2];
+    const aScale = amp * l;
+    out6[3] = aScale * _w6[3];
+    out6[4] = aScale * _w6[4];
+    out6[5] = aScale * _w6[5];
+    return out6;
+  }
+  sample(x, y, z, t = 0) {
+    this.sampleUW(x, y, z, _t63, t);
+    return [_t63[0], _t63[1], _t63[2]];
+  }
+  vorticity(x, y, z, t = 0) {
+    this.sampleUW(x, y, z, _t63, t);
+    return [_t63[3], _t63[4], _t63[5]];
+  }
+  helicityDensity(x, y, z, t = 0) {
+    this.sampleUW(x, y, z, _t63, t);
+    return _t63[0] * _t63[3] + _t63[1] * _t63[4] + _t63[2] * _t63[5];
+  }
+  potential(x, y, z, t = 0) {
+    this.sampleUA(x, y, z, _t63, t);
+    return [_t63[3], _t63[4], _t63[5]];
+  }
+  withBoundary(sdf, opts) {
+    return new BoundedFieldImpl(this, sdf, opts);
+  }
+  bake3D(n, t = 0) {
+    const data = new Float32Array(n * n * n * 4);
+    let p = 0;
+    for (let z = 0; z < n; z++) for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
+      this.sampleUW(x / n * TAU3, y / n * TAU3, z / n * TAU3, _t63, t);
+      data[p] = _t63[0];
+      data[p + 1] = _t63[1];
+      data[p + 2] = _t63[2];
+      data[p + 3] = _t63[0] * _t63[3] + _t63[1] * _t63[4] + _t63[2] * _t63[5];
+      p += 4;
+    }
+    return { data, size: n, channels: 4 };
+  }
+  bakePotential3D(n, t = 0) {
+    const data = new Float32Array(n * n * n * 4);
+    let p = 0;
+    for (let z = 0; z < n; z++) for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
+      const px = x / n * TAU3, py = y / n * TAU3, pz = z / n * TAU3;
+      this.sampleUA(px, py, pz, _t63, t);
+      data[p] = _t63[3];
+      data[p + 1] = _t63[4];
+      data[p + 2] = _t63[5];
+      this.sampleUW(px, py, pz, _t63, t);
+      data[p + 3] = _t63[0] * _t63[3] + _t63[1] * _t63[4] + _t63[2] * _t63[5];
+      p += 4;
+    }
+    return { data, size: n, channels: 4 };
+  }
+  bake2D(nx, ny, z = 0, t = 0) {
+    const data = new Float32Array(nx * ny * 4);
+    let p = 0;
+    for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+      this.sampleUW(i / nx * TAU3, j / ny * TAU3, z, _t63, t);
+      data[p] = _t63[0];
+      data[p + 1] = _t63[1];
+      data[p + 2] = _t63[2];
+      data[p + 3] = _t63[0] * _t63[3] + _t63[1] * _t63[4] + _t63[2] * _t63[5];
+      p += 4;
+    }
+    return { data, width: nx, height: ny, channels: 4 };
+  }
+};
+var _t63 = [0, 0, 0, 0, 0, 0];
+
 // src/index.ts
 function create(options) {
   return new HelixField(options);
@@ -2488,6 +2623,7 @@ var src_default = HelixNoise;
   NS_TARGETS,
   abc,
   axisymmetric,
+  collapse,
   collidingRings,
   columnCore,
   columnPeakVorticity,
@@ -2497,6 +2633,7 @@ var src_default = HelixNoise;
   create,
   createAtoms,
   createRing,
+  dssCollapse,
   exactNS,
   nsDeveloped,
   nsForced,

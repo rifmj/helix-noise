@@ -847,6 +847,83 @@ declare function counterSwirlColumns(opts?: StrainedColumnOptions & {
     offsetAxis?: Vec3;
 }): FlowField;
 
+/** Options for {@link collapse}. */
+interface CollapseOptions {
+    /** The instant the collapse completes. Sampling is only defined for `t < T`. Default 1. */
+    T?: number;
+    /**
+     * Space exponent. `0 < q < 1` completes in finite time; as `q → 1` it becomes a gentle drift
+     * that never quite arrives. Default 0.6.
+     */
+    q?: number;
+    /** The point everything focuses on. Default `[0, 0, 0]`. */
+    center?: Vec3;
+    /**
+     * Tie the amplitude to the scale (`A = |L′|`), so the flow speeds up exactly as fast as it
+     * shrinks and the norms follow `‖u‖∞ = q(T−t)^(q−1)`. Set false to zoom without accelerating.
+     * Divergence-freedom holds either way. Default true.
+     */
+    tieAmplitude?: boolean;
+    /**
+     * Floor on `T − t`, so an animation that runs past `T` degrades instead of returning `Infinity`.
+     * Default `1e-4`.
+     */
+    minTau?: number;
+    /**
+     * Freeze the wrapped field's own clock, so the warp supplies *all* the motion. Default true,
+     * and for {@link dssCollapse} it is what makes the loop exact: self-similarity says the profile
+     * repeats, which it cannot do if the profile is itself churning. Set false to let the wrapped
+     * field evolve as well — the collapse still works, but the picture no longer closes on itself.
+     */
+    freezeProfile?: boolean;
+}
+/** Options for {@link dssCollapse}. */
+interface DssOptions extends CollapseOptions {
+    /** Discrete zoom ratio: the picture repeats every `log λ` of renormalization time. Default 2. */
+    lambda?: number;
+    /** Space exponent `b`. Default 0.6. */
+    b?: number;
+    /** Amplitude exponent `a`. Default 0.8. */
+    a?: number;
+    /** 1-periodic, strictly positive scale modulation. Default `1 + 0.25·cos(2πφ)`. */
+    scaleProfile?: (phase01: number) => number;
+    /** 1-periodic, strictly positive amplitude modulation. Default `1`. */
+    ampProfile?: (phase01: number) => number;
+}
+/**
+ * Wrap a field in a **focusing** time warp: the whole pattern shrinks toward `center` like
+ * `(T − t)^q` while the flow speeds up like `(T − t)^(q−1)`.
+ *
+ * ```js
+ * const imploding = collapse(create({ modes: 48, tileable: true }), { T: 6, q: 0.55 });
+ * ```
+ *
+ * `q` is the drama knob: near 1 a slow gathering, small a violent snap. The collapse *completes*
+ * (rather than asymptoting) exactly when `q < 1`.
+ *
+ * Two practical notes. Sampling past `T` is clamped by `minTau`, not allowed to diverge. And
+ * because the warp samples the wrapped field at `(x − c)/L` with `L → 0`, it walks ever further
+ * into that field's far reaches — wrap a `tileable` field or a closed-form primitive if you want
+ * the structure to survive deep zooms instead of dissolving into hash.
+ */
+declare function collapse(field: FlowField, opts?: CollapseOptions): FlowField;
+/**
+ * The **log-periodic** version: the same focusing, dressed with a modulation that makes it an
+ * *exact loop*.
+ *
+ * Driving by the renormalization time `s = −log(T − t)`, the scale is `(T−t)^b·Θ(s/log λ)` and the
+ * amplitude `(T−t)^(−a)·𝒜(s/log λ)` with `Θ` and `𝒜` 1-periodic. So every time `s` advances by
+ * `log λ`, the field is **identical to what it was, up to a rescale** by `λ^(−b)` in space and
+ * `λ^a` in amplitude — one rendered period tiles the whole collapse, with no cross-fade and no
+ * drift. That is the difference between a Droste zoom that is faked and one that closes.
+ *
+ * The exponents are free parameters here. A hypothetical Navier–Stokes singularity would have to
+ * satisfy `1/2 < b < 1` and `b < a < (1+b)/2`, but that is a *necessary* budget constraint on an
+ * object nobody has exhibited — it is offered as a sane starting range, not enforced, and this
+ * warp is a kinematic animation law rather than a claim about turbulence.
+ */
+declare function dssCollapse(field: FlowField, opts?: DssOptions): FlowField;
+
 /** Create a Helix Noise field. */
 declare function create(options?: HelixNoiseOptions): Field;
 /** Create a sparse-atom field: broadband, infinite, amortized O(1), spatially-varying params. */
@@ -863,4 +940,4 @@ declare const HelixNoise: {
     version: string;
 };
 
-export { type AtomField, type AxiProfile, type AxisymOptions, type Bake2DResult, type Bake3DResult, type BoundaryOptions, type BoundedField, C_TWO_SCALE, type ExactNSOptions, type Field, type FlowField, type GlslOptions, HelixAtoms, type HelixAtomsOptions, HelixField, type HelixNoiseOptions, NS_TARGETS, type Out6, type RingOptions, type ScaleFn, type Sdf, type SelfTestReport, type StrainedColumnOptions, type Vec3, abc, axisymmetric, collidingRings, columnCore, columnPeakVorticity, compose, condensate, counterSwirlColumns, create, createAtoms, createRing, HelixNoise as default, exactNS, nsDeveloped, nsForced, ringSpeed, rolloff, selfTest, shellPeak, strainedColumn, twoScale, version };
+export { type AtomField, type AxiProfile, type AxisymOptions, type Bake2DResult, type Bake3DResult, type BoundaryOptions, type BoundedField, C_TWO_SCALE, type CollapseOptions, type DssOptions, type ExactNSOptions, type Field, type FlowField, type GlslOptions, HelixAtoms, type HelixAtomsOptions, HelixField, type HelixNoiseOptions, NS_TARGETS, type Out6, type RingOptions, type ScaleFn, type Sdf, type SelfTestReport, type StrainedColumnOptions, type Vec3, abc, axisymmetric, collapse, collidingRings, columnCore, columnPeakVorticity, compose, condensate, counterSwirlColumns, create, createAtoms, createRing, HelixNoise as default, dssCollapse, exactNS, nsDeveloped, nsForced, ringSpeed, rolloff, selfTest, shellPeak, strainedColumn, twoScale, version };
