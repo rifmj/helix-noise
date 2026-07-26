@@ -59,6 +59,8 @@ const PHI_MAX = 1e6; // beyond this the JS kernel's exact-reduction guard applie
 // Layout state for the single shared instance (mode block re-uploaded when the owner changes).
 let owner: unknown = null;
 let ownerStamp = -1;
+// Which time's content currently sits in the two time-dependent slots (see runWasm).
+let ownerAmpT = NaN, ownerPhT = NaN;
 let capN = 0, capPts = 0;
 let f64: Float64Array | null = null;
 let mdO = 0, pxO = 0, pyO = 0, pzO = 0, uxO = 0, uyO = 0, uzO = 0, wxO = 0, wyO = 0, wzO = 0;
@@ -112,6 +114,14 @@ export function runWasm(
   // Mode block (14 arrays); `a` slot gets the (possibly decayed) amplitudes for this t.
   // The kernel strides mode arrays by the *live* N (not the reserved capacity), so upload with
   // the same stride — otherwise a field with fewer modes than a previous one reads stale data.
+  // Decay and flutter each make one slot time-dependent, so track *which time's* content is
+  // resident rather than testing array identity: `_amps`/`_phases` hand back the baked array
+  // whenever the effect is off or t = 0, so `amps !== field.a` alone misses the step back down
+  // to t = 0 and leaves the previous frame's decayed/flutter-shifted values in the kernel.
+  // The baked array is by definition the t = 0 content, and is time-invariant when the effect
+  // is off — labelling it 0 is correct in both cases and keeps static fields upload-free.
+  const ampT = amps === field.a ? 0 : t;
+  const phT = phases === field.ph ? 0 : t;
   if (owner !== field || ownerStamp !== field._buildStamp) {
     for (let ai = 0; ai < ARRS.length; ai++) {
       const src =
@@ -119,10 +129,11 @@ export function runWasm(
       m.set(src, (mdO >> 3) + ai * N);
     }
     owner = field; ownerStamp = field._buildStamp;
+    ownerAmpT = ampT; ownerPhT = phT;
   } else {
-    // Decay and flutter both make a slot time-dependent; refresh just those.
-    if (amps !== field.a) m.set(amps, (mdO >> 3) + 6 * N);
-    if (phases !== field.ph) m.set(phases, (mdO >> 3) + 3 * N);
+    // Refresh just the slots whose resident time no longer matches this call's.
+    if (ownerAmpT !== ampT) { m.set(amps, (mdO >> 3) + 6 * N); ownerAmpT = ampT; }
+    if (ownerPhT !== phT) { m.set(phases, (mdO >> 3) + 3 * N); ownerPhT = phT; }
   }
 
   // transpose positions to SoA, tracking the phase bound

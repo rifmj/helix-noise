@@ -3,6 +3,19 @@
 All notable changes to this project are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- **Stale time-dependent modes in the wasm batch path.** With `decay` or `flutter` active, a
+  `sampleMany`/`sampleManyUW` call at `t = 0` that followed a call at `t > 0` on the same field
+  returned the *previous* time's decayed amplitudes / flutter-shifted phases — the batch path
+  disagreed with `sampleUW`, which was always correct. The kernel's per-slot refresh guard tested
+  array identity (`amps !== field.a`), but `_amps`/`_phases` return the baked arrays at `t = 0`, so
+  the step back down to 0 looked like "nothing to re-upload". The mode block now tracks *which
+  time's* content is resident in each time-dependent slot. Alternating two fields per frame masked
+  this (the owner switch forced a full re-upload); re-measuring one field at `t = 0` exposed it.
+
 ## [1.8.0]
 
 ### Added
