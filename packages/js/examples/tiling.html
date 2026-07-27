@@ -1,0 +1,344 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Helix Noise — seamless by construction (tileable)</title>
+<style>
+  html,body{margin:0;background:#070a0e;color:#cdd6dd;font-family:system-ui,sans-serif}
+  .wrap{max-width:980px;margin:0 auto;padding:22px 16px}
+  h1{font-size:19px;font-weight:600;margin:0 0 6px}
+  h1 code{color:#f4a13c}
+  p{color:#8a97a2;font-size:13.5px;line-height:1.6;margin:0 0 14px}
+  p b{color:#cdd6dd;font-weight:500}
+  code{font-family:ui-monospace,Menlo,monospace;color:#f4a13c;font-size:12.5px}
+  #stage{position:relative;width:100%;aspect-ratio:3/2;border:1px solid rgba(150,180,200,.15);border-radius:10px;overflow:hidden;background:#070a0e}
+  #wall{width:100%;height:100%;display:block}
+  .badge{position:absolute;top:10px;left:12px;font-family:ui-monospace,monospace;font-size:10.5px;
+    letter-spacing:.12em;text-transform:uppercase;color:#93a3b0;background:rgba(7,10,14,.55);
+    border:1px solid rgba(150,180,200,.14);border-radius:6px;padding:4px 8px;pointer-events:none}
+  .ro{position:absolute;top:10px;right:12px;font-family:ui-monospace,monospace;font-size:10.5px;color:#93a3b0;
+    background:rgba(7,10,14,.68);border:1px solid rgba(150,180,200,.14);border-radius:6px;padding:6px 9px;
+    line-height:1.55;pointer-events:none;text-align:right}
+  .ro b{font-weight:400;color:#2fd6bf}
+  .ro i{font-style:normal;color:#5d6b77}
+  .tbl{display:grid;grid-template-columns:auto auto auto;gap:1px 12px;margin:5px 0 4px;text-align:right}
+  .tbl span{color:#5d6b77}
+  .tbl .hd{color:#5d6b77;font-size:10px;letter-spacing:.04em}
+  .tbl .lbl{text-align:left;color:#7b8794}
+  .tbl .act{color:#cdd6dd}
+  .ok{color:#2fd6bf}
+  .bad{color:#f4a13c}
+  #seam{position:relative;margin-top:12px;border:1px solid rgba(150,180,200,.15);border-radius:10px;
+    background:#04070a;padding:8px 10px 6px}
+  #prof{width:100%;height:118px;display:block}
+  .cap{font-family:ui-monospace,monospace;font-size:11px;color:#6c7d8a;margin-top:5px;display:flex;
+    flex-wrap:wrap;gap:14px;align-items:center}
+  .key{display:inline-flex;align-items:center;gap:6px}
+  .key i{display:inline-block;width:20px;height:0;border-top:2px solid #2fd6bf}
+  .key i.d{border-top:2px dashed #f4a13c}
+  .row{display:flex;flex-wrap:wrap;gap:14px;align-items:center;margin-top:12px;font-family:ui-monospace,monospace;font-size:12px;color:#93a3b0}
+  .row label{display:flex;align-items:center;gap:8px}
+  input[type=range]{width:120px}
+  button{font-family:ui-monospace,monospace;font-size:11.5px;color:#cdd6dd;background:#0c1016;
+    border:1px solid rgba(150,180,200,.22);border-radius:7px;padding:6px 11px;cursor:pointer}
+  button:hover{border-color:#38d9d1}
+  button.on{border-color:#38d9d1;color:#fff}
+  button.brk.on{border-color:#f4a13c;color:#f4a13c}
+  .note{margin-top:12px;font-size:12px;color:#5d6b77;font-family:ui-monospace,monospace;line-height:1.6}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Seamless by construction — <code>create({ tileable: true })</code></h1>
+  <p>Every mode in this field is a plane wave <code>e^(i k·x)</code>. If every <code>k</code> is an
+    <b>integer</b> vector then every mode has period 2π in x, y and z — so their sum does too, exactly,
+    as arithmetic. <code>tileable: true</code> is that one line: each drawn wavevector is rounded to the
+    nearest lattice point and the transverse frame is re-derived from the rounded vector, so
+    <code>k·e = 0</code> still holds and the field is still exactly divergence-free. Nothing is blended,
+    mirrored or cross-faded at the edge of the cell, because there is no edge.</p>
+  <p>The wall below is <b>one 208×208 image</b> of the cell <code>[0,L)²</code>, blitted 1:1 into a grid.
+    The renderer never re-samples the field per tile, so the picture cannot fake periodicity; the only
+    open question is whether the field agrees with itself across the join. Hunt for the join with
+    <b>tile joins</b> off, then turn <code>tileable</code> off and watch the grid appear.</p>
+  <p>Rounding moves each wavevector by up to half a lattice unit, so the tileable field is not the same
+    field as its untileable twin — the spectrum is quantised, and at <code>kmax = 5</code> that
+    quantisation is coarse. That is the price, and it is the whole price. Both fields here share the
+    seed and every other option.</p>
+  <div id="stage">
+    <canvas id="wall"></canvas>
+    <div class="badge">helix-noise · one cell</div>
+    <div class="ro" id="ro">—</div>
+  </div>
+  <div id="seam">
+    <canvas id="prof"></canvas>
+    <div class="cap">
+      <span class="key"><i></i> u<sub>x</sub>(0, y, z₀)</span>
+      <span class="key"><i class="d"></i> u<sub>x</sub>(L, y, z₀)</span>
+      <span id="pmax">—</span>
+      <span id="pn">—</span>
+    </div>
+  </div>
+  <div class="row">
+    <button id="til" class="on">tileable ✓</button>
+    <button id="grid">tile joins</button>
+    <button id="tiles">3 × 2</button>
+    <label>detune cell <input id="det" type="range" min="0" max="0.15" step="0.0025" value="0"><span id="v-det">0.0000</span></label>
+    <label>slice z <input id="zs" type="range" min="0" max="6.28" step="0.02" value="0"><span id="v-z">0.00</span></label>
+    <label>churn <input id="sp" type="range" min="0" max="1.5" step="0.05" value="0.5"><span id="v-sp">0.5</span></label>
+  </div>
+  <p style="margin-top:14px"><b>The receipt.</b> Every frame both fields are sampled on all three faces
+    of the cell — 3 × 24² = 1,728 point pairs — comparing <code>u(0,y,z)</code> with
+    <code>u(L,y,z)</code> and the same for the vorticity, reported relative to the largest |u| and |ω|
+    found on those faces. The tileable field reads <b>2e-15</b> absolute against |u|max ≈ 2, which is
+    double precision arriving at 2π; its twin reads <b>1.4–1.7 relative</b> — a ratio above 1 because
+    the difference of two unrelated O(1) vectors can exceed either of them, which is the point: the two
+    edges are simply different flow. Fifteen orders of magnitude separate the two rows, and both are
+    printed at once, so the contrast does not depend on you toggling anything. The
+    strip above is the same check as a picture on one line: solid teal is the left edge, dashed amber is
+    the right edge, and when the cell is a period the dashes sit on top of the solid curve. Two curves
+    are always drawn, so a passing frame does not look like a frame that never ran.</p>
+  <p><b>Two ways to break it.</b> <code>tileable</code> off is the obvious one. <b>detune cell</b> is the
+    sharper one: it leaves the field alone and asks it to tile at <code>L = 2π(1+δ)</code>, a period it
+    does not have. One notch — δ = 0.0025, a cell a quarter of a percent too wide — already moves the
+    mismatch from 8e-16 to 1.6e-2, and it climbs smoothly from there (6.6e-2 at δ = 0.01, 0.58 at
+    δ = 0.1). So the number is reading the actual join, not the value of a flag.</p>
+  <div class="note" id="note">—</div>
+</div>
+
+<script src="../dist/helix-noise.global.js"></script>
+<script>
+(() => {
+  const TAU = Math.PI * 2;
+  const P = 208;                 // cell resolution: the wall is this image, repeated
+  const NS = 24;                 // seam grid per face
+  const NP = 256;                // samples along the profile line
+  const params = { tileable: true, grid: false, cols: 3, rows: 2, detune: 0, z: 0, speed: 0.5 };
+
+  // Same seed, same everything, one flag apart. Both are built once and both are measured every
+  // frame; only one of them is drawn.
+  const BASE = { modes: 28, seed: 7, slope: 1.6, coherence: 0.3, kmin: 1, kmax: 5, churn: 1 };
+  const FIELD = {
+    on: HelixNoise.create({ ...BASE, tileable: true }),
+    off: HelixNoise.create({ ...BASE, tileable: false }),
+  };
+  const shown = () => (params.tileable ? FIELD.on : FIELD.off);
+  const cell = () => TAU * (1 + params.detune);
+
+  // ---- buffers -----------------------------------------------------------
+  // One flat batch per job. sampleManyUW is mode-major, ~5x faster here than looping sampleUW.
+  const cellPos = new Float64Array(3 * P * P), cellOut = new Float64Array(6 * P * P);
+  const seamPos = new Float64Array(3 * 6 * NS * NS), seamOut = new Float64Array(6 * 6 * NS * NS);
+  const profPos = new Float64Array(3 * 2 * NP), profOut = new Float64Array(6 * 2 * NP);
+
+  function layout() {
+    const L = cell(), z = params.z;
+    let p = 0;
+    for (let j = 0; j < P; j++) for (let i = 0; i < P; i++) {
+      cellPos[p++] = (i / P) * L; cellPos[p++] = (j / P) * L; cellPos[p++] = z;
+    }
+    // Three faces, each as (point on the 0-face, its partner on the L-face) — so the comparison is
+    // over the whole boundary of the cell, not just the one line the strip draws.
+    p = 0;
+    for (let ax = 0; ax < 3; ax++) for (let j = 0; j < NS; j++) for (let i = 0; i < NS; i++) {
+      const a = ((i + 0.5) / NS) * L, b = ((j + 0.5) / NS) * L;
+      const q = ax === 0 ? [0, a, b] : ax === 1 ? [a, 0, b] : [a, b, 0];
+      seamPos[p++] = q[0]; seamPos[p++] = q[1]; seamPos[p++] = q[2];
+      q[ax] = L;
+      seamPos[p++] = q[0]; seamPos[p++] = q[1]; seamPos[p++] = q[2];
+    }
+    p = 0;
+    for (let i = 0; i < NP; i++) {
+      const y = (i / (NP - 1)) * L;
+      profPos[p++] = 0; profPos[p++] = y; profPos[p++] = z;
+      profPos[p++] = L; profPos[p++] = y; profPos[p++] = z;
+    }
+  }
+  layout();
+
+  // ---- the receipt -------------------------------------------------------
+  /** max‖u(0-face) − u(L-face)‖ and the same for ω, plus the local scales to divide by. */
+  function measure(f, t) {
+    f.sampleManyUW(seamPos, seamOut, t);
+    let du = 0, dw = 0, um = 1e-12, wm = 1e-12;
+    for (let n = 0; n < 3 * NS * NS; n++) {
+      const A = 12 * n, B = A + 6;
+      du = Math.max(du, Math.hypot(seamOut[A] - seamOut[B], seamOut[A + 1] - seamOut[B + 1], seamOut[A + 2] - seamOut[B + 2]));
+      dw = Math.max(dw, Math.hypot(seamOut[A + 3] - seamOut[B + 3], seamOut[A + 4] - seamOut[B + 4], seamOut[A + 5] - seamOut[B + 5]));
+      um = Math.max(um, Math.hypot(seamOut[A], seamOut[A + 1], seamOut[A + 2]));
+      wm = Math.max(wm, Math.hypot(seamOut[A + 3], seamOut[A + 4], seamOut[A + 5]));
+    }
+    return { du, dw, um, wm, relU: du / um, relW: dw / wm };
+  }
+
+  // ---- the wall ----------------------------------------------------------
+  const wall = document.getElementById("wall");
+  const wctx = wall.getContext("2d", { alpha: false });
+  const tile = document.createElement("canvas");
+  tile.width = P; tile.height = P;
+  const tctx = tile.getContext("2d");
+  const timg = tctx.createImageData(P, P);
+  const h = new Float64Array(P * P);
+  let peak = 1;   // smoothed, so brightness does not flicker frame to frame
+
+  function drawWall(f, t) {
+    f.sampleManyUW(cellPos, cellOut, t);
+    let pk = 1e-9;
+    for (let n = 0; n < P * P; n++) {
+      const o = 6 * n;
+      const v = cellOut[o] * cellOut[o + 3] + cellOut[o + 1] * cellOut[o + 4] + cellOut[o + 2] * cellOut[o + 5];
+      h[n] = v;
+      const m = Math.abs(v);
+      if (m > pk) pk = m;
+    }
+    peak = peak * 0.85 + pk * 0.15;
+    const d = timg.data;
+    let p = 0;
+    for (let n = 0; n < P * P; n++) {
+      const v = Math.sign(h[n]) * Math.pow(Math.min(1, Math.abs(h[n]) / peak), 0.55);
+      const pos = Math.max(0, v), neg = Math.max(0, -v);
+      d[p++] = 20 + neg * 224;
+      d[p++] = 26 + pos * 190 + neg * 135;
+      d[p++] = 32 + pos * 165 + neg * 28;
+      d[p++] = 255;
+    }
+    tctx.putImageData(timg, 0, 0);
+    // 1:1 blits at integer offsets — no scaling, no filtering, so nothing the renderer does can
+    // manufacture a seam or hide one.
+    for (let r = 0; r < params.rows; r++) for (let c = 0; c < params.cols; c++) wctx.drawImage(tile, c * P, r * P);
+    if (params.grid) {
+      wctx.strokeStyle = "rgba(150,180,200,.34)";
+      wctx.lineWidth = 1;
+      wctx.setLineDash([6, 6]);
+      wctx.beginPath();
+      for (let c = 1; c < params.cols; c++) { wctx.moveTo(c * P + .5, 0); wctx.lineTo(c * P + .5, wall.height); }
+      for (let r = 1; r < params.rows; r++) { wctx.moveTo(0, r * P + .5); wctx.lineTo(wall.width, r * P + .5); }
+      wctx.stroke();
+      wctx.setLineDash([]);
+    }
+  }
+
+  function sizeWall() {
+    wall.width = params.cols * P;
+    wall.height = params.rows * P;
+  }
+  sizeWall();
+
+  // ---- the profile strip -------------------------------------------------
+  const prof = document.getElementById("prof");
+  const pctx = prof.getContext("2d");
+  function sizeProf() {
+    const r = Math.min(2, devicePixelRatio || 1);
+    prof.width = Math.max(320, Math.round(prof.clientWidth * r));
+    prof.height = Math.round(118 * r);
+  }
+  addEventListener("resize", sizeProf); sizeProf();
+
+  function drawProfile(f, t) {
+    f.sampleManyUW(profPos, profOut, t);
+    const W = prof.width, H = prof.height, pad = 6;
+    let amp = 1e-9, dmax = 0, dat = 0;
+    for (let i = 0; i < NP; i++) {
+      const a = profOut[12 * i], b = profOut[12 * i + 6];
+      amp = Math.max(amp, Math.abs(a), Math.abs(b));
+      const dd = Math.abs(a - b);
+      if (dd > dmax) { dmax = dd; dat = i; }
+    }
+    const yOf = (v) => H / 2 - (v / amp) * (H / 2 - pad);
+    const xOf = (i) => (i / (NP - 1)) * (W - 1);
+    pctx.clearRect(0, 0, W, H);
+    pctx.strokeStyle = "rgba(150,180,200,.14)";
+    pctx.lineWidth = 1;
+    pctx.beginPath(); pctx.moveTo(0, H / 2); pctx.lineTo(W, H / 2); pctx.stroke();
+    // The worst pair on this line gets a tick, so the printed maximum has a place on the picture.
+    pctx.strokeStyle = "rgba(150,180,200,.30)";
+    pctx.beginPath(); pctx.moveTo(xOf(dat), 0); pctx.lineTo(xOf(dat), H); pctx.stroke();
+    const line = (off, style, dash, w) => {
+      pctx.strokeStyle = style; pctx.lineWidth = w; pctx.setLineDash(dash);
+      pctx.beginPath();
+      for (let i = 0; i < NP; i++) {
+        const v = profOut[12 * i + off];
+        const x = xOf(i), y = yOf(v);
+        i ? pctx.lineTo(x, y) : pctx.moveTo(x, y);
+      }
+      pctx.stroke(); pctx.setLineDash([]);
+    };
+    const s = Math.min(2, devicePixelRatio || 1);
+    line(0, "#2fd6bf", [], 2.2 * s);          // left edge, solid
+    line(6, "#f4a13c", [7 * s, 7 * s], 2 * s); // right edge, dashed on top of it
+    return { dmax, amp };
+  }
+
+  // ---- loop --------------------------------------------------------------
+  const ro = document.getElementById("ro");
+  const pmax = document.getElementById("pmax"), pn = document.getElementById("pn");
+  let t = 0, last = performance.now(), frames = 0;
+
+  const e2 = (v) => v.toExponential(2);
+  function frame(now) {
+    const dt = Math.min(0.05, (now - last) / 1000); last = now;
+    t += dt * params.speed;
+    frames++;
+
+    const L = cell();
+    drawWall(shown(), t);
+    const pr = drawProfile(shown(), t);
+    const mOn = measure(FIELD.on, t), mOff = measure(FIELD.off, t);
+
+    const cls = (r) => (r < 1e-12 ? "ok" : "bad");
+    const rowFor = (m, label, active) =>
+      `<span class="lbl${active ? " act" : ""}">${active ? "▸" : "·"} ${label}</span>` +
+      `<span class="${cls(m.relU)}">${e2(m.relU)}</span><span class="${cls(m.relW)}">${e2(m.relW)}</span>`;
+    ro.innerHTML =
+      `cell L <b>${L.toFixed(6)}</b> <i>= 2π×${(1 + params.detune).toFixed(4)}</i><br>` +
+      `<div class="tbl">` +
+      `<span class="hd"></span><span class="hd">Δu ⁄ |u|</span><span class="hd">Δω ⁄ |ω|</span>` +
+      rowFor(mOn, "tileable:true", params.tileable) +
+      rowFor(mOff, "tileable:false", !params.tileable) +
+      `</div>` +
+      `<i>3 × ${NS}² = ${(3 * NS * NS).toLocaleString()} face pairs</i><br>` +
+      `<i>|u|max ${mOn.um.toFixed(2)} · abs Δu ${e2(mOn.du)}</i><br>` +
+      `<i>t ${t.toFixed(2)} · frame ${frames}</i>`;
+
+    pmax.innerHTML = `max|Δu<sub>x</sub>| on this line <span class="${pr.dmax / pr.amp < 1e-12 ? "ok" : "bad"}">${e2(pr.dmax)}</span> against |u<sub>x</sub>|max ${pr.amp.toFixed(2)}`;
+    pn.textContent = `${NP} pairs · frame ${frames}`;
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  // ---- controls ----------------------------------------------------------
+  const $ = (id) => document.getElementById(id);
+  $("til").onclick = () => {
+    params.tileable = !params.tileable;
+    $("til").classList.toggle("on", params.tileable);
+    $("til").textContent = params.tileable ? "tileable ✓" : "tileable ✗";
+  };
+  $("grid").onclick = () => {
+    params.grid = !params.grid;
+    $("grid").classList.toggle("on", params.grid);
+  };
+  $("tiles").onclick = () => {
+    const big = params.cols === 3;
+    params.cols = big ? 6 : 3; params.rows = big ? 4 : 2;
+    $("tiles").textContent = `${params.cols} × ${params.rows}`;
+    sizeWall();
+  };
+  $("det").oninput = (e) => {
+    params.detune = +e.target.value;
+    $("v-det").textContent = params.detune.toFixed(4);
+    $("det").parentElement.style.color = params.detune ? "#f4a13c" : "";
+    layout();
+  };
+  $("zs").oninput = (e) => { params.z = +e.target.value; $("v-z").textContent = params.z.toFixed(2); layout(); };
+  $("sp").oninput = (e) => { params.speed = +e.target.value; $("v-sp").textContent = params.speed.toFixed(2); };
+
+  $("note").innerHTML =
+    "signed helicity density u·ω on one z-slice of the cell [0,L)², 208² samples, blitted 1:1 into the grid · " +
+    "the strip compares one velocity component on one line; the table compares all three components on all three faces · " +
+    "its vertical tick sits where that line's mismatch is largest — it wanders at random while the mismatch is roundoff, " +
+    "and locks onto a place once there is a real one · " +
+    "the tileable field is still exactly divergence-free: rounding k does not touch k·e = 0";
+})();
+</script>
+</body>
+</html>

@@ -1884,3 +1884,258 @@ test("axisymmetric partials are closed form in r, not differenced", () => {
   for (const [x, y, z] of GRID) { ch.sampleGrad(x, y, z, g); tr2 = Math.max(tr2, Math.abs(g[0] + g[4] + g[8])); }
   assert.ok(tr2 < 1e-14, `chassis divergence likewise (${tr2})`);
 });
+
+// ---------------------------------------------------------------------------
+// Aliasing and frame regressions — three defects the suite above could not see,
+// because it only ever composed leaf primitives and only ever sampled on-axis
+// with an untilted axis. Each test below fails on the pre-fix reference.
+// ---------------------------------------------------------------------------
+
+/** All six of `sampleUW`, and the 9 of `sampleGrad`, at one point. */
+function surface(f: FlowField, x: number, y: number, z: number, t = 0): number[] {
+  const uw: number[] = new Array(6).fill(0), ua: number[] = new Array(6).fill(0);
+  const g: number[] = new Array(9).fill(0);
+  f.sampleUW(x, y, z, uw, t); f.sampleUA(x, y, z, ua, t); f.sampleGrad(x, y, z, g, t);
+  return [...uw, ...ua.slice(3), ...g];
+}
+
+test("compose nests: a composed part is summed once, not doubled, and never dropped", () => {
+  // The two rings overlap, so both are live at the sample points and A ≠ B there — without that
+  // the wrong answers (2A + B, and 2B with A lost) would be indistinguishable from the right one.
+  const A = createRing({ center: [0, 0, -0.15], radius: 1.2, core: 0.5, circulation: 1.5 });
+  const B = createRing({ center: [0.1, 0, 0.15], radius: 1.0, core: 0.5, circulation: -1.1 });
+  const pts: [number, number, number][] = [[1.05, 0.12, 0.03], [0.7, 0.75, -0.1], [-1.1, 0.2, 0.2]];
+
+  let live = 0, apart = 0;
+  for (const p of pts) {
+    const a = surface(A, ...p), b = surface(B, ...p);
+    for (let i = 0; i < a.length; i++) {
+      live = Math.max(live, Math.min(Math.abs(a[i]), Math.abs(b[i])));
+      apart = Math.max(apart, Math.abs(a[i] - b[i]));
+    }
+  }
+  assert.ok(live > 1e-2, `both rings must be live at the sample points (${live}) — else vacuous`);
+  assert.ok(apart > 1e-2, `and must differ there (${apart}), or 2A + B looks like A + B`);
+
+  // Every nesting of the same two leaves is the same field. `compose` accumulates as
+  // (0 + A) + B whatever the shape of the tree, so this is exact, not approximate.
+  const flat = compose(A, B);
+  const nestings: [string, FlowField][] = [
+    ["compose(compose(A), B)", compose(compose(A), B)],
+    ["compose(A, compose(B))", compose(A, compose(B))],
+    ["compose(compose(A), compose(B))", compose(compose(A), compose(B))],
+    ["compose(compose(A, B))", compose(compose(A, B))],
+    ["compose(compose(compose(A, B)))", compose(compose(compose(A, B)))],
+  ];
+  for (const p of pts) {
+    const hand = surface(A, ...p).map((v, i) => v + surface(B, ...p)[i]);
+    assert.deepEqual(surface(flat, ...p), hand, "one level already matches the hand sum");
+    for (const [name, f] of nestings) assert.deepEqual(surface(f, ...p), hand, `${name} at ${p}`);
+  }
+
+  // The idiom the docstring advertises, and the reason this matters: collidingRings IS a compose,
+  // so composing it with anything else used to double one side and drop the other.
+  const rings = collidingRings({ radius: 1.2, core: 0.35, circulation: 1.5, separation: 1.6 });
+  const spectral = create({ modes: 12, seed: 3, amplitude: 0.2 });
+  const mixed = compose(rings, spectral);
+  let worst = 0, mag = 0;
+  for (const p of ringPoints(rings, 10)) {
+    const hand = surface(rings, ...p).map((v, i) => v + surface(spectral, ...p)[i]);
+    const got = surface(mixed, ...p);
+    for (let i = 0; i < hand.length; i++) {
+      worst = Math.max(worst, Math.abs(got[i] - hand[i]));
+      mag = Math.max(mag, Math.abs(hand[i]));
+    }
+  }
+  assert.ok(mag > 1e-2, `compose(collidingRings, spectral) carries signal (${mag}) — else vacuous`);
+  assert.equal(worst, 0, `and equals the hand sum exactly (off by ${worst})`);
+});
+
+test("stretching() on a composed field uses the summed vorticity, not the last part's", () => {
+  // Two columns on orthogonal axes, so their vorticities are far from parallel. That is the whole
+  // point: when the last part's ω is nearly parallel to the total, doubling it cancels in
+  // ξ = ω/|ω| and ξ·S·ξ is even in ξ, so the bug hides. Every previously shipped case hid it.
+  const c1 = strainedColumn({ strain: 0.7, viscosity: 0.05, circulation: 1.3, axis: [0, 0, 1] });
+  const c2 = strainedColumn({ strain: 0.7, viscosity: 0.05, circulation: 1.3, axis: [1, 0, 0] });
+  const cc = compose(c1, c2);
+  const P: [number, number, number] = [0.15, 0.12, 0.1];
+
+  const w = cc.vorticity(...P), wLast = c2.vorticity(...P);
+  const unit = (v: number[]): number[] => { const m = Math.hypot(...v); return v.map((c) => c / m); };
+  const cosine = Math.abs(unit(w).reduce((s, c, i) => s + c * unit(wLast)[i], 0));
+  assert.ok(cosine < 0.9, `total and last-part ω must not be parallel (cos ${cosine}) — else masked`);
+
+  // ξ·S·ξ, recomputed from the two public answers the library gives independently.
+  const g: number[] = new Array(9).fill(0);
+  cc.sampleGrad(P[0], P[1], P[2], g);
+  const xiSxi = (om: number[]): number => {
+    const e = unit(om);
+    let v = 0;
+    for (let m = 0; m < 3; m++) for (let n = 0; n < 3; n++) v += e[m] * 0.5 * (g[3 * m + n] + g[3 * n + m]) * e[n];
+    return v;
+  };
+  const correct = xiSxi(w), reported = cc.stretching(...P);
+  assert.ok(Math.abs(correct) > 1e-3, `the strain along ω is non-trivial (${correct}) — else vacuous`);
+  assert.ok(Math.abs(reported - correct) < 1e-12 * Math.max(1, Math.abs(correct)),
+    `stretching ${reported} vs ξ·S·ξ recomputed from vorticity() and sampleGrad() ${correct}`);
+
+  // And the test discriminates: the answer the aliased buffer used to give — the strain along the
+  // last part's ω alone — is a different number, not the same one arrived at differently.
+  const aliased = xiSxi(wLast);
+  assert.ok(Math.abs(aliased - correct) > 0.1 * Math.abs(correct),
+    `the wrong answer is genuinely different (${aliased} vs ${correct}), so this test can fail`);
+
+  // Unnested composition is the case that matters — collidingRings and counterSwirlColumns are
+  // one level deep — but nesting must not reintroduce it either.
+  assert.ok(Math.abs(compose(compose(c1), c2).stretching(...P) - correct) < 1e-12 * Math.max(1, Math.abs(correct)),
+    "and a nested compose reports the same");
+});
+
+test("on-axis frame is orthonormal for every axis, so the gradient stays a similarity transform", () => {
+  // On the axis the frame is a free choice, and the reference took ŷ raw when |n_z| ≥ 0.9 — not
+  // orthogonal to a tilted n̂. Eᵀ L E is then not a similarity transform, and the tell is the trace:
+  // a divergence appears out of nowhere, exactly a·n_y², on a field that is divergence-free by
+  // construction. Only sampleGrad is affected, which is why the sampler tests never saw it.
+  const a = 0.9, nu = 0.08, eps = 1.3;
+  const qAxis = Math.pow((eps * a) / (2 * nu), 2) - 3 * a * a;   // frame-independent, closed form
+
+  const axes: [string, Vec3][] = [
+    ["[0,0,1] — n_y = 0, the case the suite already covered", [0, 0, 1]],
+    ["[0,0.6,0.8] — tilted, |n_z| < 0.9 branch", [0, 0.6, 0.8]],
+    ["[0,0.28,0.96] — tilted, |n_z| ≥ 0.9 branch, the defect", [0, 0.28, 0.96]],
+    ["[0.3,0.2,0.93] — tilted in x and y, |n_z| ≥ 0.9", [0.3, 0.2, 0.93]],
+    ["[0,0.44,0.9] — just inside the branch boundary", [0, Math.sqrt(1 - 0.9 * 0.9), 0.9]],
+    ["[0,0.437,0.9] — just outside it", [0, Math.sqrt(1 - 0.8999 * 0.8999), 0.8999]],
+  ];
+  const g: number[] = new Array(9).fill(0);
+  let exercised = 0;   // how many of the axes actually reach the branch that was broken
+  for (const [name, axis] of axes) {
+    const n = Math.hypot(...axis);
+    const u: Vec3 = [axis[0] / n, axis[1] / n, axis[2] / n];
+    if (Math.abs(u[2]) >= 0.9 && u[1] !== 0) exercised++;
+    const f = strainedColumn({ strain: a, viscosity: nu, circulation: eps, axis });
+    const on: [number, number, number] = [u[0] * 0.37, u[1] * 0.37, u[2] * 0.37]; // exactly on the axis
+
+    f.sampleGrad(on[0], on[1], on[2], g);
+    const tr = g[0] + g[4] + g[8];
+    // The paired non-zero: a vanishing trace is only meaningful if the gradient itself is not zero.
+    const frob = Math.hypot(...g);
+    assert.ok(frob > a, `${name}: the on-axis gradient must be non-trivial (‖g‖ = ${frob}) — else vacuous`);
+    assert.ok(Math.abs(tr) < 1e-12, `${name}: on-axis trace must vanish, got ${tr} (a·n_y² = ${a * u[1] * u[1]})`);
+
+    // A second, independent invariant: Q = −½tr(G²) is conjugation-invariant too, and unlike the
+    // trace it does not vanish — so it catches a bad frame that happens to preserve the trace.
+    const q = f.qCriterion(...on);
+    assert.ok(Math.abs(q - qAxis) < 1e-9 * Math.abs(qAxis),
+      `${name}: on-axis Q must be the closed form ${qAxis}, got ${q}`);
+
+    // Off the axis the frame comes from the point itself, so this was always right — kept as the
+    // contrast that shows the on-axis assertion above is about the fallback and nothing else.
+    f.sampleGrad(0.3, -0.2, 0.11, g);
+    assert.ok(Math.abs(g[0] + g[4] + g[8]) < 1e-12, `${name}: off-axis trace vanishes too`);
+  }
+
+  // The guard that stops the whole test going vacuous if the axis list is ever edited: at least one
+  // axis above must actually satisfy |n_z| ≥ 0.9 AND n_y ≠ 0, which is the exact branch that was
+  // broken. Drop those and every assertion here passes on the unfixed implementation.
+  assert.ok(exercised >= 3, `the defective branch must be exercised, hit ${exercised} times`);
+});
+
+test("twoScale nests on either side: the sum does not depend on which slot you nested in", () => {
+  // twoScale is the same sum node compose is, and carried the same aliasing. The asymmetry is the
+  // tell: nesting in `base` survived because that slot is only ever scaled in place, so a three-
+  // scale cascade was right or wrong purely by association order.
+  const A = create({ modes: 8, seed: 7 }), B = create({ modes: 8, seed: 11 }), C = create({ modes: 8, seed: 13 });
+  const P: [number, number, number] = [0.83, 0.41, 0.22];
+
+  const hand6 = surface(A, ...P).map((v, i) => v + surface(B, ...P)[i] + surface(C, ...P)[i]);
+  const scale = Math.max(...hand6.map(Math.abs));
+  assert.ok(scale > 1e-2, `the three fields must carry signal (${scale}) — else vacuous`);
+  // and they must be mutually distinct, or "A dropped, B doubled" is indistinguishable from correct
+  const spread = Math.max(...surface(A, ...P).map((v, i) => Math.abs(v - surface(B, ...P)[i])));
+  assert.ok(spread > 1e-2, `and be distinct from each other (${spread})`);
+
+  for (const [name, f] of [
+    ["detail-slot nesting", twoScale(A, twoScale(B, C))],
+    ["base-slot nesting", twoScale(twoScale(A, B), C)],
+  ] as [string, FlowField][]) {
+    const got = surface(f, ...P);
+    const worst = Math.max(...got.map((v, i) => Math.abs(v - hand6[i])));
+    assert.ok(worst < 1e-12 * Math.max(1, scale), `${name}: off the hand sum by ${worst}`);
+  }
+
+  // detailGain must survive nesting too — it multiplies the inner sum as a whole, not part of it.
+  const g = 0.4;
+  const outer = twoScale(A, twoScale(B, C, { detailGain: g }), { detailGain: g });
+  const handG = surface(A, ...P).map((v, i) => v + g * (surface(B, ...P)[i] + g * surface(C, ...P)[i]));
+  const wg = Math.max(...surface(outer, ...P).map((v, i) => Math.abs(v - handG[i])));
+  assert.ok(wg < 1e-12 * Math.max(1, scale), `nested detailGain composes correctly (off by ${wg})`);
+});
+
+test("a warp around a compose around a warp scales once, not twice", () => {
+  // warp-inside-warp was safe by luck: every write is out[i] = k*buf[i] at the same index, so
+  // aliasing degenerated into an in-place rescale. A sum node in the middle removes that luck,
+  // because compose accumulates across its parts while the inner warp overwrites the buffer.
+  const A = create({ modes: 8, seed: 7 }), B = create({ modes: 8, seed: 11 });
+  const P: [number, number, number] = [0.83, 0.41, 0.22];
+  const T = 1, q = 0.6, t = 0.3;
+  const inner = collapse(B, { T, q });
+  const outer = collapse(compose(A, inner), { T, q });
+
+  // §12's scaling law, applied by hand to the composed field at the warped coordinate. An
+  // independent derivation: u by A, ω by A/L, A_pot by A·L.
+  const tau = T - t, L = Math.pow(tau, q), amp = q * Math.pow(tau, q - 1);
+  const xi: [number, number, number] = [P[0] / L, P[1] / L, P[2] / L];
+  const mid = compose(A, inner);
+  const m6: number[] = new Array(6).fill(0), a6: number[] = new Array(6).fill(0);
+  const m9: number[] = new Array(9).fill(0);
+  mid.sampleUW(xi[0], xi[1], xi[2], m6, 0);
+  mid.sampleUA(xi[0], xi[1], xi[2], a6, 0);
+  mid.sampleGrad(xi[0], xi[1], xi[2], m9, 0);
+  const hand = [
+    ...[0, 1, 2].map((i) => amp * m6[i]), ...[3, 4, 5].map((i) => (amp / L) * m6[i]),
+    ...[3, 4, 5].map((i) => amp * L * a6[i]), ...m9.map((v) => (amp / L) * v),
+  ];
+  const got = surface(outer, ...P, t);
+  const scale = Math.max(...hand.map(Math.abs));
+  assert.ok(scale > 1e-2, `the warped composite must carry signal (${scale}) — else vacuous`);
+  // and the inner warp must actually be doing something, or there is no nesting to speak of
+  const innerMag = Math.max(...surface(inner, ...P, 0).map(Math.abs));
+  assert.ok(innerMag > 1e-2, `the inner warp must contribute (${innerMag})`);
+  const worst = Math.max(...got.map((v, i) => Math.abs(v - hand[i])));
+  assert.ok(worst < 1e-12 * Math.max(1, scale), `warp(compose(A, warp(B))) off by ${worst}`);
+});
+
+test("helicityDensity on a bounded field reads its own velocity, not a neighbour's", () => {
+  // The bounded sampler fills slots 0..2, then takes six finite-difference samples to build the
+  // vorticity — and each of those refilled the buffer with the RAW base field at a shifted point.
+  // Handing that same buffer in as the output left the velocity slots holding someone else's
+  // answer. vorticity() survived only because slots 3..5 are written last.
+  const base = create({ modes: 12, seed: 3 });
+  const th = 1, R = 0.8;
+  const sdf = (x: number, y: number, z: number): number => Math.hypot(x, y, z) - R;
+  const bf = base.withBoundary(sdf, { thickness: th });
+
+  const inBand: [number, number, number][] = [[0.85, 0.1, 0.1], [0.6, 0.6, 0.3], [-0.9, 0.4, 0.5]];
+  const outside: [number, number, number][] = [[2.4, 1.1, 0.7], [-2.0, 1.5, 1.2]];
+  const o: number[] = new Array(6).fill(0);
+  let mag = 0, band = 0;
+  for (const p of [...inBand, ...outside]) {
+    const d = sdf(...p);
+    if (d > 0 && d < th) band++;
+    bf.sampleUW(p[0], p[1], p[2], o);
+    const fromSampler = o[0] * o[3] + o[1] * o[4] + o[2] * o[5];
+    const w = bf.vorticity(...p), u = bf.sample(...p);
+    mag = Math.max(mag, Math.abs(fromSampler));
+    assert.ok(Math.abs(bf.helicityDensity(...p) - fromSampler) < 1e-12 * Math.max(1, Math.abs(fromSampler)),
+      `at ${p}: helicityDensity ${bf.helicityDensity(...p)} vs u·ω from sampleUW ${fromSampler}`);
+    // and the same number a third way, from the two public vector readings
+    const dot = u[0] * w[0] + u[1] * w[1] + u[2] * w[2];
+    assert.ok(Math.abs(dot - fromSampler) < 1e-12 * Math.max(1, Math.abs(fromSampler)),
+      `at ${p}: sample()·vorticity() ${dot} vs ${fromSampler}`);
+  }
+  // The paired non-zeros. The defect was only large inside the influence band, so a test that
+  // sampled only the far field would agree to the finite-difference step and prove nothing.
+  assert.ok(band >= 3, `must sample inside the influence band, hit ${band} points`);
+  assert.ok(mag > 1e-2, `and u·ω must be non-trivial there (${mag}) — else vacuous`);
+});

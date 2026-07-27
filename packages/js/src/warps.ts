@@ -136,10 +136,6 @@ export function dssCollapse(field: FlowField, opts: DssOptions = {}): FlowField 
   );
 }
 
-const _w6: number[] = [0, 0, 0, 0, 0, 0];
-const _w9: number[] = [0, 0, 0, 0, 0, 0, 0, 0, 0];
-const _g9: number[] = [0, 0, 0, 0, 0, 0, 0, 0, 0];
-
 /**
  * `u(x,t) = A(t)·U((x−c)/L(t), t)`. Velocity scales by `A`; vorticity picks up an extra `1/L` from
  * the chain rule, and the vector potential an extra `L`. Getting those two wrong is the only real
@@ -147,6 +143,18 @@ const _g9: number[] = [0, 0, 0, 0, 0, 0, 0, 0, 0];
  * @internal
  */
 class WarpField implements FlowField {
+  /**
+   * Per-instance. A warp inside a warp survives a shared buffer by luck — every write is
+   * `out6[i] = k * _w6[i]` at the same index, so aliasing degenerates into an in-place rescale.
+   * Put a sum node in between, though, and the luck runs out: `compose` accumulates into the outer
+   * warp's buffer across its parts, and an inner warp among those parts overwrites it mid-loop, so
+   * `warp(compose(A, warp(B)))` drops A and counts B twice at two different scales.
+   */
+  private readonly _w6: number[] = [0, 0, 0, 0, 0, 0];
+  private readonly _w9: number[] = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+  private readonly _g9: number[] = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+  private readonly _t6: number[] = [0, 0, 0, 0, 0, 0];
+
   constructor(
     private readonly base: FlowField,
     private readonly c: Vec3,
@@ -158,19 +166,19 @@ class WarpField implements FlowField {
 
   sampleUW<T extends Out6>(x: number, y: number, z: number, out6: T, t = 0): T {
     const l = this.L(t), amp = this.A(t);
-    this.base.sampleUW((x - this.c[0]) / l, (y - this.c[1]) / l, (z - this.c[2]) / l, _w6, this.freeze ? 0 : t);
-    out6[0] = amp * _w6[0]; out6[1] = amp * _w6[1]; out6[2] = amp * _w6[2];
+    this.base.sampleUW((x - this.c[0]) / l, (y - this.c[1]) / l, (z - this.c[2]) / l, this._w6, this.freeze ? 0 : t);
+    out6[0] = amp * this._w6[0]; out6[1] = amp * this._w6[1]; out6[2] = amp * this._w6[2];
     const wScale = amp / l;
-    out6[3] = wScale * _w6[3]; out6[4] = wScale * _w6[4]; out6[5] = wScale * _w6[5];
+    out6[3] = wScale * this._w6[3]; out6[4] = wScale * this._w6[4]; out6[5] = wScale * this._w6[5];
     return out6;
   }
 
   sampleUA<T extends Out6>(x: number, y: number, z: number, out6: T, t = 0): T {
     const l = this.L(t), amp = this.A(t);
-    this.base.sampleUA((x - this.c[0]) / l, (y - this.c[1]) / l, (z - this.c[2]) / l, _w6, this.freeze ? 0 : t);
-    out6[0] = amp * _w6[0]; out6[1] = amp * _w6[1]; out6[2] = amp * _w6[2];
+    this.base.sampleUA((x - this.c[0]) / l, (y - this.c[1]) / l, (z - this.c[2]) / l, this._w6, this.freeze ? 0 : t);
+    out6[0] = amp * this._w6[0]; out6[1] = amp * this._w6[1]; out6[2] = amp * this._w6[2];
     const aScale = amp * l;
-    out6[3] = aScale * _w6[3]; out6[4] = aScale * _w6[4]; out6[5] = aScale * _w6[5];
+    out6[3] = aScale * this._w6[3]; out6[4] = aScale * this._w6[4]; out6[5] = aScale * this._w6[5];
     return out6;
   }
 
@@ -181,43 +189,43 @@ class WarpField implements FlowField {
   sampleGrad<T extends Out6>(x: number, y: number, z: number, out9: T, t = 0): T {
     if (out9.length < 9) throw new Error("helix-noise: sampleGrad needs 9 floats");
     const l = this.L(t), amp = this.A(t), k = amp / l;
-    this.base.sampleGrad((x - this.c[0]) / l, (y - this.c[1]) / l, (z - this.c[2]) / l, _w9,
+    this.base.sampleGrad((x - this.c[0]) / l, (y - this.c[1]) / l, (z - this.c[2]) / l, this._w9,
       this.freeze ? 0 : t);
-    for (let i = 0; i < 9; i++) out9[i] = k * _w9[i];
+    for (let i = 0; i < 9; i++) out9[i] = k * this._w9[i];
     return out9;
   }
 
   qCriterion(x: number, y: number, z: number, t = 0): number {
-    return qFromGrad(this.sampleGrad(x, y, z, _g9, t));
+    return qFromGrad(this.sampleGrad(x, y, z, this._g9, t));
   }
 
   lambda2(x: number, y: number, z: number, t = 0): number {
-    return lambda2FromGrad(this.sampleGrad(x, y, z, _g9, t));
+    return lambda2FromGrad(this.sampleGrad(x, y, z, this._g9, t));
   }
 
   stretching(x: number, y: number, z: number, t = 0): number {
-    this.sampleUW(x, y, z, _t6, t);
-    return stretchFromGrad(this.sampleGrad(x, y, z, _g9, t), _t6[3], _t6[4], _t6[5]);
+    this.sampleUW(x, y, z, this._t6, t);
+    return stretchFromGrad(this.sampleGrad(x, y, z, this._g9, t), this._t6[3], this._t6[4], this._t6[5]);
   }
 
   sample(x: number, y: number, z: number, t = 0): Vec3 {
-    this.sampleUW(x, y, z, _t6, t);
-    return [_t6[0], _t6[1], _t6[2]];
+    this.sampleUW(x, y, z, this._t6, t);
+    return [this._t6[0], this._t6[1], this._t6[2]];
   }
 
   vorticity(x: number, y: number, z: number, t = 0): Vec3 {
-    this.sampleUW(x, y, z, _t6, t);
-    return [_t6[3], _t6[4], _t6[5]];
+    this.sampleUW(x, y, z, this._t6, t);
+    return [this._t6[3], this._t6[4], this._t6[5]];
   }
 
   helicityDensity(x: number, y: number, z: number, t = 0): number {
-    this.sampleUW(x, y, z, _t6, t);
-    return _t6[0] * _t6[3] + _t6[1] * _t6[4] + _t6[2] * _t6[5];
+    this.sampleUW(x, y, z, this._t6, t);
+    return this._t6[0] * this._t6[3] + this._t6[1] * this._t6[4] + this._t6[2] * this._t6[5];
   }
 
   potential(x: number, y: number, z: number, t = 0): Vec3 {
-    this.sampleUA(x, y, z, _t6, t);
-    return [_t6[3], _t6[4], _t6[5]];
+    this.sampleUA(x, y, z, this._t6, t);
+    return [this._t6[3], this._t6[4], this._t6[5]];
   }
 
   withBoundary(sdf: Sdf, opts?: BoundaryOptions): BoundedField {
@@ -228,9 +236,9 @@ class WarpField implements FlowField {
     const data = new Float32Array(n * n * n * 4);
     let p = 0;
     for (let z = 0; z < n; z++) for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
-      this.sampleUW((x / n) * TAU, (y / n) * TAU, (z / n) * TAU, _t6, t);
-      data[p] = _t6[0]; data[p + 1] = _t6[1]; data[p + 2] = _t6[2];
-      data[p + 3] = _t6[0] * _t6[3] + _t6[1] * _t6[4] + _t6[2] * _t6[5];
+      this.sampleUW((x / n) * TAU, (y / n) * TAU, (z / n) * TAU, this._t6, t);
+      data[p] = this._t6[0]; data[p + 1] = this._t6[1]; data[p + 2] = this._t6[2];
+      data[p + 3] = this._t6[0] * this._t6[3] + this._t6[1] * this._t6[4] + this._t6[2] * this._t6[5];
       p += 4;
     }
     return { data, size: n, channels: 4 };
@@ -241,10 +249,10 @@ class WarpField implements FlowField {
     let p = 0;
     for (let z = 0; z < n; z++) for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
       const px = (x / n) * TAU, py = (y / n) * TAU, pz = (z / n) * TAU;
-      this.sampleUA(px, py, pz, _t6, t);
-      data[p] = _t6[3]; data[p + 1] = _t6[4]; data[p + 2] = _t6[5];
-      this.sampleUW(px, py, pz, _t6, t);
-      data[p + 3] = _t6[0] * _t6[3] + _t6[1] * _t6[4] + _t6[2] * _t6[5];
+      this.sampleUA(px, py, pz, this._t6, t);
+      data[p] = this._t6[3]; data[p + 1] = this._t6[4]; data[p + 2] = this._t6[5];
+      this.sampleUW(px, py, pz, this._t6, t);
+      data[p + 3] = this._t6[0] * this._t6[3] + this._t6[1] * this._t6[4] + this._t6[2] * this._t6[5];
       p += 4;
     }
     return { data, size: n, channels: 4 };
@@ -254,13 +262,12 @@ class WarpField implements FlowField {
     const data = new Float32Array(nx * ny * 4);
     let p = 0;
     for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
-      this.sampleUW((i / nx) * TAU, (j / ny) * TAU, z, _t6, t);
-      data[p] = _t6[0]; data[p + 1] = _t6[1]; data[p + 2] = _t6[2];
-      data[p + 3] = _t6[0] * _t6[3] + _t6[1] * _t6[4] + _t6[2] * _t6[5];
+      this.sampleUW((i / nx) * TAU, (j / ny) * TAU, z, this._t6, t);
+      data[p] = this._t6[0]; data[p + 1] = this._t6[1]; data[p + 2] = this._t6[2];
+      data[p + 3] = this._t6[0] * this._t6[3] + this._t6[1] * this._t6[4] + this._t6[2] * this._t6[5];
       p += 4;
     }
     return { data, width: nx, height: ny, channels: 4 };
   }
 }
 
-const _t6: number[] = [0, 0, 0, 0, 0, 0];

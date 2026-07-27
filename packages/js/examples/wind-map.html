@@ -1,0 +1,536 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Helix Noise — wind map (a tileable field as map data)</title>
+<style>
+  html,body{margin:0;background:#070a0e;color:#cdd6dd;font-family:system-ui,sans-serif}
+  .wrap{max-width:980px;margin:0 auto;padding:22px 16px}
+  h1{font-size:19px;font-weight:600;margin:0 0 6px}
+  h1 code{color:#f4a13c}
+  p{color:#8a97a2;font-size:13.5px;line-height:1.6;margin:0 0 14px}
+  p b{color:#cdd6dd;font-weight:500}
+  code{font-family:ui-monospace,Menlo,monospace;color:#f4a13c;font-size:12.5px}
+  #stage{position:relative;width:100%;aspect-ratio:16/10;border:1px solid rgba(150,180,200,.15);
+    border-radius:10px;overflow:hidden;background:#070a0e;cursor:crosshair;touch-action:none}
+  #stage.drag{cursor:grabbing}
+  #stage canvas{position:absolute;inset:0;display:block}
+  .badge{position:absolute;top:10px;left:12px;font-family:ui-monospace,monospace;font-size:10.5px;
+    letter-spacing:.12em;text-transform:uppercase;color:#93a3b0;background:rgba(7,10,14,.86);
+    border:1px solid rgba(150,180,200,.14);border-radius:6px;padding:4px 8px;pointer-events:none}
+  .ro{position:absolute;top:10px;right:12px;font-family:ui-monospace,monospace;font-size:11px;color:#93a3b0;
+    background:rgba(7,10,14,.88);border:1px solid rgba(150,180,200,.18);border-radius:6px;padding:6px 9px;
+    text-align:right;line-height:1.55;pointer-events:none;min-width:238px}
+  .ro b{font-weight:400;color:#2fd6bf}
+  .ro b.off{color:#f4a13c}
+  .ro b.nil{color:#7b8794}
+  .ro i{font-style:normal;color:#5d6b77}
+  .ro hr{border:0;border-top:1px solid rgba(150,180,200,.16);margin:5px 0 4px}
+  .ro .arw{display:inline-block;color:#cdd6dd}
+  .legend{position:absolute;left:12px;bottom:11px;font-family:ui-monospace,monospace;font-size:10px;
+    color:#93a3b0;background:rgba(7,10,14,.88);border:1px solid rgba(150,180,200,.18);border-radius:6px;
+    padding:6px 9px 5px;pointer-events:none}
+  .legend .bar{height:8px;width:210px;border-radius:2px;border:1px solid rgba(150,180,200,.18)}
+  .legend .ticks{display:flex;justify-content:space-between;width:210px;margin-top:3px}
+  .legend .cap{letter-spacing:.1em;text-transform:uppercase;color:#6f7d89;margin-bottom:4px}
+  .row{display:flex;flex-wrap:wrap;gap:14px;align-items:center;margin-top:12px;
+    font-family:ui-monospace,monospace;font-size:12px;color:#93a3b0}
+  .row label{display:flex;align-items:center;gap:8px}
+  .row span.v{color:#cdd6dd;min-width:44px}
+  input[type=range]{width:110px;accent-color:#2fd6bf}
+  button{font-family:ui-monospace,monospace;font-size:11.5px;color:#cdd6dd;background:#0c1016;
+    border:1px solid rgba(150,180,200,.22);border-radius:7px;padding:6px 11px;cursor:pointer}
+  button:hover{border-color:#38d9d1}
+  button.on{border-color:#38d9d1;color:#fff}
+  .note{margin-top:12px;font-size:12px;color:#5d6b77;font-family:ui-monospace,monospace;line-height:1.6}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Wind map — <code>create({ tileable: true })</code>, <code>sampleMany</code>, <code>sampleGrad</code></h1>
+
+  <p>A weather map is a wind field plus the grammar people read it with: streaklets that drift with the
+    flow, a speed ramp with units, isotachs, and a cursor that tells you the vector under it. This
+    library <b>is</b> a wind field, so nothing here is faked into place — the streaklets are integral
+    curves of <code>field.sampleMany</code>, the isotachs are contours of the same samples, and the
+    picker reads <code>field.sample</code> and <code>field.sampleGrad</code> at the cursor's exact
+    coordinates. Drag to pan, wheel to zoom, hover to interrogate.</p>
+
+  <p><b>The map surface is one tile, repeated.</b> That is what a map needs, and it is what
+    <code>tileable: true</code> gives you: wavevectors snap to the integer lattice, so the field is
+    exactly 2π-periodic and sampling at <code>x mod 2π</code> is continuous across the join. Turn it
+    <b>off</b> and the same wrapping tears — the tile edges become hard lines you can see the streaklets
+    kink across. The readout prints the seam mismatch <code>max|u(0,y) − u(2π,y)|</code> for both fields
+    at once, live: <code>~1e-15</code> tileable against <code>~2</code> free, on a field whose
+    <code>|u|</code> rms is <code>~1</code> — fifteen orders of magnitude, on one toggle. The dimmed one
+    is the field you are not looking at.</p>
+
+  <p><b>Why the zoom goes deep — and what it does not do.</b> There is no stored grid, so zooming
+    re-evaluates rather than magnifies. Every layer is rebuilt at the new scale: the streaklets are
+    integrated from fresh samples, and the underlay lattice is fixed in <em>screen</em> pixels, so at
+    64× it is sampling one point every <code>~1e-4</code> radians — a stored raster at that spacing
+    would be about <b>63 000²</b> cells across the tile. The readout times the per-frame batch to make
+    the real point: <b>the cost does not depend on the zoom</b>. It is <code>O(points × modes)</code>
+    and nothing in it knows what scale you are looking at, so the milliseconds sit still while the zoom
+    slider travels seven octaves.</p>
+
+  <p>What zooming does <b>not</b> do is invent detail. The field is band-limited at <code>kmax</code>,
+    so past roughly <code>kmax×</code> there is nothing smaller to find and the map correctly goes
+    smooth and near-uniform — and honestly, a stored grid at this spectrum's Nyquist rate would hold
+    that same information. The analytic form is not more accurate than a well-chosen raster; it is that
+    you never have to choose one, store one, or resample it, and that the answer at an arbitrary real
+    coordinate is the field's own value rather than a blend of its neighbours.</p>
+
+  <div id="stage">
+    <canvas id="under"></canvas>
+    <canvas id="trails"></canvas>
+    <div class="badge" id="badge">helix-noise · tileable field · canvas 2d</div>
+    <div class="ro" id="ro">—</div>
+    <div class="legend">
+      <div class="cap">wind speed</div>
+      <div class="bar" id="bar"></div>
+      <div class="ticks" id="ticks"><span>0</span><span></span><span></span><span></span><span></span></div>
+    </div>
+  </div>
+
+  <div class="row">
+    <label>zoom <input id="zoom" type="range" min="0" max="100" step="0.5" value="11"><span class="v" id="v-zoom">0.85×</span></label>
+    <label>rms wind <input id="gust" type="range" min="4" max="40" step="1" value="14"><span class="v" id="v-gust">14 m/s</span></label>
+    <label>level z <input id="lvl" type="range" min="0" max="6.28" step="0.02" value="0.8"><span class="v" id="v-lvl">0.80</span></label>
+    <label>detail k<sub>max</sub> <input id="kmax" type="range" min="4" max="18" step="1" value="10"><span class="v" id="v-kmax">10</span></label>
+    <label>weather <input id="rate" type="range" min="0" max="0.6" step="0.01" value="0.12"><span class="v" id="v-rate">0.12</span></label>
+  </div>
+  <div class="row">
+    <label>streaklets <input id="np" type="range" min="600" max="7000" step="200" value="4000"><span class="v" id="v-np">4000</span></label>
+    <label>trail <input id="trl" type="range" min="0.15" max="3" step="0.05" value="1.1"><span class="v" id="v-trl">1.10 s</span></label>
+    <button id="b-tile" class="on">tileable ✓</button>
+    <button id="b-iso" class="on">isotachs ✓</button>
+    <button id="b-src" class="on">speed underlay ✓</button>
+    <button id="b-pause">pause</button>
+    <button id="b-seed">↻ seed</button>
+  </div>
+
+  <p style="margin-top:14px"><b>What this is not.</b> It is a kinematic velocity field with the right
+    statistics and exact incompressibility, and nothing else: no pressure solve, no Coriolis, no
+    thermodynamics, no terrain, no data assimilation. It cannot forecast anything. The <code>m/s</code>
+    axis is a scaling you choose — the field is normalised to unit rms speed and <b>rms wind</b> pins that
+    rms to a number; the library ships no physical calibration. The <b>level z</b> slider moves the slice
+    through the third dimension, which is a real change of flow, not a re-seed.</p>
+
+  <p><b>One thing on screen is genuinely three-dimensional.</b> This is a horizontal slice of a 3-D
+    divergence-free field, and the two components drawn are not divergence-free on their own:
+    <code>∂ₓu + ∂ᵧv = −∂𝓏w</code> exactly. So the streaklets really do bunch along convergence lines and
+    thin out over divergence — that is the vertical motion showing itself in a horizontal picture, the
+    same reason a real surface chart puts weather where the air converges. The picker prints
+    <code>∇ₕ·u</code> from <code>sampleGrad</code> alongside the vertical component <code>w</code> whose
+    <code>∂𝓏</code> it is the negative of. Read <code>w</code> as a component of an isotropic 3-D field,
+    not as meteorology: here all three components have the same rms, whereas real atmospheric vertical
+    motion is smaller than the horizontal by orders of magnitude, because stratification suppresses it
+    and this field has no stratification. With <b>weather</b> at 0 the field is steady, so the trails are exactly streamlines;
+    above 0 the field evolves while a trail is being drawn, and — because the streaklets step a fixed
+    number of screen pixels per m/s rather than a fixed slice of time — they are then neither streamlines
+    nor true pathlines, which is the ordinary wind-map compromise.</p>
+
+  <div class="note" id="note">starting…</div>
+</div>
+
+<script src="../dist/helix-noise.global.js"></script>
+<script>
+(() => {
+  const TAU = Math.PI * 2;
+  const P = {
+    zoom: 0.85, gust: 14, level: 0.8, kmax: 10, rate: 0.12,
+    np: 4000, trail: 1.1,                // trail = seconds of streaklet history
+    tileable: true, iso: true, under: true, paused: false, seed: 7,
+  };
+  const NMAX = 7000;
+
+  // ---- colour ramp -------------------------------------------------------
+  // One definition feeds three consumers: the underlay image, the isotach strokes and the CSS
+  // legend gradient — so a colour on the legend is the colour on the map, by construction.
+  const STOPS = [[0, "#0a141c"], [0.16, "#12414f"], [0.36, "#1d8f8c"], [0.55, "#2fd6bf"],
+                 [0.72, "#e8d06a"], [0.87, "#f4a13c"], [1, "#ffd9c4"]];
+  const hex = (h) => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
+  const LUT = new Uint8Array(256 * 3);
+  (() => {
+    const cols = STOPS.map(([p, h]) => [p, hex(h)]);
+    for (let i = 0; i < 256; i++) {
+      const q = i / 255;
+      let a = cols[0], b = cols[cols.length - 1];
+      for (let s = 0; s < cols.length - 1; s++) if (q >= cols[s][0] && q <= cols[s + 1][0]) { a = cols[s]; b = cols[s + 1]; break; }
+      const f = b[0] === a[0] ? 0 : (q - a[0]) / (b[0] - a[0]);
+      for (let c = 0; c < 3; c++) LUT[3 * i + c] = Math.round(a[1][c] + (b[1][c] - a[1][c]) * f);
+    }
+  })();
+  const ramp = (q) => { const i = 3 * Math.max(0, Math.min(255, Math.round(q * 255))); return [LUT[i], LUT[i + 1], LUT[i + 2]]; };
+  document.getElementById("bar").style.background =
+    "linear-gradient(90deg," + STOPS.map(([p, h]) => `${h} ${(p * 100).toFixed(0)}%`).join(",") + ")";
+
+  // ---- the field ---------------------------------------------------------
+  // Two builds of the SAME seed and spectrum: one snapped to the integer lattice, one not.
+  // Keeping both alive is what lets the seam readout print the pass value and the fail value
+  // together every frame instead of only whichever one is switched on.
+  let fT, fF, field, hRms = 1, u3Rms = 1;
+  const baseOpts = () => ({
+    modes: 52, seed: P.seed, slope: 2.1, coherence: 0.4, centers: 3,
+    kmin: 1, kmax: P.kmax, churn: 1, helicity: 0,
+  });
+  const mPos = new Float64Array(3 * 64 * 64), mOut = new Float64Array(3 * 64 * 64);
+  function measure(f, t) {
+    // rms of the horizontal speed on the map plane (sets the m/s scaling) and of the full
+    // 3-vector (the scale the seam number should be read against).
+    for (let j = 0, p = 0; j < 64; j++) for (let i = 0; i < 64; i++, p += 3) {
+      mPos[p] = (i / 64) * TAU; mPos[p + 1] = (j / 64) * TAU; mPos[p + 2] = P.level;
+    }
+    f.sampleMany(mPos, mOut, t);
+    let h2 = 0, u2 = 0;
+    for (let p = 0; p < mOut.length; p += 3) {
+      h2 += mOut[p] * mOut[p] + mOut[p + 1] * mOut[p + 1];
+      u2 += mOut[p] * mOut[p] + mOut[p + 1] * mOut[p + 1] + mOut[p + 2] * mOut[p + 2];
+    }
+    hRms = Math.sqrt(h2 / (64 * 64)) || 1;
+    u3Rms = Math.sqrt(u2 / (64 * 64)) || 1;
+  }
+  function build() {
+    fT = HelixNoise.create({ ...baseOpts(), tileable: true });
+    fF = HelixNoise.create({ ...baseOpts(), tileable: false });
+    field = P.tileable ? fT : fF;
+    measure(field, ft);
+  }
+
+  /** The receipt: sampling a periodic tile means evaluating at `x mod 2π`, so the only question
+   *  that matters is whether u agrees at the two ends of the period. 96 stations down the seam. */
+  const SEAM_M = 96;
+  function seam(f, t) {
+    let m = 0;
+    for (let i = 0; i < SEAM_M; i++) {
+      const y = (i / SEAM_M) * TAU;
+      const a = f.sample(0, y, P.level, t), b = f.sample(TAU, y, P.level, t);
+      const d = Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+      if (d > m) m = d;
+    }
+    return m;
+  }
+
+  // ---- canvases ----------------------------------------------------------
+  const stage = document.getElementById("stage");
+  const under = document.getElementById("under"), trails = document.getElementById("trails");
+  const uctx = under.getContext("2d"), tctx = trails.getContext("2d", { alpha: true });
+  const off = document.createElement("canvas"), octx = off.getContext("2d");
+  let W = 1, H = 1, dpr = 1;
+  const STEP = 6;                       // underlay lattice spacing, in CSS pixels
+  let LX = 2, LY = 2, latPos = null, latOut = null, spd = null, img = null;
+
+  function resize() {
+    W = stage.clientWidth || 1; H = stage.clientHeight || 1;
+    dpr = Math.min(2, window.devicePixelRatio || 1);
+    for (const c of [under, trails]) {
+      c.width = Math.round(W * dpr); c.height = Math.round(H * dpr);
+      c.style.width = W + "px"; c.style.height = H + "px";
+    }
+    uctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    tctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    LX = Math.max(2, Math.ceil(W / STEP) + 1); LY = Math.max(2, Math.ceil(H / STEP) + 1);
+    latPos = new Float64Array(3 * LX * LY); latOut = new Float64Array(3 * LX * LY);
+    spd = new Float32Array(LX * LY);
+    off.width = LX; off.height = LY;
+    img = octx.createImageData(LX, LY);
+    for (let i = 0; i < NMAX; i++) spawn(i);
+    clearTrails(); underDirty = true;
+  }
+  function clearTrails() { tctx.clearRect(0, 0, W, H); }
+
+  // ---- view --------------------------------------------------------------
+  // zoom 1 == one tile across the stage width. World y points up (north up), so screen y flips.
+  const view = { cx: Math.PI, cy: Math.PI };
+  const pxPerWorld = () => W / (TAU / P.zoom);
+  const sx = (x) => (x - view.cx) * pxPerWorld() + W / 2;
+  const sy = (y) => H / 2 - (y - view.cy) * pxPerWorld();
+  const wx = (px) => view.cx + (px - W / 2) / pxPerWorld();
+  const wy = (py) => view.cy - (py - H / 2) / pxPerWorld();
+  const wrap = (v) => v - TAU * Math.floor(v / TAU);
+
+  // ---- underlay: speed image + isotachs + tile edges ----------------------
+  let underDirty = true, lastUnderMs = -1e9;
+  const ISO_STEP = 5;                   // isotach interval, m/s
+  function drawUnder(now) {
+    const s = pxPerWorld(), vmax = 2 * P.gust, k = P.gust / hRms;
+    for (let j = 0, p = 0; j < LY; j++) {
+      const py = (j / (LY - 1)) * H, yw = wy(py);
+      for (let i = 0; i < LX; i++, p += 3) {
+        latPos[p] = wrap(view.cx + ((i / (LX - 1)) * W - W / 2) / s);
+        latPos[p + 1] = wrap(yw);
+        latPos[p + 2] = P.level;
+      }
+    }
+    field.sampleMany(latPos, latOut, ft);
+    for (let i = 0, p = 0; i < LX * LY; i++, p += 3) spd[i] = Math.hypot(latOut[p], latOut[p + 1]) * k;
+
+    uctx.clearRect(0, 0, W, H);
+    if (P.under) {
+      const d = img.data;
+      for (let i = 0; i < LX * LY; i++) {
+        const c = ramp(Math.min(1, spd[i] / vmax));
+        // half-weight toward the page background: the underlay is context, the streaklets carry
+        // the colour that has to be read against the legend.
+        d[4 * i] = 7 + (c[0] - 7) * 0.5; d[4 * i + 1] = 10 + (c[1] - 10) * 0.5;
+        d[4 * i + 2] = 14 + (c[2] - 14) * 0.5; d[4 * i + 3] = 255;
+      }
+      octx.putImageData(img, 0, 0);
+      // half-cell outset: ImageData pixel centres are the lattice points, not the cell corners.
+      const cw = W / (LX - 1), ch = H / (LY - 1);
+      uctx.imageSmoothingEnabled = true;
+      uctx.drawImage(off, -cw / 2, -ch / 2, W + cw, H + ch);
+    }
+    if (P.iso) {
+      uctx.lineWidth = 1;
+      for (let lv = ISO_STEP; lv < vmax; lv += ISO_STEP) {
+        uctx.strokeStyle = `rgba(${ramp(lv / vmax).join(",")},.55)`;
+        uctx.beginPath(); isolines(lv); uctx.stroke();
+      }
+    }
+    // the tile join, so the seam number has somewhere to point
+    uctx.setLineDash([5, 5]); uctx.lineWidth = 1;
+    uctx.strokeStyle = P.tileable ? "rgba(150,180,200,.22)" : "rgba(244,161,60,.5)";
+    uctx.beginPath();
+    const x0 = Math.floor(wx(0) / TAU), x1 = Math.ceil(wx(W) / TAU);
+    for (let n = x0; n <= x1; n++) { const X = sx(n * TAU); uctx.moveTo(X, 0); uctx.lineTo(X, H); }
+    const y0 = Math.floor(wy(H) / TAU), y1 = Math.ceil(wy(0) / TAU);
+    for (let n = y0; n <= y1; n++) { const Y = sy(n * TAU); uctx.moveTo(0, Y); uctx.lineTo(W, Y); }
+    uctx.stroke(); uctx.setLineDash([]);
+
+    lastUnderMs = now; underDirty = false;
+  }
+
+  /** Marching squares on the speed lattice. Standard 16-case table; corners are
+   *  0=(i,j) 1=(i+1,j) 2=(i+1,j+1) 3=(i,j+1) and edges 0=top 1=right 2=bottom 3=left. */
+  const CASES = [[], [3, 0], [0, 1], [3, 1], [1, 2], [3, 0, 1, 2], [0, 2], [3, 2],
+                 [2, 3], [2, 0], [0, 1, 2, 3], [2, 1], [1, 3], [1, 0], [0, 3], []];
+  function isolines(level) {
+    const gw = W / (LX - 1), gh = H / (LY - 1);
+    const pt = (e, i, j, a, b, c, d) => {
+      const t = (p, q) => (level - p) / (q - p || 1e-30);
+      if (e === 0) return [(i + t(a, b)) * gw, j * gh];
+      if (e === 1) return [(i + 1) * gw, (j + t(b, c)) * gh];
+      if (e === 2) return [(i + 1 - t(c, d)) * gw, (j + 1) * gh];
+      return [i * gw, (j + 1 - t(d, a)) * gh];
+    };
+    for (let j = 0; j < LY - 1; j++) for (let i = 0; i < LX - 1; i++) {
+      const a = spd[j * LX + i], b = spd[j * LX + i + 1], c = spd[(j + 1) * LX + i + 1], d = spd[(j + 1) * LX + i];
+      let m = 0;
+      if (a > level) m |= 1; if (b > level) m |= 2; if (c > level) m |= 4; if (d > level) m |= 8;
+      const seg = CASES[m];
+      for (let s = 0; s < seg.length; s += 2) {
+        const p = pt(seg[s], i, j, a, b, c, d), q = pt(seg[s + 1], i, j, a, b, c, d);
+        uctx.moveTo(p[0], p[1]); uctx.lineTo(q[0], q[1]);
+      }
+    }
+  }
+
+  // ---- streaklets --------------------------------------------------------
+  const ppx = new Float64Array(NMAX), ppy = new Float64Array(NMAX);
+  const age = new Float32Array(NMAX), life = new Float32Array(NMAX);
+  const pos = new Float64Array(3 * NMAX), vel = new Float64Array(3 * NMAX);
+  let rs = 20260726;
+  const rnd = () => ((rs = (rs * 1664525 + 1013904223) >>> 0) / 4294967296);
+  function spawn(i) {
+    ppx[i] = wx(rnd() * W); ppy[i] = wy(rnd() * H);
+    age[i] = 0; life[i] = 1.6 + rnd() * 5.0;   // seconds, so the map looks the same at 60 and 120 Hz
+  }
+  for (let i = 0; i < NMAX; i++) spawn(i);
+
+  const NBIN = 14;
+  const PX_PER_UNIT = 210;              // screen pixels per second per unit of field speed
+  function stepParticles(dt) {
+    const s = pxPerWorld(), n = P.np, worldStep = (PX_PER_UNIT * dt) / s;
+    for (let i = 0; i < n; i++) {
+      pos[3 * i] = wrap(ppx[i]); pos[3 * i + 1] = wrap(ppy[i]); pos[3 * i + 2] = P.level;
+    }
+    // Timed, because the timing is the claim: the batch costs O(points × modes) and nothing in it
+    // knows what the zoom is. Drag the zoom from 0.5× to 64× and this number does not move.
+    const t0 = performance.now();
+    field.sampleMany(pos.subarray(0, 3 * n), vel.subarray(0, 3 * n), ft);
+    batchMs += (performance.now() - t0 - batchMs) * 0.06;
+
+    // bucket the segments by speed so the whole frame is NBIN strokes, not n strokes
+    const paths = [];
+    for (let b = 0; b < NBIN; b++) paths.push(new Path2D());
+    const vmax = 2 * P.gust, k = P.gust / hRms;
+    const mx = -60, MX = W + 60, my = -60, MY = H + 60;
+    for (let i = 0; i < n; i++) {
+      const u = vel[3 * i], v = vel[3 * i + 1];
+      const x0 = sx(ppx[i]), y0 = sy(ppy[i]);
+      ppx[i] += u * worldStep; ppy[i] += v * worldStep;
+      const x1 = sx(ppx[i]), y1 = sy(ppy[i]);
+      const wasBorn = age[i] > 0;
+      age[i] += dt;
+      if (wasBorn && x1 > mx && x1 < MX && y1 > my && y1 < MY) {
+        const q = Math.min(0.999, Math.hypot(u, v) * k / vmax);
+        const pth = paths[(q * NBIN) | 0];
+        pth.moveTo(x0, y0); pth.lineTo(x1, y1);
+      }
+      if (age[i] > life[i] || x1 < mx || x1 > MX || y1 < my || y1 > MY) spawn(i);
+    }
+    tctx.lineWidth = 1.25; tctx.lineCap = "round";
+    for (let b = 0; b < NBIN; b++) {
+      const c = ramp((b + 0.5) / NBIN);
+      tctx.strokeStyle = `rgb(${Math.min(255, c[0] + 14)},${Math.min(255, c[1] + 14)},${Math.min(255, c[2] + 14)})`;
+      tctx.stroke(paths[b]);
+    }
+  }
+
+  // ---- picker ------------------------------------------------------------
+  let pickX = 0, pickY = 0, hasPick = false;
+  const g9 = new Float64Array(9);
+  const ro = document.getElementById("ro");
+  const mag = (v) => { const a = Math.abs(v); return v === 0 ? "0" : (a < 0.01 || a >= 1e4) ? v.toExponential(1) : v.toFixed(2); };
+  /** Arithmetic, not a measurement: how many cells a stored raster would need across the tile
+   *  to put one cell under each screen pixel at the current zoom. */
+  const cells = (n) => (n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1000 ? (n / 1000).toFixed(1) + "k" : String(Math.round(n)));
+  function readout() {
+    const sT = seam(fT, ft), sF = seam(fF, ft);
+    const k = P.gust / hRms, s = pxPerWorld();
+    let head;
+    if (hasPick) {
+      const X = wx(pickX), Y = wy(pickY);
+      const u = field.sample(wrap(X), wrap(Y), P.level, ft);
+      field.sampleGrad(wrap(X), wrap(Y), P.level, g9, ft);
+      const sp = Math.hypot(u[0], u[1]) * k;
+      const from = (270 - Math.atan2(u[1], u[0]) * 180 / Math.PI + 720) % 360;
+      const conv = g9[0] + g9[4];       // ∂ₓu + ∂ᵧv  ==  −∂𝓏w
+      head =
+        `x <b>${wrap(X).toFixed(3)}</b> y <b>${wrap(Y).toFixed(3)}</b> z <b>${P.level.toFixed(2)}</b><br>` +
+        `wind <b>${sp.toFixed(1)} m/s</b> from <b>${from.toFixed(0)}°</b> ` +
+        `<span class="arw" style="transform:rotate(${from + 180}deg)">↑</span><br>` +
+        `w <b>${(u[2] * k).toFixed(1)} m/s</b> · ∇ₕ·u <b>${conv >= 0 ? "+" : ""}${conv.toFixed(2)}</b> <i>= −∂𝓏w</i>`;
+    } else {
+      head = `<i>hover the map to read a vector</i><br>&nbsp;<br>&nbsp;`;
+    }
+    ro.innerHTML = head + `<hr>` +
+      `seam max|u(0,y)−u(2π,y)|<br>` +
+      `tileable <b class="${P.tileable ? "" : "nil"}">${mag(sT)}</b> · ` +
+      `free <b class="${P.tileable ? "nil" : "off"}">${mag(sF)}</b><br>` +
+      `|u| rms <b>${u3Rms.toFixed(2)}</b> <i>field units</i><hr>` +
+      `1 px = <i>${(1 / s).toExponential(1)} rad</i> · raster to match <i>${cells(TAU * s)}²</i><br>` +
+      `batch <b>${P.np.toLocaleString()}</b> pts <b>${batchMs.toFixed(2)}</b> ms <i>— flat in zoom</i>`;
+  }
+
+  // ---- loop --------------------------------------------------------------
+  let ft = 0, last = 0, fps = 60, batchMs = 0;
+  build();
+  function frame(now) {
+    requestAnimationFrame(frame);
+    const dt = last ? Math.min(0.05, (now - last) / 1000) : 0.016;
+    last = now;
+    fps += ((1 / Math.max(dt, 1e-3)) - fps) * 0.05;
+    if (!P.paused) {
+      ft += dt * P.rate;
+      if (underDirty || (P.rate > 0 && now - lastUnderMs > 120) || now - lastUnderMs > 1500) drawUnder(now);
+      // exponential erase: destination-out fades what is already drawn without touching the
+      // underlay. The rate is set from dt, so `trail` is a length of time and the streaklets
+      // are the same length on a 60 Hz and a 120 Hz screen.
+      tctx.globalCompositeOperation = "destination-out";
+      tctx.fillStyle = `rgba(0,0,0,${1 - Math.exp(-dt / P.trail)})`;
+      tctx.fillRect(0, 0, W, H);
+      tctx.globalCompositeOperation = "source-over";
+      stepParticles(dt);
+    } else if (underDirty) {
+      drawUnder(now);
+    }
+    readout();
+  }
+
+  // ---- controls ----------------------------------------------------------
+  const $ = (id) => document.getElementById(id);
+  const zoomOf = (v) => 0.5 * Math.pow(128, v / 100);
+  const vOf = (z) => 100 * Math.log(z / 0.5) / Math.log(128);
+  function ticks() {
+    const t = $("ticks").children;
+    for (let i = 0; i < 5; i++) t[i].textContent = ((i / 2) * P.gust).toFixed(0);
+  }
+  function invalidate(rebuild) {
+    if (rebuild) build(); else measure(field, ft);
+    clearTrails(); underDirty = true;
+    for (let i = 0; i < NMAX; i++) spawn(i);
+  }
+  $("zoom").oninput = (e) => {
+    P.zoom = zoomOf(+e.target.value);
+    $("v-zoom").textContent = (P.zoom < 10 ? P.zoom.toFixed(2) : P.zoom.toFixed(0)) + "×";
+    clearTrails(); underDirty = true; for (let i = 0; i < NMAX; i++) spawn(i);
+  };
+  $("gust").oninput = (e) => { P.gust = +e.target.value; $("v-gust").textContent = P.gust + " m/s"; ticks(); underDirty = true; };
+  $("lvl").oninput = (e) => { P.level = +e.target.value; $("v-lvl").textContent = P.level.toFixed(2); invalidate(false); };
+  $("kmax").oninput = (e) => { P.kmax = +e.target.value; $("v-kmax").textContent = P.kmax; invalidate(true); };
+  $("rate").oninput = (e) => { P.rate = +e.target.value; $("v-rate").textContent = P.rate.toFixed(2); };
+  $("np").oninput = (e) => { P.np = +e.target.value; $("v-np").textContent = P.np; note(); };
+  $("trl").oninput = (e) => { P.trail = +e.target.value; $("v-trl").textContent = P.trail.toFixed(2) + " s"; };
+  $("b-tile").onclick = () => {
+    P.tileable = !P.tileable;
+    $("b-tile").classList.toggle("on", P.tileable);
+    $("b-tile").textContent = P.tileable ? "tileable ✓" : "tileable";
+    $("badge").textContent = "helix-noise · " + (P.tileable ? "tileable field" : "NON-tileable field — the tile edges tear") + " · canvas 2d";
+    field = P.tileable ? fT : fF;
+    invalidate(false);
+  };
+  $("b-iso").onclick = () => { P.iso = !P.iso; $("b-iso").classList.toggle("on", P.iso); $("b-iso").textContent = P.iso ? "isotachs ✓" : "isotachs"; underDirty = true; };
+  $("b-src").onclick = () => {
+    P.under = !P.under;
+    $("b-src").classList.toggle("on", P.under);
+    $("b-src").textContent = P.under ? "speed underlay ✓" : "speed underlay";
+    underDirty = true;
+  };
+  $("b-pause").onclick = () => { P.paused = !P.paused; $("b-pause").classList.toggle("on", P.paused); $("b-pause").textContent = P.paused ? "resume" : "pause"; };
+  $("b-seed").onclick = () => { P.seed = (P.seed * 1103515245 + 12345) >>> 0 || 1; invalidate(true); };
+
+  // pan / zoom / pick
+  let dragging = false, lastPx = 0, lastPy = 0;
+  const local = (e) => { const r = stage.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
+  stage.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    dragging = true; stage.classList.add("drag"); stage.setPointerCapture(e.pointerId);
+    const l = local(e); lastPx = l[0]; lastPy = l[1];
+  });
+  stage.addEventListener("pointermove", (e) => {
+    const l = local(e); pickX = l[0]; pickY = l[1]; hasPick = true;
+    if (!dragging) return;
+    const s = pxPerWorld();
+    view.cx -= (l[0] - lastPx) / s; view.cy += (l[1] - lastPy) / s;
+    lastPx = l[0]; lastPy = l[1];
+    clearTrails(); underDirty = true;
+  });
+  const endDrag = (e) => { dragging = false; stage.classList.remove("drag"); if (e && e.pointerId != null) { try { stage.releasePointerCapture(e.pointerId); } catch (_) {} } };
+  stage.addEventListener("pointerup", endDrag);
+  stage.addEventListener("pointercancel", endDrag);
+  stage.addEventListener("pointerleave", () => { hasPick = false; });
+  stage.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const l = local(e), ax = wx(l[0]), ay = wy(l[1]);
+    const z = Math.max(0.5, Math.min(64, P.zoom * Math.pow(2, -e.deltaY / 400)));
+    P.zoom = z;
+    // keep the world point under the cursor pinned
+    const s2 = pxPerWorld();
+    view.cx = ax - (l[0] - W / 2) / s2; view.cy = ay + (l[1] - H / 2) / s2;
+    $("zoom").value = String(vOf(z));
+    $("v-zoom").textContent = (z < 10 ? z.toFixed(2) : z.toFixed(0)) + "×";
+    clearTrails(); underDirty = true; for (let i = 0; i < NMAX; i++) spawn(i);
+  }, { passive: false });
+
+  function note() {
+    document.getElementById("note").textContent =
+      `${P.np.toLocaleString()} streaklets, one field.sampleMany() batch per frame · underlay + isotachs on a ` +
+      `${LX}×${LY} screen-space lattice (one sample per ${STEP} px), re-evaluated when you pan, zoom or the ` +
+      `weather advances — the lattice follows your screen, so zooming refines it · trail length is a time, ` +
+      `so the picture is the same at 60 and 120 Hz · 52 modes · ~${fps.toFixed(0)} fps · canvas 2d, no dependencies`;
+  }
+  addEventListener("resize", () => { resize(); note(); });
+  resize(); ticks(); note();
+  setInterval(note, 1000);
+  if (window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    P.rate = 0; $("rate").value = "0"; $("v-rate").textContent = "0.00";
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

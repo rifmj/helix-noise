@@ -1,0 +1,444 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Helix Noise — the parity wall (JS · WASM · GLSL, same field)</title>
+<style>
+  html,body{margin:0;background:#070a0e;color:#cdd6dd;font-family:system-ui,sans-serif}
+  .wrap{max-width:980px;margin:0 auto;padding:22px 16px}
+  h1{font-size:19px;font-weight:600;margin:0 0 6px}
+  h1 code{color:#f4a13c}
+  p{color:#8a97a2;font-size:13.5px;line-height:1.6;margin:0 0 14px}
+  p b{color:#cdd6dd;font-weight:500}
+  code{font-family:ui-monospace,Menlo,monospace;color:#f4a13c;font-size:12.5px}
+  #stage{position:relative;border:1px solid rgba(150,180,200,.15);border-radius:10px;background:#070a0e;padding:10px}
+  .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+  .panel{margin:0}
+  .panel canvas{width:100%;aspect-ratio:1;display:block;border-radius:5px;background:#0a0e13;image-rendering:auto}
+  .cap{font-family:ui-monospace,monospace;font-size:10px;color:#6c7d8a;margin-top:5px;line-height:1.5;letter-spacing:.03em}
+  .cap b{color:#93a3b0;font-weight:400;display:block;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase}
+  .cap i{font-style:normal;color:#4f5b66}
+  .badge{position:absolute;top:16px;left:16px;font-family:ui-monospace,monospace;font-size:10.5px;
+    letter-spacing:.12em;text-transform:uppercase;color:#93a3b0;background:rgba(7,10,14,.72);
+    border:1px solid rgba(150,180,200,.14);border-radius:6px;padding:4px 8px;pointer-events:none}
+  .ro{margin-top:12px;font-family:ui-monospace,monospace;font-size:11.5px;color:#93a3b0;
+    background:rgba(12,16,22,.75);border:1px solid rgba(150,180,200,.14);border-radius:8px;padding:10px 12px;line-height:1.75}
+  .ro table{border-collapse:collapse;width:100%}
+  .ro td{padding:1px 10px 1px 0;white-space:nowrap;vertical-align:baseline}
+  .ro td.k{color:#6c7d8a}
+  .ro b{font-weight:400;color:#2fd6bf}
+  .ro b.bad{color:#f4a13c}
+  .ro b.nil{color:#7b8794}
+  .ro i{font-style:normal;color:#5d6b77}
+  .ro td.w{white-space:normal;width:99%}
+  .row{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-top:12px;font-family:ui-monospace,monospace;font-size:12px;color:#93a3b0}
+  .row label{display:flex;align-items:center;gap:8px}
+  input[type=range]{width:150px}
+  button{font-family:ui-monospace,monospace;font-size:11.5px;color:#cdd6dd;background:#0c1016;
+    border:1px solid rgba(150,180,200,.22);border-radius:7px;padding:6px 11px;cursor:pointer}
+  button:hover{border-color:#38d9d1}
+  button.on{border-color:#38d9d1;color:#fff}
+  button.brk.on{border-color:#f4a13c;color:#f4a13c}
+  .note{margin-top:12px;font-size:12px;color:#5d6b77;font-family:ui-monospace,monospace;line-height:1.6}
+  @media (max-width:760px){ .grid{grid-template-columns:repeat(2,1fr)} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>The parity wall — <code>sampleUW</code>, <code>sampleMany</code>, <code>glsl()</code></h1>
+  <p>One field, three implementations, running side by side on the same 96×96 slice at the same
+    instant. The field is a closed-form sum of helical modes, so <b>there is nothing to synchronise</b>:
+    no grid, no state, no random-number stream consumed at sample time. Every backend evaluates the
+    same finite formula, which is why a scalar JS loop, a SIMD kernel compiled to WebAssembly, and a
+    fragment shader can be compared value-for-value rather than "by eye". The fourth panel is their
+    difference on a log scale, and the numbers under it are the point of the page.</p>
+  <p>The floors are different, and that is the honest part. <b>JS scalar and the WASM batch are both
+    float64</b> and land at ~1e-16 — separated only because the batch kernel does its own argument
+    reduction and polynomial sine instead of calling <code>Math.sin</code>. <b>The GPU is float32</b>:
+    GLSL ES 3.00 <code>highp float</code> is 32-bit, so the shader cannot agree better than fp32
+    rounding. The scale to expect is not <code>ε</code> but <code>√N·ε·|φ|</code>, because what gets
+    rounded is the phase, and the phase grows as the field churns; the readout recomputes it every
+    frame from the largest <code>φ</code> in the field and prints <b>measured ÷ scale</b>. A page that
+    printed "0" in the GPU column would be lying or not measuring.</p>
+  <div id="stage">
+    <div class="grid">
+      <figure class="panel"><canvas id="c-js"></canvas>
+        <figcaption class="cap"><b>js scalar</b><code>field.sampleUW</code> × 9216 · f64 · <i id="t-js">—</i></figcaption></figure>
+      <figure class="panel"><canvas id="c-wa"></canvas>
+        <figcaption class="cap"><b>wasm batch</b><code>field.sampleMany</code> · f64x2 · <i id="t-wa">—</i></figcaption></figure>
+      <figure class="panel"><canvas id="c-gl"></canvas>
+        <figcaption class="cap"><b>gpu</b><code>field.glsl()</code> → WebGL2 · fp32 · <i id="t-gl">—</i></figcaption></figure>
+      <figure class="panel"><canvas id="c-df"></canvas>
+        <figcaption class="cap"><b id="df-lbl">Δ gpu − js</b>|Δ| ÷ scale, log, 1e−3 → 1e+3 · teal within, amber past · <i id="t-df">—</i></figcaption></figure>
+    </div>
+    <div class="badge">helix-noise · one field, three backends</div>
+  </div>
+  <div class="ro" id="ro">measuring…</div>
+  <div class="row">
+    difference panel
+    <button id="p-gj" class="on">gpu − js</button>
+    <button id="p-wj">wasm − js</button>
+    <button id="p-gw">gpu − wasm</button>
+    <button id="pause" style="margin-left:auto">pause</button>
+  </div>
+  <div class="row">
+    <span style="color:#f4a13c">break:</span> advance one path by one frame
+    <button id="b-none" class="brk on">none</button>
+    <button id="b-js" class="brk">js +1/60</button>
+    <button id="b-wa" class="brk">wasm +1/60</button>
+    <button id="b-gl" class="brk">gpu +1/60</button>
+    <label style="margin-left:8px">gpu mode-0 gain
+      <input id="pert" type="range" min="0" max="5" step="1" value="0"><span id="v-pert">1 (off)</span></label>
+  </div>
+  <p style="margin-top:14px"><b>The break controls exist so the small numbers can move.</b> "Advance
+    one path by one frame" adds <code>1/60</code> to that backend's clock and changes nothing else;
+    the two comparisons that touch it jump by three to four orders of magnitude while the third stays
+    on its scale, so you can read off <em>which</em> path was disturbed rather than merely that
+    something is wrong. The <b>mode-0 gain</b> slider multiplies one of the 20 modes by
+    <code>1+δ</code> <em>in the shader only</em> — the CPU keeps the true field — and is there to find
+    where this receipt stops seeing. Walk it up from <code>1e−6</code> and watch the ratio column. On
+    an M4 Max the clean GPU row sits at 0.07–0.14× scale; <code>δ = 1e−6</code> does not move it,
+    <code>δ = 1e−5</code> lifts it to 0.25–0.40×, <code>δ = 1e−4</code> to 1.9–3.1×, and
+    <code>δ = 1e−3</code> is where it crosses the 30× line and the row calls itself BROKEN. So this
+    page can see roughly a part in 10⁵ of one mode out of twenty, and genuinely cannot see a part in
+    10⁶. Your hardware will land somewhere else, which is why the number is printed rather than
+    asserted.</p>
+  <div class="note" id="note">initialising…</div>
+</div>
+
+<script src="../dist/helix-noise.global.js"></script>
+<script>
+(() => {
+  const P = 96, HALF = Math.PI, NPX = P * P, DT = 1 / 60;
+  const OPTS = { modes: 20, seed: 7, slope: 1.8, coherence: 0.4, tileable: true, churn: 1 };
+  const EPS32 = Math.pow(2, -24), EPS64 = Math.pow(2, -53);
+  const GATE = 30;   // pass if the measured delta is within 30x the arithmetic scale below
+
+  const $ = (id) => document.getElementById(id);
+  const field = HelixNoise.create(OPTS);
+
+  /** Largest phase argument any mode sees on this slice at time t. Rounding a phase to ε costs
+   *  ε·|φ|, so this — not ε alone — sets how closely two precisions can agree, and it grows as the
+   *  field churns. A *scale*, not a proven bound: the page prints measured/scale so you can watch
+   *  the ratio stay O(1) while both climb. */
+  function phiMax(t) {
+    let m = 0;
+    for (let j = 0; j < field.N; j++) {
+      const v = (Math.abs(field.kx[j]) + Math.abs(field.ky[j])) * HALF +
+                Math.abs(field.ph[j]) + Math.abs(field.om[j]) * Math.abs(t);
+      if (v > m) m = v;
+    }
+    return m;
+  }
+
+  // ---- the sample grid ---------------------------------------------------
+  // Shared by all three backends. The shader reconstructs exactly this expression from
+  // gl_FragCoord, so the comparison is at identical points, not merely at similar ones.
+  const pos = new Float64Array(3 * NPX);
+  for (let j = 0; j < P; j++) for (let i = 0; i < P; i++) {
+    const n = j * P + i;
+    pos[3 * n] = ((i + 0.5) / P * 2 - 1) * HALF;
+    pos[3 * n + 1] = ((j + 0.5) / P * 2 - 1) * HALF;
+    pos[3 * n + 2] = 0;
+  }
+
+  const uJs = new Float64Array(3 * NPX);   // scalar path
+  const uWa = new Float64Array(3 * NPX);   // batch path, wasm kernel
+  const uKj = new Float64Array(3 * NPX);   // batch path, JS kernel forced (kernel-vs-kernel check)
+  const uGl = new Float32Array(4 * NPX);   // GPU readback (RGBA32F)
+  const uw6 = new Float64Array(6);
+
+  // ---- GPU ---------------------------------------------------------------
+  const glc = document.createElement("canvas");
+  glc.width = P; glc.height = P;
+  const gl = glc.getContext("webgl2", { antialias: false, preserveDrawingBuffer: false });
+  let gpuOk = false, gpuWhy = "WebGL2 unavailable in this browser";
+  let prog = null, uT = null, vao = null, fb = null;
+
+  const VERT = "#version 300 es\nvoid main(){ vec2 p=vec2(float((gl_VertexID<<1)&2),float(gl_VertexID&2)); gl_Position=vec4(p*2.0-1.0,0.0,1.0); }";
+  function fragSource(glslField) {
+    return "#version 300 es\nprecision highp float;\nuniform float uT;\nout vec4 outColor;\n" + glslField + "\n" +
+      "void main(){\n" +
+      "  vec2 q = (gl_FragCoord.xy / " + P.toFixed(1) + " * 2.0 - 1.0) * " + HALF.toPrecision(9) + ";\n" +
+      "  outColor = vec4(hx(vec3(q.x, q.y, 0.0), uT), 1.0);\n" +
+      "}";
+  }
+  function compile(type, src) {
+    const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+    return s;
+  }
+  /** Rebuild the shader. `gain` (≠1) perturbs one mode's amplitude on the GPU side only. */
+  function buildGpu(gain) {
+    let src;
+    if (gain === 1) src = field.glsl({ name: "hx", curl: false });
+    else {
+      // A separate instance of the identical field, then one baked amplitude nudged. `_scale` is
+      // fixed at build time, so this is a pure single-mode perturbation with no renormalisation.
+      const g = HelixNoise.create(OPTS);
+      g.a[0] *= gain;
+      src = g.glsl({ name: "hx", curl: false });
+    }
+    const p = gl.createProgram();
+    gl.attachShader(p, compile(gl.VERTEX_SHADER, VERT));
+    gl.attachShader(p, compile(gl.FRAGMENT_SHADER, fragSource(src)));
+    gl.linkProgram(p);
+    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+    if (prog) gl.deleteProgram(prog);
+    prog = p; uT = gl.getUniformLocation(prog, "uT");
+    return src.length;
+  }
+  let glslBytes = 0;
+  if (gl) {
+    try {
+      // Float readback is what makes this a measurement rather than a picture: an RGBA8 target
+      // would quantise the field to 1/255 and swamp the very error we are trying to size.
+      if (!gl.getExtension("EXT_color_buffer_float")) throw new Error("EXT_color_buffer_float missing — no float render target to read back");
+      const tex = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, P, P, 0, gl.RGBA, gl.FLOAT, null);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      fb = gl.createFramebuffer();
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+      if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) throw new Error("RGBA32F framebuffer incomplete");
+      vao = gl.createVertexArray();
+      glslBytes = buildGpu(1);
+      gpuOk = true;
+    } catch (e) { gpuWhy = e.message; }
+  }
+
+  // ---- panels ------------------------------------------------------------
+  const panel = (id) => {
+    const c = $(id); c.width = P; c.height = P;
+    const ctx = c.getContext("2d", { alpha: false });
+    return { ctx, img: ctx.createImageData(P, P) };
+  };
+  const pJs = panel("c-js"), pWa = panel("c-wa"), pGl = panel("c-gl"), pDf = panel("c-df");
+
+  /** Signed u_z, teal positive / amber negative, brightness from |u_z|. Same normalisation for all
+   *  three backends, so a visible difference between panels would be a real difference. */
+  function paintSigned(p, u, stride, peak) {
+    const d = p.img.data;
+    let q = 0;
+    for (let n = 0; n < NPX; n++) {
+      const z = u[stride * n + 2] / peak;
+      const v = Math.sign(z) * Math.pow(Math.min(1, Math.abs(z)), 0.55);
+      const a = Math.max(0, v), b = Math.max(0, -v);
+      d[q++] = 20 + b * 224; d[q++] = 26 + a * 190 + b * 135; d[q++] = 32 + a * 165 + b * 28; d[q++] = 255;
+    }
+    p.ctx.putImageData(p.img, 0, 0);
+  }
+  /** Flat grey-blue with a diagonal hatch — the "this panel could not run" state, so an empty
+   *  GPU column never reads as "the difference was zero". */
+  function paintDead(p) {
+    const d = p.img.data;
+    let q = 0;
+    for (let j = 0; j < P; j++) for (let i = 0; i < P; i++) {
+      const on = ((i + j) % 12) < 6;
+      d[q++] = on ? 26 : 20; d[q++] = on ? 32 : 25; d[q++] = on ? 40 : 31; d[q++] = 255;
+    }
+    p.ctx.putImageData(p.img, 0, 0);
+  }
+  /**
+   * The difference panel, measured in units of the pair's own arithmetic scale and drawn on a log
+   * axis three decades either side of it: teal below the scale, amber above. Not a linear |Δ| map —
+   * a linear panel showing a 1e-6 disagreement next to a 1e-2 break is black in the first case, and
+   * black is exactly what a panel that never drew looks like. Here the pass state is a structured
+   * teal map, a break turns the panel amber, exactly-equal pixels get their own flat grey, and none
+   * of the three can be confused with a canvas nobody touched.
+   */
+  function paintDiff(p, a, sa, b, sb, scaleAbs) {
+    const d = p.img.data;
+    let q = 0, mx = 0;
+    for (let n = 0; n < NPX; n++) {
+      let e = 0;
+      for (let c = 0; c < 3; c++) { const t = Math.abs(a[sa * n + c] - b[sb * n + c]); if (t > e) e = t; }
+      if (e > mx) mx = e;
+      if (e === 0) { d[q++] = 30; d[q++] = 38; d[q++] = 46; d[q++] = 255; continue; }   // bit-identical here
+      const v = Math.min(1, Math.max(0, (Math.log(e / scaleAbs) / Math.LN10 + 3) / 6));
+      if (v < 0.5) { const k = v * 2;                    // dark → teal: within the scale
+        d[q++] = 16 + k * 31; d[q++] = 24 + k * 190; d[q++] = 30 + k * 170;
+      } else { const k = (v - 0.5) * 2;                  // teal → amber: past the scale
+        d[q++] = 47 + k * 197; d[q++] = 214 - k * 53; d[q++] = 200 - k * 140;
+      }
+      d[q++] = 255;
+    }
+    p.ctx.putImageData(p.img, 0, 0);
+    return mx;
+  }
+
+  function maxDelta(a, sa, b, sb) {
+    let m = 0;
+    for (let n = 0; n < NPX; n++) for (let c = 0; c < 3; c++) {
+      const t = Math.abs(a[sa * n + c] - b[sb * n + c]);
+      if (t > m) m = t;
+    }
+    return m;
+  }
+
+  // ---- state -------------------------------------------------------------
+  // Field time is swept smoothly over a bounded interval rather than ramped forever. Unbounded t
+  // makes the phase argument — and with it the fp32 floor — grow without limit, so the numbers on
+  // the page would depend on how long you had been looking at it.
+  const T_MAX = 8;
+  const state = { s: 0.6, run: true, brk: "none", pert: 1, pair: "gj" };
+  const fieldTime = () => 0.5 * T_MAX * (1 - Math.cos(state.s));
+  const PERT = [1, 1 + 1e-6, 1 + 1e-5, 1 + 1e-4, 1 + 1e-3, 1 + 1e-2];
+  const PERT_LBL = ["1 (off)", "1 + 1e−6", "1 + 1e−5", "1 + 1e−4", "1 + 1e−3", "1 + 1e−2"];
+  let frames = 0, msJs = 0, msWa = 0, msKj = 0, msGl = 0;
+  const ema = (o, v) => (o === 0 ? v : o * 0.85 + v * 0.15);
+  const e3 = (v) => (v === 0 ? "0.000e+0" : v.toExponential(3));
+
+  function step() {
+    const t = fieldTime();
+    const tJs = t + (state.brk === "js" ? DT : 0);
+    const tWa = t + (state.brk === "wa" ? DT : 0);
+    const tGl = t + (state.brk === "gl" ? DT : 0);
+
+    let m0 = performance.now();
+    for (let n = 0; n < NPX; n++) {
+      field.sampleUW(pos[3 * n], pos[3 * n + 1], pos[3 * n + 2], uw6, tJs);
+      uJs[3 * n] = uw6[0]; uJs[3 * n + 1] = uw6[1]; uJs[3 * n + 2] = uw6[2];
+    }
+    msJs = ema(msJs, performance.now() - m0);
+
+    // The batch entry point, twice: once as shipped (wasm kernel when WebAssembly is present) and
+    // once with the library's internal `_noWasm` escape hatch set, which is how the test suite
+    // pins the two kernels against each other.
+    m0 = performance.now();
+    field._noWasm = false;
+    field.sampleMany(pos, uWa, tWa);
+    msWa = ema(msWa, performance.now() - m0);
+    m0 = performance.now();
+    field._noWasm = true;
+    field.sampleMany(pos, uKj, tWa);
+    field._noWasm = false;
+    msKj = ema(msKj, performance.now() - m0);
+
+    if (gpuOk) {
+      m0 = performance.now();
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+      gl.viewport(0, 0, P, P);
+      gl.useProgram(prog);
+      gl.uniform1f(uT, tGl);
+      gl.bindVertexArray(vao);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+      gl.readPixels(0, 0, P, P, gl.RGBA, gl.FLOAT, uGl);
+      msGl = ema(msGl, performance.now() - m0);
+    }
+
+    let peak = 1e-12;
+    for (let n = 0; n < 3 * NPX; n++) { const a = Math.abs(uJs[n]); if (a > peak) peak = a; }
+    let peakZ = 1e-12;
+    for (let n = 0; n < NPX; n++) { const a = Math.abs(uJs[3 * n + 2]); if (a > peakZ) peakZ = a; }
+
+    paintSigned(pJs, uJs, 3, peakZ);
+    paintSigned(pWa, uWa, 3, peakZ);
+    if (gpuOk) paintSigned(pGl, uGl, 4, peakZ); else paintDead(pGl);
+
+    const dJW = maxDelta(uJs, 3, uWa, 3);
+    const dKK = maxDelta(uWa, 3, uKj, 3);
+    const dJG = gpuOk ? maxDelta(uJs, 3, uGl, 4) : NaN;
+    const dWG = gpuOk ? maxDelta(uWa, 3, uGl, 4) : NaN;
+
+    // Each pair is judged against the rounding scale of its own weakest precision.
+    const phi = phiMax(t), rN = Math.sqrt(field.N);
+    const sc64 = rN * EPS64 * phi, sc32 = rN * EPS32 * phi;
+
+    let dPanel = NaN;
+    if (state.pair === "wj") dPanel = paintDiff(pDf, uJs, 3, uWa, 3, peak * sc64);
+    else if (gpuOk) dPanel = paintDiff(pDf, state.pair === "gw" ? uWa : uJs, 3, uGl, 4, peak * sc32);
+    else paintDead(pDf);
+
+    frames++;
+    readout(t, phi, sc64, sc32, peak, dJW, dKK, dJG, dWG, dPanel);
+  }
+
+  // ---- receipt -----------------------------------------------------------
+  const ro = $("ro");
+  const xfmt = (r) => (r < 0.01 || r >= 100 ? r.toExponential(1) : r.toFixed(2));
+  /** One comparison row: measured delta, the arithmetic scale it should sit on, and their ratio. */
+  function row(label, d, peak, floorRel, kind, tail) {
+    if (!isFinite(d)) return `<tr><td class="k">${label}</td><td><b class="nil">unavailable</b></td><td class="k">${kind}</td><td><b class="nil">—</b></td><td class="w"><i>${tail}</i></td></tr>`;
+    const rel = d / peak, r = rel / floorRel, bad = r > GATE;
+    return `<tr><td class="k">${label}</td><td><b${bad ? ' class="bad"' : ""}>${e3(d)}</b> <i>rel</i> ${rel.toExponential(2)}</td>` +
+      `<td class="k">${kind} · scale ${floorRel.toExponential(1)}</td>` +
+      `<td><b${bad ? ' class="bad"' : ""}>${xfmt(r)}× scale</b>${bad ? " <b class=\"bad\">BROKEN</b>" : ""}</td>` +
+      `<td class="w"><i>${tail}</i></td></tr>`;
+  }
+  function readout(t, phi, f64, f32, peak, dJW, dKK, dJG, dWG, dPanel) {
+    const ratio = msKj / Math.max(msWa, 1e-6);
+    const live = ratio > 1.15;
+    ro.innerHTML =
+      "<table>" +
+      `<tr><td class="k">field time t</td><td><b>${t.toFixed(3)}</b></td>` +
+      `<td class="k">peak |u| <b>${peak.toFixed(4)}</b> · largest phase φ</td><td><b class="nil">${phi.toFixed(1)} rad</b></td>` +
+      `<td class="w"><i>the scale below tracks φ, not ε alone</i></td></tr>` +
+      row("Δ&nbsp; js scalar ↔ wasm batch", dJW, peak, f64, "f64 ↔ f64",
+        "same precision — Math.sin vs the batch kernel's own reduction") +
+      row("Δ&nbsp; js scalar ↔ gpu", dJG, peak, f32, "f64 ↔ fp32",
+        gpuOk ? "highp float is 32-bit; GPU sin/cos add a few ulp" : gpuWhy) +
+      row("Δ&nbsp; wasm batch ↔ gpu", dWG, peak, f32, "f64 ↔ fp32", gpuOk ? "" : gpuWhy) +
+      `<tr><td class="k">Δ&nbsp; wasm kernel ↔ js batch kernel</td><td><b${dKK === 0 ? ' class="nil"' : ' class="bad"'}>${e3(dKK)}</b>${dKK === 0 ? " <i>bit-identical</i>" : ""}</td>` +
+      `<td class="k">same formula, two backends</td><td><b${live ? "" : ' class="nil"'}>${ratio.toFixed(2)}× clock</b></td>` +
+      `<td class="w"><i>${live ? "wasm engaged — only the clock separates them" : "ratio ≈ 1: wasm not engaged; both are the JS kernel"}</i></td></tr>` +
+      `<tr><td class="k">Δ panel max (${$("df-lbl").textContent})</td><td><b>${isFinite(dPanel) ? e3(dPanel) : "—"}</b></td>` +
+      `<td class="k">frame</td><td><b class="nil">${frames}</b></td>` +
+      `<td class="w"><i>${(3 * NPX).toLocaleString()} values per pair, this frame</i></td></tr>` +
+      "</table>";
+    $("t-js").textContent = msJs.toFixed(2) + " ms";
+    $("t-wa").textContent = msWa.toFixed(2) + " ms (js kernel " + msKj.toFixed(2) + ")";
+    $("t-gl").textContent = gpuOk ? msGl.toFixed(2) + " ms incl. readback" : "unavailable";
+    $("t-df").textContent = isFinite(dPanel) ? "max " + e3(dPanel) : "not measured";
+  }
+
+  // ---- loop --------------------------------------------------------------
+  function frame() {
+    if (state.run) state.s += 0.008;
+    step();
+    requestAnimationFrame(frame);
+  }
+
+  // ---- controls ----------------------------------------------------------
+  const PAIR_LBL = { gj: "Δ gpu − js", wj: "Δ wasm − js", gw: "Δ gpu − wasm" };
+  for (const [id, key] of [["p-gj", "gj"], ["p-wj", "wj"], ["p-gw", "gw"]]) {
+    $(id).onclick = () => {
+      state.pair = key;
+      for (const o of ["p-gj", "p-wj", "p-gw"]) $(o).classList.toggle("on", o === id);
+      $("df-lbl").textContent = PAIR_LBL[key];
+    };
+  }
+  for (const [id, key] of [["b-none", "none"], ["b-js", "js"], ["b-wa", "wa"], ["b-gl", "gl"]]) {
+    $(id).onclick = () => {
+      state.brk = key;
+      for (const o of ["b-none", "b-js", "b-wa", "b-gl"]) $(o).classList.toggle("on", o === id);
+    };
+  }
+  $("pause").onclick = () => {
+    state.run = !state.run;
+    $("pause").textContent = state.run ? "pause" : "resume";
+    $("pause").classList.toggle("on", !state.run);
+  };
+  $("pert").oninput = (ev) => {
+    const i = +ev.target.value;
+    $("v-pert").textContent = PERT_LBL[i];
+    state.pert = PERT[i];
+    if (gpuOk) { try { glslBytes = buildGpu(state.pert); } catch (err) { gpuOk = false; gpuWhy = err.message; } }
+  };
+
+  $("note").innerHTML = gpuOk
+    ? `${OPTS.modes} modes → ${(glslBytes / 1024).toFixed(1)} kB of generated GLSL, compiled to a fragment shader ` +
+      "rendering into an RGBA32F target and read back with <code>gl.readPixels</code> — a byte target would " +
+      "quantise the field to 1/255 and swamp the error being measured · flat grey pixels in the difference panel " +
+      "are values that came back bit-identical · these are the three backends the JS package can reach in a " +
+      "browser; the python and rust ports are pinned to <code>spec/parity_fixture.json</code> in CI, not here"
+    : `GPU column unavailable: ${gpuWhy}. The two CPU backends are still compared live.`;
+
+  frame();
+})();
+</script>
+</body>
+</html>

@@ -22,7 +22,7 @@ algorithm once and re-verify every language in one CI run.
 
 | Package | Language | Registry | Version | Status |
 |---|---|---|---|---|
-| [`packages/js`](packages/js) | TypeScript / JS | npm `helix-noise` | `1.11.0` | reference implementation (spectral + atom engines, boundaries, GLSL, WASM batch kernel) |
+| [`packages/js`](packages/js) | TypeScript / JS | npm `helix-noise` | `1.11.2` | reference implementation (spectral + atom engines, boundaries, GLSL, WASM batch kernel, structure primitives, time warps, gradient diagnostics) |
 | [`packages/python`](packages/python) | Python 3 + numpy | PyPI `helix-noise` | `0.6.0` | spectral engine + boundary + GLSL; vectorized `sample_many` |
 | [`packages/rust`](packages/rust) | Rust | crates.io `helix-noise` | `0.7.0` | spectral **+ atom** engines + boundary (wraps either) + GLSL; zero runtime deps, WASM-friendly |
 | [`packages/wasm`](packages/wasm) | Rust → WebAssembly | npm `helix-noise-wasm` | `0.6.0` | `wasm-bindgen` build of the Rust core; both engines, native-speed sampling in the browser |
@@ -48,10 +48,12 @@ the spectral engine and document the atom engine as a follow-up.
 
 Everything under [`spec/`](spec) is the single source of truth:
 
-- [`spec/PORTING_SPEC.md`](spec/PORTING_SPEC.md) — the language-agnostic algorithm (RNG, mode construction,
-  sampling, boundaries, GLSL emitter). Port from this.
-- [`spec/parity_fixture.json`](spec/parity_fixture.json) — the canonical fixture (mode arrays + sample
-  outputs for 8 configs incl. two boundary cases), **generated from `packages/js`**.
+- [`spec/PORTING_SPEC.md`](spec/PORTING_SPEC.md) — the language-agnostic algorithm (RNG, mode
+  construction, sampling, the `FlowField` contract, boundaries, GLSL emitter, presets, structure
+  primitives, time warps, gradient diagnostics). Opens with a per-feature table of which port has
+  what, and which blocks the fixture actually pins. Port from this.
+- [`spec/parity_fixture.json`](spec/parity_fixture.json) — the canonical fixture: **18 configs** —
+  13 spectral (mode arrays + samples), 2 boundary, 3 atom-engine — **generated from `packages/js`**.
 - [`spec/ref_glsl_*.glsl`](spec) — exact GLSL emitter targets.
 
 Each port's test suite asserts it reproduces the fixture within `1e-9`. Regenerate the fixture with:

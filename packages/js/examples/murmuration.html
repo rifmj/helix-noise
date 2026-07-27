@@ -1,0 +1,642 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Helix Noise — murmuration (steering a flock with a flow field)</title>
+<style>
+  html,body{margin:0;background:#070a0e;color:#cdd6dd;font-family:system-ui,sans-serif}
+  .wrap{max-width:980px;margin:0 auto;padding:22px 16px}
+  h1{font-size:19px;font-weight:600;margin:0 0 6px}
+  h1 code{color:#f4a13c}
+  p{color:#8a97a2;font-size:13.5px;line-height:1.6;margin:0 0 14px}
+  p b{color:#cdd6dd;font-weight:500}
+  code{font-family:ui-monospace,Menlo,monospace;color:#f4a13c;font-size:12.5px}
+  #stage{position:relative;width:100%;aspect-ratio:16/10;border:1px solid rgba(150,180,200,.15);
+    border-radius:10px;overflow:hidden;cursor:grab;touch-action:none;
+    background:radial-gradient(130% 92% at 50% 104%, #14212c 0%, #0c141d 38%, #080c12 68%, #060809 100%)}
+  #stage.drag{cursor:grabbing}
+  .badge{position:absolute;top:10px;left:12px;font-family:ui-monospace,monospace;font-size:10.5px;
+    letter-spacing:.12em;text-transform:uppercase;color:#93a3b0;background:rgba(7,10,14,.55);
+    border:1px solid rgba(150,180,200,.14);border-radius:6px;padding:4px 8px;pointer-events:none}
+  .ro{position:absolute;top:10px;right:12px;font-family:ui-monospace,monospace;font-size:11px;color:#93a3b0;
+    background:rgba(7,10,14,.62);border:1px solid rgba(150,180,200,.14);border-radius:6px;padding:5px 9px;
+    text-align:right;line-height:1.55;pointer-events:none}
+  .ro b{font-weight:400;color:#2fd6bf}
+  .ro b.warm{color:#f4a13c}
+  .ro b.nil{color:#7b8794}
+  .ro i{font-style:normal;color:#5d6b77}
+  .chart{position:absolute;left:12px;bottom:10px;background:rgba(7,10,14,.62);
+    border:1px solid rgba(150,180,200,.14);border-radius:6px;padding:5px 7px 3px;pointer-events:none}
+  .chart canvas{display:block}
+  .chart .cap{font-family:ui-monospace,monospace;font-size:9.5px;letter-spacing:.09em;
+    text-transform:uppercase;color:#5d6b77;padding:0 1px 3px}
+  .row{display:flex;flex-wrap:wrap;gap:14px;align-items:center;margin-top:12px;font-family:ui-monospace,monospace;font-size:12px;color:#93a3b0}
+  .row label{display:flex;align-items:center;gap:8px}
+  input[type=range]{width:104px}
+  button{font-family:ui-monospace,monospace;font-size:11.5px;color:#cdd6dd;background:#0c1016;
+    border:1px solid rgba(150,180,200,.22);border-radius:7px;padding:6px 11px;cursor:pointer}
+  button:hover{border-color:#38d9d1}
+  button.on{border-color:#38d9d1;color:#fff}
+  button.warm.on{border-color:#f4a13c;color:#fff}
+  .note{margin-top:12px;font-size:12px;color:#5d6b77;font-family:ui-monospace,monospace}
+  .key{display:inline-flex;align-items:center;gap:6px;margin-right:14px}
+  .sw{width:10px;height:10px;border-radius:2px;display:inline-block}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Murmuration — <code>create({ tileable })</code>, <code>sampleMany</code>, <code>sampleGrad</code></h1>
+  <p>A few thousand starlings running the usual three boid rules — <b>separation</b>, <b>alignment</b>,
+    <b>cohesion</b> — with one addition: the ambient wind they steer into is not hand-authored, it is
+    <code>field.sampleMany()</code> on a helix-noise field, sampled at each bird's own position and at the
+    current field time. Nobody keyframed the wheeling. Drag to orbit, scroll to zoom.</p>
+  <p><b>Why this field and not any smooth noise.</b> A flow field you assemble from three scalar noise
+    channels has sources and sinks in it. Agents advected by such a field are pumped out of the sources
+    and piled into the sinks, so an evenly seeded population thins in some places and jams in others —
+    the density artifact that makes hand-rolled wind look wrong no matter how you tune the octaves. A
+    helix-noise field is <code>u = ∇×A</code>, so <code>∇·u = 0</code> exactly and the flow is
+    volume-preserving: an evenly seeded population stays evenly seeded, forever, by Liouville's theorem.
+    That is a measurable claim, so the page measures it.</p>
+  <div id="stage">
+    <div class="badge">helix-noise · boids · sampleMany()</div>
+    <div class="ro" id="ro">—</div>
+    <div class="chart">
+      <div class="cap">occupancy spread σ/μ · last 30 s</div>
+      <canvas id="chart" width="212" height="74"></canvas>
+    </div>
+  </div>
+  <div class="row">
+    flock steering
+    <button id="m-df" class="on">∇×A divergence-free</button>
+    <button id="m-gr" class="warm">∇φ compressible</button>
+    <label>wind <input id="wind" type="range" min="0" max="6" step="0.1" value="3.2"><span id="v-wind">3.2</span></label>
+    <label>agents <input id="np" type="range" min="800" max="4500" step="100" value="3400"><span id="v-np">3400</span></label>
+  </div>
+  <div class="row">
+    <label>cohesion <input id="coh" type="range" min="0" max="3" step="0.05" value="1.20"><span id="v-coh">1.20</span></label>
+    <label>separation <input id="sep" type="range" min="0" max="4" step="0.05" value="1.00"><span id="v-sep">1.00</span></label>
+    <label>roost <input id="roost" type="range" min="0" max="4" step="0.1" value="1.8"><span id="v-roost">1.8</span></label>
+    <label>churn <input id="churn" type="range" min="0" max="2" step="0.05" value="0.80"><span id="v-churn">0.80</span></label>
+    <button id="tr" class="on">tracers ✓</button>
+    <button id="reseed">↻ reseed tracers</button>
+  </div>
+
+  <p><b>The receipt.</b> Two clouds of <b>4,096 passive tracers</b> are seeded at exactly the same
+    uniform-random positions in the period box and then simply advected — no boid rules, nothing but the
+    flow. One rides the helix field. The other rides a <b>gradient field</b> <code>u = ∇φ</code> built on
+    the same integer-lattice wavenumbers, the same <code>k^-1.4</code> amplitude law, the same eddy-churn
+    rates and normalised to the same RMS speed — the <i>only</i> difference is that its modes are parallel
+    to <b>k</b> instead of transverse to it, which makes it exactly curl-free and maximally compressible.
+    Both clouds are binned into a 6³ grid and the readout prints σ/μ of the bin counts for each, live,
+    always, whichever field the flock is using. The dotted line on the chart is <b>1/√μ = 0.230</b>, the
+    spread a uniform random scatter has by counting statistics alone: that is the floor, not zero.
+    Measured over three minutes, the divergence-free cloud never leaves ±17% of that floor, its fullest
+    bin never holds more than 36 tracers and no bin is ever empty. The gradient cloud leaves the floor
+    within two seconds and settles at <b>σ/μ ≈ 5–8</b>, with 20–45% of its tracers in one bin of 216 and
+    roughly 160 of the other bins empty. Underneath, <code>rms ∇·u</code> prints the mechanism: the
+    trace of <code>sampleGrad</code> for the helix field against the closed-form divergence of the
+    gradient field, <b>1e-16 against 1.4</b>. Both fields are normalised to unit RMS speed and the
+    readout prints both, so you can check the comparison is not won on amplitude — they track within
+    ~15%, and the compressible one runs slightly <i>slower</i>, which makes the contrast conservative.</p>
+  <p><b>What this is not, and what is faked.</b> No pressure solve, no collision, no viscosity — the field
+    is kinematic, an exact closed-form divergence-free velocity field, not a fluid simulation, and the birds
+    are points with no body. Three things in the flock are authored rather than emergent, and all three are
+    on sliders. <b>Cohesion</b> is a clumping force, put there on purpose. <b>Roost</b> is a weak pull toward
+    the flock's own centre of mass beyond 3.2 units: local cohesion only sees 2.6 units, so a flock that
+    spreads past that horizon can never re-gather. Drag roost to 0 and the cloud loosens within seconds
+    and thins out over the torus from there. The roost also pulls 1.6× harder vertically than
+    horizontally, which is what makes the cloud a wide slab rather than a ball — a shape choice, not
+    something the flow field did. And the <b>MAXN = 24</b> neighbour cap keeps the boid loop bounded in the dense core,
+    which costs a little accuracy exactly where the flock is thickest. None of the three touches the tracers,
+    which is the whole reason the receipt lives on them. One more thing worth knowing: the flock steers
+    <i>toward</i> the local wind rather than being advected by it, so it feels the difference between the two
+    fields more weakly than the tracers do — flip the steering button and the amber knots form long before
+    the flock visibly reacts.</p>
+
+  <div class="note">
+    <span class="key"><span class="sw" style="background:#b9cad8"></span>birds</span>
+    <span class="key"><span class="sw" style="background:#2fd6bf"></span>tracers on ∇×A (divergence-free)</span>
+    <span class="key"><span class="sw" style="background:#f4a13c"></span>tracers on ∇φ (compressible)</span>
+  </div>
+  <div class="note" id="note">loading three.js…</div>
+</div>
+
+<script src="../dist/helix-noise.global.js"></script>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+  import * as THREE from "three";
+  import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+  const TAU = Math.PI * 2;
+
+  // ---- the world is a torus, and that is load-bearing ----------------------
+  // The occupancy receipt only means anything if the box the agents are counted in is closed.
+  // Wrapping positions in a box where the field is *not* periodic is not a closed system: the flux
+  // through each face is unbalanced, so tracers pile up at the seams and the spread climbs even for
+  // a divergence-free field. `tileable: true` snaps every wavevector to the integer lattice, so the
+  // field is exactly 2π-periodic; sampling at p·(2π/L) makes it exactly L-periodic in world units,
+  // the wrap becomes a genuine torus identification, and volume preservation actually holds.
+  const L = 22, H = L / 2, FS = TAU / L;
+  const NB = 6, NBIN = NB * NB * NB;   // occupancy bins
+  const NTR = 4096;                    // passive tracers per steering field
+  const POISSON = 1 / Math.sqrt(NTR / NBIN);   // the floor an even scatter already has
+
+  const params = { mode: "df", wind: 3.2, np: 3400, coh: 1.20, sep: 1.00, roost: 1.8, churn: 0.80, tracers: true };
+
+  const MODES = 18, KMIN = 1, KMAX = 5, SLOPE = 1.4, SEED = 7;
+
+  function mulberry(s) {
+    return function () { s |= 0; s = (s + 0x6d2b79f5) | 0; let t = Math.imul(s ^ (s >>> 15), 1 | s);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+  }
+
+  /**
+   * The compressible twin, built here rather than by the library — the library cannot make one,
+   * because every field it produces is a curl. Same integer-lattice band, same |k|^-slope amplitude
+   * law, same Kolmogorov churn rate ω(k) = χ·kmin^⅓·k^⅔, same RMS normalisation; the modes are just
+   * polarized *along* k instead of across it:
+   *
+   *     φ = Σ (a_j/|k_j|) sin(k_j·x + ph_j + ω_j t)     u = ∇φ = Σ a_j k̂_j cos(…)
+   *
+   * so ∇×u ≡ 0 and ∇·u = −Σ a_j|k_j| sin(…), which is emphatically not zero. This is the Helmholtz
+   * mirror image of what `create()` gives you, and the point of the comparison.
+   */
+  function makeGradientField(o) {
+    const N = o.modes, rng = mulberry(o.seed);
+    const kx = new Float64Array(N), ky = new Float64Array(N), kz = new Float64Array(N);
+    const km = new Float64Array(N), a = new Float64Array(N), ph = new Float64Array(N), om = new Float64Array(N);
+    for (let j = 0; j < N; j++) {
+      const kt = o.kmin + (o.kmax - o.kmin) * ((j + rng()) / N);   // stratified |k|, as the library does
+      const u = 2 * rng() - 1, th = TAU * rng(), r = Math.sqrt(Math.max(0, 1 - u * u));
+      let ix = Math.round(kt * r * Math.cos(th)), iy = Math.round(kt * r * Math.sin(th)), iz = Math.round(kt * u);
+      if (!ix && !iy && !iz) ix = 1;                                // lattice snap == tileable
+      const k = Math.hypot(ix, iy, iz);
+      kx[j] = ix; ky[j] = iy; kz[j] = iz; km[j] = k;
+      a[j] = Math.pow(k, -o.slope) / k;                             // |u_j| = a·k = k^-slope
+      ph[j] = TAU * rng();
+      om[j] = (rng() < 0.5 ? -1 : 1) * o.churn * Math.cbrt(o.kmin) * Math.pow(k, 2 / 3);
+    }
+    let sc = 1;
+    const F = {
+      sample(x, y, z, out, t) {
+        let ux = 0, uy = 0, uz = 0;
+        for (let j = 0; j < N; j++) {
+          const c = a[j] * Math.cos(kx[j] * x + ky[j] * y + kz[j] * z + ph[j] + om[j] * t);
+          ux += c * kx[j]; uy += c * ky[j]; uz += c * kz[j];
+        }
+        out[0] = ux * sc; out[1] = uy * sc; out[2] = uz * sc; return out;
+      },
+      // mode-major batch, the same shape as Field.sampleMany
+      sampleMany(pos, out, t) {
+        const n = pos.length / 3;
+        out.fill(0);
+        for (let j = 0; j < N; j++) {
+          const kxj = kx[j], kyj = ky[j], kzj = kz[j], p0 = ph[j] + om[j] * t, aj = a[j] * sc;
+          for (let i = 0; i < n; i++) {
+            const c = aj * Math.cos(kxj * pos[3 * i] + kyj * pos[3 * i + 1] + kzj * pos[3 * i + 2] + p0);
+            out[3 * i] += c * kxj; out[3 * i + 1] += c * kyj; out[3 * i + 2] += c * kzj;
+          }
+        }
+        return out;
+      },
+      divergence(x, y, z, t) {   // analytic, no finite differences: −Σ a|k|² sin(φ)
+        let d = 0;
+        for (let j = 0; j < N; j++) d -= a[j] * km[j] * km[j] * Math.sin(kx[j] * x + ky[j] * y + kz[j] * z + ph[j] + om[j] * t);
+        return d * sc;
+      },
+    };
+    // RMS-normalise on quasi-random points, not a coarse lattice — a 6³ lattice aliases |k| = 5.
+    const rr = mulberry(4242), o3 = [0, 0, 0];
+    let s2 = 0;
+    for (let m = 0; m < 2000; m++) { F.sample(rr() * TAU, rr() * TAU, rr() * TAU, o3, 0); s2 += o3[0] * o3[0] + o3[1] * o3[1] + o3[2] * o3[2]; }
+    sc = 1 / Math.sqrt(s2 / 2000);
+    return F;
+  }
+
+  let helix, grad;
+  function buildFields() {
+    helix = HelixNoise.create({
+      modes: MODES, slope: SLOPE, kmin: KMIN, kmax: KMAX, seed: SEED,
+      coherence: 0.45, helicity: 0.4, churn: params.churn, tileable: true,
+    });
+    grad = makeGradientField({ modes: MODES, kmin: KMIN, kmax: KMAX, slope: SLOPE, seed: SEED, churn: params.churn });
+  }
+  buildFields();
+
+  // ---- torus helpers -------------------------------------------------------
+  const wrap = (v) => (v > H ? v - L : v < -H ? v + L : v);
+  const mini = (d) => (d > H ? d - L : d < -H ? d + L : d);   // minimum image
+
+  // ---- tracers: the measurement, not the picture ---------------------------
+  const trA = new Float64Array(3 * NTR), trB = new Float64Array(3 * NTR);
+  const trQ = new Float64Array(3 * NTR), trV = new Float64Array(3 * NTR);
+  let trSeed = 20260726;
+  function seedTracers() {
+    const rs = mulberry(trSeed);
+    for (let i = 0; i < 3 * NTR; i++) { const v = (rs() * 2 - 1) * H; trA[i] = v; trB[i] = v; }
+  }
+  seedTracers();
+
+  const bins = new Int32Array(NBIN);
+  const MU = NTR / NBIN;
+  function occupancy(p) {
+    bins.fill(0);
+    for (let i = 0; i < NTR; i++) {
+      const b0 = Math.min(NB - 1, (((p[3 * i] + H) / L) * NB) | 0);
+      const b1 = Math.min(NB - 1, (((p[3 * i + 1] + H) / L) * NB) | 0);
+      const b2 = Math.min(NB - 1, (((p[3 * i + 2] + H) / L) * NB) | 0);
+      bins[(b0 * NB + b1) * NB + b2]++;
+    }
+    let v = 0, mx = 0;
+    for (let b = 0; b < NBIN; b++) { const d = bins[b] - MU; v += d * d; if (bins[b] > mx) mx = bins[b]; }
+    return { cv: Math.sqrt(v / NBIN) / MU, max: mx };
+  }
+
+  // The tracers take one fixed 1/60 s step per rendered frame, so the receipt reads the same on a
+  // fast machine and a slow one — a frame-rate-dependent dt would let the number drift with hardware.
+  const TDT = 1 / 60, WSPD = 4;
+  function stepTracers(t) {
+    for (let i = 0; i < 3 * NTR; i++) trQ[i] = trA[i] * FS;
+    helix.sampleMany(trQ, trV, t);
+    for (let i = 0; i < 3 * NTR; i++) trA[i] = wrap(trA[i] + trV[i] * WSPD * TDT);
+    for (let i = 0; i < 3 * NTR; i++) trQ[i] = trB[i] * FS;
+    grad.sampleMany(trQ, trV, t);
+    for (let i = 0; i < 3 * NTR; i++) trB[i] = wrap(trB[i] + trV[i] * WSPD * TDT);
+  }
+
+  // ---- the divergence receipt: analytic, both fields, every frame ----------
+  // helix: trace of the closed-form velocity gradient. grad: the closed form above. No finite
+  // differences anywhere, so the small number is roundoff and not an O(h²) truncation floor.
+  const PROBES = 96;
+  const g9 = new Float64Array(9), o3 = [0, 0, 0], o6 = new Float64Array(6);
+  let divA = 0, divB = 0, spdA = 0, spdB = 0;
+  let probeSeed = 1;
+  function measureField(t) {
+    const rp = mulberry(probeSeed++);
+    let da = 0, db = 0, ua = 0, ub = 0;
+    for (let m = 0; m < PROBES; m++) {
+      const x = rp() * TAU, y = rp() * TAU, z = rp() * TAU;
+      helix.sampleGrad(x, y, z, g9, t);
+      const d = g9[0] + g9[4] + g9[8]; da += d * d;
+      const e = grad.divergence(x, y, z, t); db += e * e;
+      helix.sampleUW(x, y, z, o6, t); ua += o6[0] * o6[0] + o6[1] * o6[1] + o6[2] * o6[2];
+      grad.sample(x, y, z, o3, t); ub += o3[0] * o3[0] + o3[1] * o3[1] + o3[2] * o3[2];
+    }
+    divA = Math.sqrt(da / PROBES); divB = Math.sqrt(db / PROBES);
+    spdA = Math.sqrt(ua / PROBES); spdB = Math.sqrt(ub / PROBES);
+  }
+
+  // ---- the flock -----------------------------------------------------------
+  const MAXSPD = 6.4, MINSPD = 3.8, MAXACC = 26, NR = 2.6, RSEP = 0.95, MAXN = 24;
+  const ROOST_R0 = 2.0, ROOST_R1 = 5.5;
+  const GN = Math.max(3, Math.floor(L / NR)), CS = L / GN, NCELL = GN * GN * GN;
+  const cellStart = new Int32Array(NCELL + 1), cellCount = new Int32Array(NCELL), order = new Int32Array(4500);
+  // 27 cell offsets ordered centre-outward. The MAXN cap stops the scan early inside the dense
+  // core, so the order it walks in has to be unbiased: a raw −1..1 triple loop would always fill
+  // the quota from the same corner and tilt every bird's cohesion vector the same way.
+  const OFF = [];
+  for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (let dz = -1; dz <= 1; dz++) OFF.push([dx, dy, dz]);
+  OFF.sort((a, b) => (a[0] * a[0] + a[1] * a[1] + a[2] * a[2]) - (b[0] * b[0] + b[1] * b[1] + b[2] * b[2]));
+  const OFFX = Int8Array.from(OFF.map((o) => o[0])), OFFY = Int8Array.from(OFF.map((o) => o[1])), OFFZ = Int8Array.from(OFF.map((o) => o[2]));
+  let bp, bv, bpos, bsize, bcol, bgeo, bpts;
+
+  function buildFlock() {
+    if (bpts) { scene.remove(bpts); bgeo.dispose(); bpts.material.dispose(); }
+    const N = params.np;
+    bp = new Float64Array(3 * N); bv = new Float64Array(3 * N);
+    bpos = new Float32Array(3 * N); bsize = new Float32Array(N); bcol = new Float32Array(3 * N);
+    const rs = mulberry(991);
+    // start them as a loose ball so the flock reads as a flock from frame one
+    for (let i = 0; i < N; i++) {
+      const u = 2 * rs() - 1, th = TAU * rs(), r = 4.5 * Math.cbrt(rs()), q = Math.sqrt(1 - u * u);
+      bp[3 * i] = r * q * Math.cos(th); bp[3 * i + 1] = r * q * Math.sin(th) * 0.6; bp[3 * i + 2] = r * u;
+      const a1 = TAU * rs(), c1 = 2 * rs() - 1, s1 = Math.sqrt(1 - c1 * c1);
+      bv[3 * i] = MAXSPD * s1 * Math.cos(a1); bv[3 * i + 1] = MAXSPD * s1 * Math.sin(a1) * 0.5; bv[3 * i + 2] = MAXSPD * c1;
+      bsize[i] = 0.085 + 0.045 * rs();
+    }
+    bgeo = new THREE.BufferGeometry();
+    bgeo.setAttribute("position", new THREE.BufferAttribute(bpos, 3));
+    bgeo.setAttribute("aCol", new THREE.BufferAttribute(bcol, 3));
+    bgeo.setAttribute("aSize", new THREE.BufferAttribute(bsize, 1));
+    bpts = new THREE.Points(bgeo, birdMat());
+    bpts.frustumCulled = false;
+    scene.add(bpts);
+    resize();
+    document.getElementById("note").textContent =
+      `${N.toLocaleString()} boids + 2 × ${NTR.toLocaleString()} passive tracers · ` +
+      `${(N + 2 * NTR).toLocaleString()} field samples/frame through sampleMany() · ` +
+      `steering field: ${MODES} tileable helical modes, slope ${SLOPE}, ${L}³ period box · three.js r160`;
+  }
+
+  function birdMat() {
+    return new THREE.ShaderMaterial({
+      transparent: true, depthWrite: false, blending: THREE.NormalBlending,
+      uniforms: { uNear: { value: 13 }, uFar: { value: 46 }, uK: { value: 1400 } },
+      vertexShader: `
+        attribute float aSize; attribute vec3 aCol; varying vec3 vC; varying float vF;
+        uniform float uNear, uFar, uK;
+        void main(){
+          vC = aCol;
+          vec4 mv = modelViewMatrix * vec4(position, 1.0);
+          float d = -mv.z;
+          vF = clamp((uFar - d) / (uFar - uNear), 0.14, 1.0);
+          // uK = framebufferHeight / (2·tan(fov/2)): turns a world-space wingspan into pixels
+          gl_PointSize = max(1.2, aSize * uK / max(d, 0.1));
+          gl_Position = projectionMatrix * mv;
+        }`,
+      fragmentShader: `
+        varying vec3 vC; varying float vF;
+        void main(){
+          vec2 d = gl_PointCoord - 0.5; float r2 = dot(d, d);
+          if (r2 > 0.25) discard;
+          gl_FragColor = vec4(vC, smoothstep(0.25, 0.03, r2) * vF);
+        }`,
+    });
+  }
+
+  const uFlock = new Float64Array(3 * 4500), qFlock = new Float64Array(3 * 4500);
+  // flock centroid, tracked with minimum-image increments so it is continuous across the seam
+  let cx = 0, cy = 0, cz = 0;
+
+  function stepFlock(dt, t) {
+    const N = params.np;
+    const src = params.mode === "df" ? helix : grad;
+    for (let i = 0; i < N; i++) {
+      qFlock[3 * i] = bp[3 * i] * FS; qFlock[3 * i + 1] = bp[3 * i + 1] * FS; qFlock[3 * i + 2] = bp[3 * i + 2] * FS;
+    }
+    const sub = qFlock.subarray(0, 3 * N), out = uFlock.subarray(0, 3 * N);
+    src.sampleMany(sub, out, t);
+
+    // uniform-grid neighbour bucket (counting sort, no allocation per frame)
+    cellCount.fill(0);
+    for (let i = 0; i < N; i++) {
+      const ix = Math.min(GN - 1, ((bp[3 * i] + H) / CS) | 0);
+      const iy = Math.min(GN - 1, ((bp[3 * i + 1] + H) / CS) | 0);
+      const iz = Math.min(GN - 1, ((bp[3 * i + 2] + H) / CS) | 0);
+      cellCount[(ix * GN + iy) * GN + iz]++;
+    }
+    let acc = 0;
+    for (let c = 0; c < NCELL; c++) { cellStart[c] = acc; acc += cellCount[c]; cellCount[c] = 0; }
+    cellStart[NCELL] = acc;
+    for (let i = 0; i < N; i++) {
+      const ix = Math.min(GN - 1, ((bp[3 * i] + H) / CS) | 0);
+      const iy = Math.min(GN - 1, ((bp[3 * i + 1] + H) / CS) | 0);
+      const iz = Math.min(GN - 1, ((bp[3 * i + 2] + H) / CS) | 0);
+      const c = (ix * GN + iy) * GN + iz;
+      order[cellStart[c] + cellCount[c]++] = i;
+    }
+
+    const NR2 = NR * NR, RSEP2 = RSEP * RSEP;
+    const wCoh = params.coh, wSep = params.sep, wAli = 1.0, wWind = params.wind, wRoost = params.roost;
+    let sx = 0, sy = 0, sz = 0;
+    for (let i = 0; i < N; i++) {
+      const px = bp[3 * i], py = bp[3 * i + 1], pz = bp[3 * i + 2];
+      const vx = bv[3 * i], vy = bv[3 * i + 1], vz = bv[3 * i + 2];
+      const ix = Math.min(GN - 1, ((px + H) / CS) | 0);
+      const iy = Math.min(GN - 1, ((py + H) / CS) | 0);
+      const iz = Math.min(GN - 1, ((pz + H) / CS) | 0);
+      let sepx = 0, sepy = 0, sepz = 0, alix = 0, aliy = 0, aliz = 0, cohx = 0, cohy = 0, cohz = 0;
+      let n = 0, ns = 0;
+      // 27-cell scan; CS >= NR so this is the complete neighbourhood. The MAXN cap bounds the
+      // worst case inside the dense core — it costs a little accuracy in the very densest cells
+      // and is the reason this holds framerate at a few thousand agents.
+      outer:
+      for (let o = 0; o < 27; o++) {
+        const c = ((((ix + OFFX[o] + GN) % GN) * GN + ((iy + OFFY[o] + GN) % GN)) * GN + ((iz + OFFZ[o] + GN) % GN));
+        for (let s = cellStart[c], e = cellStart[c] + cellCount[c]; s < e; s++) {
+          const j = order[s];
+          if (j === i) continue;
+          const ddx = mini(bp[3 * j] - px), ddy = mini(bp[3 * j + 1] - py), ddz = mini(bp[3 * j + 2] - pz);
+          const d2 = ddx * ddx + ddy * ddy + ddz * ddz;
+          if (d2 > NR2 || d2 === 0) continue;
+          alix += bv[3 * j]; aliy += bv[3 * j + 1]; aliz += bv[3 * j + 2];
+          cohx += ddx; cohy += ddy; cohz += ddz;
+          if (d2 < RSEP2) { const inv = 1 / d2; sepx -= ddx * inv; sepy -= ddy * inv; sepz -= ddz * inv; ns++; }
+          if (++n >= MAXN) break outer;
+        }
+      }
+      let ax = 0, ay = 0, az = 0;
+      if (n) {
+        let m = Math.hypot(alix, aliy, aliz);
+        if (m > 1e-9) { const g = MAXSPD / m; ax += wAli * (alix * g - vx); ay += wAli * (aliy * g - vy); az += wAli * (aliz * g - vz); }
+        m = Math.hypot(cohx, cohy, cohz);
+        if (m > 1e-9) { const g = MAXSPD / m; ax += wCoh * (cohx * g - vx); ay += wCoh * (cohy * g - vy); az += wCoh * (cohz * g - vz); }
+      }
+      if (ns) {
+        const m = Math.hypot(sepx, sepy, sepz);
+        if (m > 1e-9) { const g = MAXSPD / m; ax += wSep * (sepx * g - vx); ay += wSep * (sepy * g - vy); az += wSep * (sepz * g - vz); }
+      }
+      // Roost. Local cohesion has a 2.6-unit horizon, so a flock that once spreads past it can
+      // never gather again and slowly evaporates over the torus. Real starlings have a roost;
+      // this is that, and nothing else — a weak pull toward the flock's own centre of mass, ramped
+      // in beyond 3.2 units so the core is not squeezed. It is on a slider because it is the one
+      // force here that is not a boid rule, and the tracers that carry the receipt never feel it.
+      // The vertical component is weighted 1.6×, which flattens the cloud into a wide slab instead
+      // of a ball. Starlings do fly flatter than wide, but let us be clear that this is a shape
+      // choice in the roost term and not something the flow field did.
+      const rdx = mini(cx - px), rdy = mini(cy - py) * 1.6, rdz = mini(cz - pz);
+      const rd = Math.hypot(rdx, rdy, rdz);
+      if (rd > ROOST_R0) {
+        const ramp = wRoost * Math.min(1, (rd - ROOST_R0) / (ROOST_R1 - ROOST_R0));
+        const g = MAXSPD / rd;
+        ax += ramp * (rdx * g - vx); ay += ramp * (rdy * g - vy); az += ramp * (rdz * g - vz);
+      }
+      // the wind: steer toward the local field direction at flying speed
+      const wx = out[3 * i], wy = out[3 * i + 1], wz = out[3 * i + 2];
+      const wm = Math.hypot(wx, wy, wz);
+      if (wm > 1e-9) { const g = MAXSPD / wm; ax += wWind * (wx * g - vx); ay += wWind * (wy * g - vy); az += wWind * (wz * g - vz); }
+      const am = Math.hypot(ax, ay, az);
+      if (am > MAXACC) { const g = MAXACC / am; ax *= g; ay *= g; az *= g; }
+      let nvx = vx + ax * dt, nvy = vy + ay * dt, nvz = vz + az * dt;
+      const sp = Math.hypot(nvx, nvy, nvz) || 1;
+      const cl = sp > MAXSPD ? MAXSPD / sp : sp < MINSPD ? MINSPD / sp : 1;
+      nvx *= cl; nvy *= cl; nvz *= cl;
+      bv[3 * i] = nvx; bv[3 * i + 1] = nvy; bv[3 * i + 2] = nvz;
+      bp[3 * i] = wrap(px + nvx * dt); bp[3 * i + 1] = wrap(py + nvy * dt); bp[3 * i + 2] = wrap(pz + nvz * dt);
+      sx += mini(bp[3 * i] - cx); sy += mini(bp[3 * i + 1] - cy); sz += mini(bp[3 * i + 2] - cz);
+    }
+    cx = wrap(cx + sx / N); cy = wrap(cy + sy / N); cz = wrap(cz + sz / N);
+
+    // Draw everything relative to the flock centroid: on a torus a cohesive flock straddles the
+    // seam every so often, and without this it would appear to tear in half. Only the rendering
+    // is shifted — the simulation and the occupancy bins are untouched.
+    const COOL = [0.34, 0.44, 0.52], HOT = [0.86, 0.92, 0.96];
+    for (let i = 0; i < N; i++) {
+      bpos[3 * i] = mini(bp[3 * i] - cx); bpos[3 * i + 1] = mini(bp[3 * i + 1] - cy); bpos[3 * i + 2] = mini(bp[3 * i + 2] - cz);
+      const sp = Math.hypot(bv[3 * i], bv[3 * i + 1], bv[3 * i + 2]);
+      const f = Math.min(1, Math.max(0, (sp - MINSPD) / (MAXSPD - MINSPD)));
+      bcol[3 * i] = COOL[0] + (HOT[0] - COOL[0]) * f;
+      bcol[3 * i + 1] = COOL[1] + (HOT[1] - COOL[1]) * f;
+      bcol[3 * i + 2] = COOL[2] + (HOT[2] - COOL[2]) * f;
+    }
+    bgeo.setDrawRange(0, N);
+    bgeo.attributes.position.needsUpdate = true;
+    bgeo.attributes.aCol.needsUpdate = true;
+  }
+
+  // ---- three.js ------------------------------------------------------------
+  const stage = document.getElementById("stage");
+  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+  renderer.setPixelRatio(Math.min(2, devicePixelRatio));
+  renderer.setClearColor(0x000000, 0);
+  stage.appendChild(renderer.domElement);
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(46, 16 / 10, 0.1, 200);
+  camera.position.set(0, 3.4, 18);
+  const controls = new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true; controls.autoRotate = true; controls.autoRotateSpeed = 0.28;
+  controls.minDistance = 8; controls.maxDistance = 70;
+
+  // the period cell, so "the box the counts are taken in" is a thing you can see
+  const cage = new THREE.LineSegments(
+    new THREE.EdgesGeometry(new THREE.BoxGeometry(L, L, L)),
+    new THREE.LineBasicMaterial({ color: 0x2b3d49, transparent: true, opacity: 0.4 })
+  );
+  scene.add(cage);
+
+  const trPosA = new Float32Array(3 * NTR), trPosB = new Float32Array(3 * NTR);
+  function tracerPoints(buf, hex, op) {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.BufferAttribute(buf, 3));
+    const p = new THREE.Points(g, new THREE.PointsMaterial({
+      color: hex, size: 0.1, sizeAttenuation: true, transparent: true, opacity: op,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    }));
+    p.frustumCulled = false;
+    scene.add(p);
+    return p;
+  }
+  const ptsA = tracerPoints(trPosA, 0x2fd6bf, 0.26);
+  const ptsB = tracerPoints(trPosB, 0xf4a13c, 0.38);
+  function pushTracerPositions() {
+    for (let i = 0; i < NTR; i++) {
+      trPosA[3 * i] = mini(trA[3 * i] - cx); trPosA[3 * i + 1] = mini(trA[3 * i + 1] - cy); trPosA[3 * i + 2] = mini(trA[3 * i + 2] - cz);
+      trPosB[3 * i] = mini(trB[3 * i] - cx); trPosB[3 * i + 1] = mini(trB[3 * i + 1] - cy); trPosB[3 * i + 2] = mini(trB[3 * i + 2] - cz);
+    }
+    ptsA.geometry.attributes.position.needsUpdate = true;
+    ptsB.geometry.attributes.position.needsUpdate = true;
+  }
+
+  buildFlock();
+
+  function resize() {
+    renderer.setSize(stage.clientWidth, stage.clientHeight);
+    camera.aspect = stage.clientWidth / stage.clientHeight;
+    camera.updateProjectionMatrix();
+    if (bpts) bpts.material.uniforms.uK.value =
+      (stage.clientHeight * renderer.getPixelRatio()) / (2 * Math.tan((camera.fov * Math.PI) / 360));
+  }
+  addEventListener("resize", resize); resize();
+
+  // ---- readout + strip chart ----------------------------------------------
+  const ro = document.getElementById("ro");
+  const cv = document.getElementById("chart"), cg = cv.getContext("2d");
+  const HIST = 212;                                  // one column per frame, ~30 s of history at 60 fps
+  const hA = new Float32Array(HIST).fill(NaN), hB = new Float32Array(HIST).fill(NaN);
+  let hp = 0, hn = 0;
+  const YLO = 0.12, YHI = 24;                        // log axis: the two traces differ by ~40×
+  const ymap = (v) => {
+    const c = Math.min(YHI, Math.max(YLO, v));
+    return 70 - (Math.log(c / YLO) / Math.log(YHI / YLO)) * 66;
+  };
+  function drawChart() {
+    cg.clearRect(0, 0, cv.width, cv.height);
+    cg.setLineDash([2, 3]); cg.strokeStyle = "#4a5763"; cg.lineWidth = 1;
+    cg.beginPath(); cg.moveTo(0, ymap(POISSON) + 0.5); cg.lineTo(cv.width, ymap(POISSON) + 0.5); cg.stroke();
+    cg.setLineDash([]);
+    for (const [h, col] of [[hA, "#2fd6bf"], [hB, "#f4a13c"]]) {
+      cg.strokeStyle = col; cg.lineWidth = 1.3; cg.beginPath();
+      let started = false;
+      for (let i = 0; i < hn; i++) {
+        const idx = (hp - hn + i + HIST * 2) % HIST;
+        const v = h[idx];
+        if (!isFinite(v)) continue;
+        const x = i + (HIST - hn);
+        if (!started) { cg.moveTo(x, ymap(v)); started = true; } else cg.lineTo(x, ymap(v));
+      }
+      cg.stroke();
+    }
+    cg.fillStyle = "#4a5763"; cg.font = "9px ui-monospace, monospace";
+    cg.fillText("1/√μ", 2, ymap(POISSON) - 2.5);
+  }
+
+  const mag = (v) => {
+    const a = Math.abs(v);
+    return v === 0 ? "0" : a < 0.01 || a >= 1e4 ? v.toExponential(1) : v.toFixed(2);
+  };
+  let fps = 60, cvA = 0, cvB = 0, maxA = 0, maxB = 0;
+  function readout() {
+    const nilA = divA < 1e-10 * (spdA * KMAX + 1e-30);
+    ro.innerHTML =
+      `agents <b>${params.np.toLocaleString()}</b> · <b>${fps.toFixed(0)}</b> fps<br>` +
+      `steering ${params.mode === "df" ? '<b>∇×A</b>' : '<b class="warm">∇φ</b>'}<br>` +
+      `<i>tracers 4096 ea · 6³ bins</i><br>` +
+      `σ/μ  ∇×A <b>${cvA.toFixed(3)}</b> <i>max bin ${maxA}</i><br>` +
+      `σ/μ  ∇φ <b class="warm">${cvB.toFixed(3)}</b> <i>max bin ${maxB}</i><br>` +
+      `<i>1/√μ floor</i> <b class="nil">${POISSON.toFixed(3)}</b><br>` +
+      `rms ∇·u <b class="${nilA ? "nil" : ""}">${mag(divA)}</b> / <b class="warm">${mag(divB)}</b><br>` +
+      `rms |u| <b>${spdA.toFixed(2)}</b> / <b class="warm">${spdB.toFixed(2)}</b>`;
+  }
+
+  // ---- loop ----------------------------------------------------------------
+  let ft = 0, last = 0;
+  function loop(ts) {
+    const dt = last ? Math.min(0.05, (ts - last) * 0.001) : 0.016;
+    if (last) fps = fps * 0.92 + (1 / Math.max(dt, 1e-4)) * 0.08;
+    last = ts || 0;
+    ft += TDT;                       // field time advances on the same fixed step as the tracers
+
+    stepFlock(dt, ft);
+    stepTracers(ft);
+    measureField(ft);
+    const A = occupancy(trA), B = occupancy(trB);
+    cvA = A.cv; cvB = B.cv; maxA = A.max; maxB = B.max;
+    hA[hp] = cvA; hB[hp] = cvB; hp = (hp + 1) % HIST; hn = Math.min(HIST, hn + 1);
+
+    if (params.tracers) pushTracerPositions();
+    drawChart(); readout();
+    controls.update();
+    renderer.render(scene, camera);
+    requestAnimationFrame(loop);
+  }
+
+  // ---- controls ------------------------------------------------------------
+  const $ = (id) => document.getElementById(id);
+  function setMode(m) {
+    params.mode = m;
+    $("m-df").classList.toggle("on", m === "df");
+    $("m-gr").classList.toggle("on", m === "gr");
+  }
+  $("m-df").onclick = () => setMode("df");
+  $("m-gr").onclick = () => setMode("gr");
+  $("wind").oninput = (e) => { params.wind = +e.target.value; $("v-wind").textContent = params.wind.toFixed(1); };
+  $("roost").oninput = (e) => { params.roost = +e.target.value; $("v-roost").textContent = params.roost.toFixed(1); };
+  $("coh").oninput = (e) => { params.coh = +e.target.value; $("v-coh").textContent = params.coh.toFixed(2); };
+  $("sep").oninput = (e) => { params.sep = +e.target.value; $("v-sep").textContent = params.sep.toFixed(2); };
+  $("np").oninput = (e) => { params.np = +e.target.value; $("v-np").textContent = params.np; buildFlock(); };
+  $("churn").oninput = (e) => {
+    params.churn = +e.target.value; $("v-churn").textContent = params.churn.toFixed(2);
+    buildFields();                 // both fields, same knob — the comparison stays matched
+  };
+  $("tr").onclick = () => {
+    params.tracers = !params.tracers;
+    $("tr").classList.toggle("on", params.tracers);
+    $("tr").textContent = params.tracers ? "tracers ✓" : "tracers";
+    ptsA.visible = ptsB.visible = cage.visible = params.tracers;
+  };
+  $("reseed").onclick = () => { trSeed = (trSeed * 1103515245 + 12345) >>> 0; seedTracers(); hn = 0; };
+
+  stage.addEventListener("pointerdown", () => stage.classList.add("drag"));
+  addEventListener("pointerup", () => stage.classList.remove("drag"));
+  if (window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches) controls.autoRotate = false;
+
+  requestAnimationFrame(loop);
+</script>
+</body>
+</html>

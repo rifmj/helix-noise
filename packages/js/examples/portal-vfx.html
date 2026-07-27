@@ -1,0 +1,610 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Helix Noise — portal VFX (closed-form structures + a charge ramp)</title>
+<style>
+  html,body{margin:0;background:#070a0e;color:#cdd6dd;font-family:system-ui,sans-serif}
+  .wrap{max-width:980px;margin:0 auto;padding:22px 16px}
+  h1{font-size:19px;font-weight:600;margin:0 0 6px}
+  h1 code{color:#f4a13c}
+  p{color:#8a97a2;font-size:13.5px;line-height:1.6;margin:0 0 14px}
+  p b{color:#cdd6dd;font-weight:500}
+  code{font-family:ui-monospace,Menlo,monospace;color:#f4a13c;font-size:12.5px}
+  #stage{position:relative;width:100%;aspect-ratio:16/10;border:1px solid rgba(150,180,200,.15);
+    border-radius:10px;overflow:hidden;background:#070a0e;cursor:grab;touch-action:none}
+  .badge{position:absolute;top:10px;left:12px;font-family:ui-monospace,monospace;font-size:10.5px;
+    letter-spacing:.12em;text-transform:uppercase;color:#93a3b0;background:rgba(7,10,14,.55);
+    border:1px solid rgba(150,180,200,.14);border-radius:6px;padding:4px 8px;pointer-events:none}
+  .ro{position:absolute;top:10px;right:12px;font-family:ui-monospace,monospace;font-size:11px;color:#93a3b0;
+    background:rgba(7,10,14,.55);border:1px solid rgba(150,180,200,.14);border-radius:6px;padding:6px 9px;
+    text-align:right;line-height:1.55;pointer-events:none}
+  .ro b{font-weight:400;color:#2fd6bf}
+  .ro b.nil{color:#7b8794}
+  .ro b.bad{color:#f4a13c}
+  .ro i{font-style:normal;color:#5d6b77}
+  .ro u{text-decoration:none;color:#e6edf2;letter-spacing:.1em}
+  .bar{position:absolute;left:0;right:0;bottom:0;height:3px;background:rgba(150,180,200,.1)}
+  .bar i{display:block;height:100%;background:#38d9d1;width:0}
+  .row{display:flex;flex-wrap:wrap;gap:14px;align-items:center;margin-top:12px;font-family:ui-monospace,monospace;font-size:12px;color:#93a3b0}
+  .row label{display:flex;align-items:center;gap:8px}
+  input[type=range]{width:104px}
+  button{font-family:ui-monospace,monospace;font-size:11.5px;color:#cdd6dd;background:#0c1016;
+    border:1px solid rgba(150,180,200,.22);border-radius:7px;padding:6px 11px;cursor:pointer}
+  button:hover{border-color:#38d9d1}
+  button.on{border-color:#38d9d1;color:#fff}
+  button.warn.on{border-color:#f4a13c;color:#f4d2a2}
+  .note{margin-top:12px;font-size:12px;color:#5d6b77;font-family:ui-monospace,monospace}
+  .key{display:inline-flex;align-items:center;gap:6px;margin-right:14px}
+  .sw{width:10px;height:10px;border-radius:2px;display:inline-block}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Portal — <code>createRing</code>, <code>strainedColumn</code>, <code>compose</code>, <code>collapse</code></h1>
+  <p>A game effect assembled out of the library's <b>closed-form pieces</b> instead of a solver.
+    <code>createRing</code> is the rim: a torus of swirl that is exactly zero outside its own tube, so it
+    decorates the edge and touches nothing else. <code>strainedColumn</code> is the throat — an
+    <b>exact stationary Navier–Stokes solution</b>, so the intake is not art-directed: the inward pull
+    <code>u^r = −a·r</code>, the spin <code>u^θ = ε(1−e^(−a r²/2ν))/r</code> and the axial draw
+    <code>u^z = 2a(z−z₀)</code> all come from one balance, and raising the strain makes the throat
+    <b>narrower and faster at the same time</b> because that is what the solution does.
+    <code>compose</code> stacks them with a broadband layer for detail. Drag to orbit.</p>
+  <p>The charge is a <b>state machine driven by parameter ramps</b>, not a cross-dissolve. Going from idle
+    to open, the strain <code>a</code> climbs ×8.3, the spin <code>ε</code> ×6.7, the rim circulation
+    <code>Γ</code> ×5.6, and the detail layer is wrapped in <code>collapse</code> whose remaining time
+    <code>τ = T−t</code> falls from 1 to 0.1 — so the texture shrinks toward the portal like
+    <code>τ^0.6</code> while its amplitude grows like <code>τ^(−0.4)</code>. Nothing fades in; the motion
+    changes because the field changes. <b>log-periodic</b> swaps <code>collapse</code> for
+    <code>dssCollapse</code>, which makes the gather pulse once per <code>λ</code>-fold of the zoom
+    instead of climbing smoothly.</p>
+  <div id="stage">
+    <div class="badge">helix-noise · portal vfx · three.js</div>
+    <div class="ro" id="ro">—</div>
+    <div class="bar"><i id="chargebar"></i></div>
+  </div>
+  <div class="row">
+    <button id="s-auto" class="on">auto cycle ✓</button>
+    <!-- label kept in sync by setMode -->
+    <button id="s-idle">idle</button>
+    <button id="s-open">open</button>
+    <button id="dss">log-periodic</button>
+    <button id="guides">scale guides</button>
+    <button id="leak" class="warn">+ artist intake (non-solenoidal)</button>
+  </div>
+  <div class="row">
+    <label>rim radius <input id="rad" type="range" min="0.7" max="1.9" step="0.05" value="1.20"><span id="v-rad">1.20</span></label>
+    <label>throat strain a <input id="str" type="range" min="0.5" max="3" step="0.05" value="1.20"><span id="v-str">1.20</span></label>
+    <label>spin ε <input id="spn" type="range" min="0.2" max="3" step="0.05" value="1.30"><span id="v-spn">1.30</span></label>
+    <label>charge rate <input id="rate" type="range" min="0.25" max="3" step="0.05" value="1.00"><span id="v-rate">1.00×</span></label>
+    <label>particles <input id="np" type="range" min="3000" max="22000" step="1000" value="12000"><span id="v-np">12000</span></label>
+  </div>
+
+  <p style="margin-top:14px"><b>The number on the page.</b> Everything the portal does rests on one
+    guarantee — the composed field is divergence-free — so that is what the readout measures. It prints
+    the <b>trace of the analytic velocity gradient</b>, <code>∇·u = tr ∇u</code>, sampled at 96 fixed
+    points through the rendered volume with <code>field.sampleGrad</code>: the same nine numbers that
+    produce the shear, not a finite difference with a step size to argue about. Against the field's own
+    gradient magnitude it reads <code>~1e-16</code> at every charge state and every slider position.</p>
+  <p><b>A zero that cannot move is not evidence</b>, so there is a switch that moves it.
+    <b>+ artist intake</b> adds the layer a VFX artist reaches for first: a radial pull toward the portal
+    centre, <code>u = −k·e^(−ρ²/2w²)·(x−c)</code>. It is a perfectly reasonable-looking suck, it has no
+    curl representation, and its divergence is <code>−k·e^(−ρ²/2w²)(3 − ρ²/w²)</code> — order one. Switch
+    it on and the receipt goes from <code>1e-16</code> to <code>~1e-1</code> relative, ×10¹⁵, while the
+    picture quietly stops working: the funnel loses its through-flow and the particles pile into a ball at
+    the centre instead of passing through. That failure is what the number is for.</p>
+  <p><b>The throat's scales are printed, not eyeballed.</b> <code>columnCore(a, ν) = √(2ν/a)</code> is the
+    radius where the column's Gaussian vorticity has fallen to <code>1/e</code>, and
+    <code>columnPeakVorticity(a, ν, ε) = εa/ν</code> is its value on the axis. The wireframe cylinder is
+    drawn at exactly that radius when <b>scale guides</b> is on, so as you raise the strain you can watch
+    the bright core shrink onto a guide whose number is on screen. Beside it the readout prints the largest <code>|ω|</code> any
+    particle is actually sitting in, and that one is normally <em>larger</em> — the rim tube's own
+    vorticity runs to <code>≈ 12Γ/c² + Γ/R²</code>, several times the throat's peak. Two different
+    structures, two different scales, both from closed forms; the readout does not pretend the
+    throat owns the whole frame, only the axis.</p>
+  <p><b>What this is not.</b> It is a kinematic velocity field: there is <b>no pressure solve, no
+    collision, no boundary condition and no free surface</b>, and the only viscosity anywhere is the
+    <code>ν</code> that <code>strainedColumn</code> needs to define its own core. Particles are massless
+    tracers — they take the field's velocity exactly, with no inertia and no drag. Each frame's field is a
+    valid stationary solution, but <b>sliding along a family of stationary solutions is not a solution of
+    the unsteady equations</b>: a real vortex spun up this fast would not stay Burgers-shaped. The
+    glowing disc and the rim tube are sprites and do not move anything; every particle you see is moving
+    because <code>sampleUW</code> said so.</p>
+  <div class="note" style="margin-top:10px">
+    colour = |ω|, tone-mapped against the frame mean ·
+    <span class="key" style="margin-left:8px"><span class="sw" style="background:#21385c"></span>low</span>
+    <span class="key"><span class="sw" style="background:#4ddbb8"></span>mid</span>
+    <span class="key"><span class="sw" style="background:#f59e40"></span>high</span>
+    <span class="key"><span class="sw" style="background:#ffe0b3"></span>core</span>
+    <span class="key"><span class="sw" style="background:#4a5a66"></span>guides (off by default)</span>
+  </div>
+  <div class="note" id="note">loading three.js…</div>
+</div>
+
+<script src="../dist/helix-noise.global.js"></script>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+  import * as THREE from "three";
+  import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+  const TAU = Math.PI * 2;
+
+  // ---- fixed scene constants ---------------------------------------------
+  const NU = 0.045;          // the throat's viscosity: with `a` it fixes the core radius
+  const ZS = 2.6;            // the column's stagnation plane, parked in front of the portal
+  const RING_CORE = 0.32;    // rim tube thickness, as a fraction of the rim radius
+  const TAU_OPEN = 0.10;     // collapse remaining-time at full charge
+  const Q = 0.6, DSS_B = 0.6, DSS_A = 0.8, LAMBDA = 2.0;
+  const AMP0 = 0.40;         // rms speed of the broadband layer at idle
+  const LEAK_W = 1.8, LEAK_K = 1.4;
+  // The column's strain grows with distance (u ~ a·r), so it is a local-domain object: the render
+  // box is deliberately not much wider than the rim, or the far field simply dominates the frame.
+  const Z_LO = 0.05, Z_HI = 2.35, R_IN = 0.35, R_OUT = 1.95;
+  const Z_KILL = -1.80, R_KILL = 3.0;
+
+  const params = { mode: "auto", rad: 1.20, strain: 1.20, spin: 1.30, rate: 1.0, np: 12000,
+                   leak: false, dss: false, guides: false };
+
+  // Everything the charge scalar c ∈ [0,1] drives. These are the ramps; there is no opacity
+  // animation anywhere in the motion path.
+  const strainAt = (c) => params.strain * (0.12 + 0.88 * c);
+  const spinAt   = (c) => params.spin   * (0.15 + 0.85 * c);
+  const rimAt    = (c) => -(0.25 + 1.15 * c);   // negative Γ ⇒ the rim's jet points into the portal
+  const tauAt    = (c) => Math.pow(TAU_OPEN, c);
+  /** The warp's own amplitude law, straight out of its documentation. */
+  const warpAmp  = (tau) => params.dss ? Math.pow(tau, -DSS_A) : Q * Math.pow(tau, Q - 1);
+
+  // ---- the field ----------------------------------------------------------
+  // A *tileable* base, because `collapse` samples it at (x−c)/L with L shrinking: it walks ever
+  // further out into the base field, and only a periodic one keeps finding structure there.
+  const base = HelixNoise.create({
+    modes: 20, seed: 7, slope: 1.7, coherence: 0.35, churn: 0.9,
+    helicity: 0.6, tileable: true, kmin: 1, kmax: 6, amplitude: AMP0,
+  });
+  function renormBase() { base.set({ amplitude: AMP0 / warpAmp(1) }); }
+  renormBase();
+
+  let field, coreR = 0, peakW = 0, ringCore = 0, surge = 1, tauNow = 1;
+  /**
+   * Rebuilt every frame. The primitives are a handful of numbers each, so this is cheap — and it
+   * is the only honest way to ramp them: `strainedColumn` is a closed form, not a mutable object.
+   *
+   * `collapse` measures time as T − t, so setting T = now + τ and sampling at `now` puts the warp
+   * exactly at the τ the charge asks for, while `freezeProfile: false` lets the base keep churning
+   * (the warp's exact-loop property is given up by that, and is not claimed here).
+   */
+  function rebuild(now, c) {
+    const R = params.rad;
+    ringCore = RING_CORE * R;
+    const a = strainAt(c), eps = spinAt(c);
+    coreR = HelixNoise.columnCore(a, NU);
+    peakW = HelixNoise.columnPeakVorticity(a, NU, eps);
+    tauNow = tauAt(c);
+    surge = warpAmp(tauNow) / warpAmp(1);
+    const o = { T: now + tauNow, center: [0, 0, 0], freezeProfile: false };
+    const detail = params.dss
+      ? HelixNoise.dssCollapse(base, { ...o, lambda: LAMBDA, b: DSS_B, a: DSS_A })
+      : HelixNoise.collapse(base, { ...o, q: Q });
+    field = HelixNoise.compose(
+      HelixNoise.createRing({ radius: R, core: ringCore, circulation: rimAt(c), axis: [0, 0, 1], advect: false }),
+      HelixNoise.strainedColumn({ strain: a, viscosity: NU, circulation: eps, center: [0, 0, ZS], axis: [0, 0, 1] }),
+      detail
+    );
+  }
+  rebuild(0, 0);
+
+  // ---- the deliberately-broken layer --------------------------------------
+  // u = −k·E·(x−c) with E = exp(−ρ²/2w²). Radial, plausible, and not the curl of anything:
+  // ∇·u = −k·E·(3 − ρ²/w²). Both the velocity and its gradient are written out here so the
+  // receipt measures the field that is actually moving the particles, leak included.
+  const leakK = () => LEAK_K * (0.25 + 0.75 * charge);
+  function leakAddVel(x, y, z, out6) {
+    const k = leakK(), e = Math.exp(-(x * x + y * y + z * z) / (2 * LEAK_W * LEAK_W));
+    out6[0] -= k * e * x; out6[1] -= k * e * y; out6[2] -= k * e * z;
+  }
+  function leakAddGrad(x, y, z, g9) {
+    const k = leakK(), w2 = LEAK_W * LEAK_W;
+    const e = Math.exp(-(x * x + y * y + z * z) / (2 * w2));
+    const d = [x, y, z];
+    for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) {
+      g9[3 * j + i] += -k * e * ((i === j ? 1 : 0) - (d[i] * d[j]) / w2);
+    }
+  }
+
+  /** The one function that moves anything. Everything else reads from it. */
+  const uw = [0, 0, 0, 0, 0, 0];
+  function drive(x, y, z, out6, t) {
+    field.sampleUW(x, y, z, out6, t);
+    if (params.leak) leakAddVel(x, y, z, out6);
+    return out6;
+  }
+
+  // ---- the receipt --------------------------------------------------------
+  // 96 fixed low-discrepancy points through the rendered volume. tr ∇u *is* the divergence, so it
+  // is measured from the analytic gradient rather than differenced — there is no step size here.
+  const PROBES = (() => {
+    const p = [], g = 1.220744084605759, a1 = 1 / g, a2 = 1 / (g * g);
+    for (let i = 1; i <= 96; i++) {
+      const u = (0.5 + a1 * i) % 1, v = (0.5 + a2 * i) % 1;
+      const rr = 0.15 + 2.10 * Math.sqrt(u), th = v * TAU;
+      p.push([rr * Math.cos(th), rr * Math.sin(th), -0.8 + 3.2 * ((i * 0.6180339887) % 1)]);
+    }
+    return p;
+  })();
+  const g9 = new Array(9).fill(0);
+  let divRms = 0, gradRms = 0;
+  function measureDivergence(t) {
+    let d2 = 0, f2 = 0;
+    for (const [x, y, z] of PROBES) {
+      field.sampleGrad(x, y, z, g9, t);
+      if (params.leak) leakAddGrad(x, y, z, g9);
+      const tr = g9[0] + g9[4] + g9[8];
+      let fr = 0;
+      for (let i = 0; i < 9; i++) fr += g9[i] * g9[i];
+      d2 += tr * tr; f2 += fr;
+    }
+    divRms = Math.sqrt(d2 / PROBES.length);
+    gradRms = Math.sqrt(f2 / PROBES.length);
+  }
+
+  // ---- particles ----------------------------------------------------------
+  let N = params.np;
+  let pos, posD, col, life;
+  let rs = 20260726;
+  const rnd = () => ((rs = (rs * 1664525 + 1013904223) >>> 0) / 4294967296);
+
+  /**
+   * Emitters are art direction; motion is not. Three populations: the rim's tube (the only place
+   * the ring's flow is non-zero at all), the throat itself (a few core radii wide — seed by volume
+   * alone and the filament the demo is about stays empty), and the intake body in front of the
+   * portal. Once seeded, every particle is moved by `drive` and nothing else.
+   */
+  function spawn(i, fresh) {
+    const R = params.rad, u = rnd();
+    if (u < 0.16) {
+      const th = rnd() * TAU, ph = rnd() * TAU, q = ringCore * Math.sqrt(rnd());
+      const rr = R + q * Math.cos(ph);
+      posD[3 * i] = rr * Math.cos(th); posD[3 * i + 1] = rr * Math.sin(th); posD[3 * i + 2] = q * Math.sin(ph);
+      life[i] = 0.5 + rnd() * 1.8;
+    } else if (u < 0.34) {
+      const th = rnd() * TAU, rr = coreR * (0.10 + 4.2 * rnd() * rnd());
+      posD[3 * i] = rr * Math.cos(th); posD[3 * i + 1] = rr * Math.sin(th);
+      posD[3 * i + 2] = -0.5 + rnd() * (Z_HI + 0.5);
+      life[i] = fresh ? rnd() * 6 : 1.5 + rnd() * 5;
+    } else {
+      // A cone-shaped emitter, wider than the flow's own funnel: the taper you see is mostly the
+      // strain doing its work, but the mouth is placed by hand — emitters are art direction.
+      const th = rnd() * TAU, zz = Z_LO + rnd() * (Z_HI - Z_LO);
+      const rmax = Math.min(R_OUT, R_IN + 0.62 * zz + 0.25 * params.rad);
+      const rr = Math.sqrt(R_IN * R_IN + rnd() * (rmax * rmax - R_IN * R_IN));
+      posD[3 * i] = rr * Math.cos(th); posD[3 * i + 1] = rr * Math.sin(th);
+      posD[3 * i + 2] = zz;
+      life[i] = fresh ? rnd() * 9 : 3 + rnd() * 7;
+    }
+  }
+  // Each particle is drawn as a head sprite plus a streak back along its own velocity, covering the
+  // ground it crossed in the last TRAIL seconds — so streak length *is* local speed, to first order.
+  const TRAIL = 0.035;
+  let seg, segCol;
+  function allocate() {
+    N = params.np;
+    pos = new Float32Array(3 * N); posD = new Float64Array(3 * N);
+    col = new Float32Array(3 * N); life = new Float32Array(N);
+    seg = new Float32Array(6 * N); segCol = new Float32Array(6 * N);
+    for (let i = 0; i < N; i++) spawn(i, true);
+  }
+  allocate();
+
+  // ---- three.js -----------------------------------------------------------
+  const stage = document.getElementById("stage");
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(Math.min(2, devicePixelRatio));
+  stage.appendChild(renderer.domElement);
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x070a0e);
+  scene.fog = new THREE.FogExp2(0x070a0e, 0.055);
+  const camera = new THREE.PerspectiveCamera(46, 16 / 10, 0.1, 100);
+  camera.position.set(5.25, 1.75, 2.15);
+  const controls = new OrbitControls(camera, renderer.domElement);
+  controls.target.set(0, -0.22, 0.75);
+  controls.enableDamping = true; controls.autoRotate = true; controls.autoRotateSpeed = 0.22;
+  controls.minDistance = 2.4; controls.maxDistance = 16;
+
+  /** A soft round sprite, drawn here rather than fetched — the page stays self-contained. */
+  function dotTexture() {
+    const s = 64, cv = document.createElement("canvas");
+    cv.width = cv.height = s;
+    const g = cv.getContext("2d").createRadialGradient(s / 2, s / 2, 0, s / 2, s / 2, s / 2);
+    g.addColorStop(0, "rgba(255,255,255,1)");
+    g.addColorStop(0.35, "rgba(255,255,255,0.55)");
+    g.addColorStop(1, "rgba(255,255,255,0)");
+    const ctx = cv.getContext("2d");
+    ctx.fillStyle = g; ctx.fillRect(0, 0, s, s);
+    return new THREE.CanvasTexture(cv);
+  }
+  const sprite = dotTexture();
+
+  let geo, points, segGeo, streaks;
+  function buildPoints() {
+    if (points) {
+      scene.remove(points, streaks);
+      geo.dispose(); segGeo.dispose();
+      points.material.dispose(); streaks.material.dispose();
+    }
+    geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute("color", new THREE.BufferAttribute(col, 3));
+    points = new THREE.Points(geo, new THREE.PointsMaterial({
+      size: 0.048, map: sprite, vertexColors: true, transparent: true, opacity: 0.7,
+      blending: THREE.AdditiveBlending, depthWrite: false, sizeAttenuation: true,
+    }));
+    segGeo = new THREE.BufferGeometry();
+    segGeo.setAttribute("position", new THREE.BufferAttribute(seg, 3));
+    segGeo.setAttribute("color", new THREE.BufferAttribute(segCol, 3));
+    streaks = new THREE.LineSegments(segGeo, new THREE.LineBasicMaterial({
+      vertexColors: true, transparent: true, opacity: 0.5,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    }));
+    scene.add(streaks, points);
+  }
+  buildPoints();
+
+  // The two sprites. They brighten with the charge and they move nothing.
+  const membraneTex = (() => {
+    const s = 128, cv = document.createElement("canvas");
+    cv.width = cv.height = s;
+    const ctx = cv.getContext("2d");
+    const g = ctx.createRadialGradient(s / 2, s / 2, 0, s / 2, s / 2, s / 2);
+    g.addColorStop(0, "rgba(180,255,244,0.85)");
+    g.addColorStop(0.55, "rgba(47,214,191,0.30)");
+    g.addColorStop(0.88, "rgba(244,161,60,0.20)");
+    g.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.fillStyle = g; ctx.fillRect(0, 0, s, s);
+    return new THREE.CanvasTexture(cv);
+  })();
+  const membrane = new THREE.Mesh(
+    new THREE.CircleGeometry(1, 64),
+    new THREE.MeshBasicMaterial({ map: membraneTex, transparent: true, opacity: 0.2,
+      blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide })
+  );
+  scene.add(membrane);
+  const rimMat = new THREE.MeshBasicMaterial({ color: 0x2fd6bf, transparent: true, opacity: 0.55,
+    blending: THREE.AdditiveBlending, depthWrite: false });
+  let rimMesh = null;
+  function buildRim() {
+    if (rimMesh) { scene.remove(rimMesh); rimMesh.geometry.dispose(); }
+    rimMesh = new THREE.Mesh(new THREE.TorusGeometry(params.rad, 0.016, 8, 108), rimMat);
+    scene.add(rimMesh);
+  }
+  buildRim();
+
+  // Scale guides: the analytic core radius √(2ν/a), and the rim tube outside which the ring is
+  // exactly zero. Both are drawn from the printed numbers, not fitted to the picture.
+  const guideMat = new THREE.MeshBasicMaterial({ color: 0x4a5a66, wireframe: true, transparent: true, opacity: 0.16 });
+  const coreGuide = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 1, 14, 1, true), guideMat);
+  coreGuide.rotation.x = Math.PI / 2;
+  scene.add(coreGuide);
+  let tubeGuide = null;
+  function buildTube() {
+    if (tubeGuide) { scene.remove(tubeGuide); tubeGuide.geometry.dispose(); }
+    tubeGuide = new THREE.Mesh(new THREE.TorusGeometry(params.rad, ringCore, 5, 30), guideMat);
+    scene.add(tubeGuide);
+  }
+  buildTube();
+
+  function resize() {
+    renderer.setSize(stage.clientWidth, stage.clientHeight);
+    camera.aspect = stage.clientWidth / stage.clientHeight;
+    camera.updateProjectionMatrix();
+  }
+  addEventListener("resize", resize); resize();
+
+  // ---- the charge state machine -------------------------------------------
+  // Two numbers: a linear progress that the ramp rate moves, and its smoothed value. `auto` only
+  // decides which end it is heading for and how long it waits at each end.
+  let charge = 0, cLin = 0, target = 0, hold = 0, phase = "idle";
+  const RAMP_UP = 1.6, RAMP_DOWN = 1.1, HOLD_IDLE = 1.5, HOLD_OPEN = 3.4;
+  const smooth = (x) => x * x * (3 - 2 * x);
+
+  function stepCharge(dt) {
+    const prev = cLin;
+    // Note the three-way test: `else` alone would step *down* whenever cLin already equals the
+    // target, leaving the ramp jittering one frame below 1 and the label stuck on "charging".
+    const advance = () => {
+      const span = (target > cLin ? RAMP_UP : RAMP_DOWN) / Math.max(params.rate, 1e-3);
+      const v = dt / span;
+      if (cLin < target) cLin = Math.min(target, cLin + v);
+      else if (cLin > target) cLin = Math.max(target, cLin - v);
+    };
+    if (params.mode === "auto") {
+      // Holding is the whole point of a hold: it must stop the ramp, not run alongside it.
+      if (hold > 0) hold -= dt;
+      else if (target === 1 && cLin >= 1) { target = 0; hold = HOLD_OPEN; }
+      else if (target === 0 && cLin <= 0) { target = 1; hold = HOLD_IDLE; }
+      else advance();
+    } else {
+      target = params.mode === "open" ? 1 : 0;
+      advance();
+    }
+    charge = smooth(cLin);
+    phase = cLin >= 0.999 ? "open" : cLin <= 0.001 ? "idle" : (cLin > prev ? "charging" : "venting");
+  }
+
+  // ---- advection ----------------------------------------------------------
+  // Colour is |ω|, tone-mapped against the frame's *mean* |ω| rather than its maximum: the rim
+  // tube's vorticity is several times fiercer than anything on the axis, so a max-normalised
+  // picture would be black everywhere except a handful of pixels. Both the throat's analytic peak
+  // and the largest value any particle is actually in are printed, so the scaling hides nothing.
+  const STOPS = [[0.13, 0.22, 0.36], [0.15, 0.66, 0.68], [0.30, 0.86, 0.72],
+                 [0.96, 0.62, 0.25], [1.00, 0.88, 0.70]];
+  const SEGS = STOPS.length - 1;
+  function ramp(v, o) {
+    const x = Math.min(0.9999, Math.max(0, v)) * SEGS, i = x | 0, f = x - i;
+    const a = STOPS[i], b = STOPS[i + 1];
+    o[0] = a[0] + (b[0] - a[0]) * f; o[1] = a[1] + (b[1] - a[1]) * f; o[2] = a[2] + (b[2] - a[2]) * f;
+  }
+
+  let t = 0, wMax = 1, wRef = 1, uMax = 0;
+  const rgb = [0, 0, 0];
+  function step(dt) {
+    t += dt;
+    rebuild(t, charge);
+    let wNext = 1e-9, uNext = 0, wSum = 0;
+    const R = params.rad;
+    const inv = 1 / wRef;
+    for (let i = 0; i < N; i++) {
+      const x = posD[3 * i], y = posD[3 * i + 1], z = posD[3 * i + 2];
+      drive(x, y, z, uw, t);
+      const sp = Math.hypot(uw[0], uw[1], uw[2]);
+      const wm = Math.hypot(uw[3], uw[4], uw[5]);
+      if (wm > wNext) wNext = wm;
+      if (sp > uNext) uNext = sp;
+      wSum += wm;
+      posD[3 * i] = x + uw[0] * dt;
+      posD[3 * i + 1] = y + uw[1] * dt;
+      posD[3 * i + 2] = z + uw[2] * dt;
+      life[i] -= dt;
+      let nx = posD[3 * i], ny = posD[3 * i + 1], nz = posD[3 * i + 2];
+      let fresh = false;
+      if (life[i] <= 0 || nz < Z_KILL || nz > ZS - 0.05 || nx * nx + ny * ny > R_KILL * R_KILL || !isFinite(nz)) {
+        spawn(i, false);
+        nx = posD[3 * i]; ny = posD[3 * i + 1]; nz = posD[3 * i + 2];
+        fresh = true;   // no history yet: a streak here would be a line to somewhere it never was
+      }
+      pos[3 * i] = nx; pos[3 * i + 1] = ny; pos[3 * i + 2] = nz;
+      // colour from last frame's scale, so every particle in a frame shares one normalisation
+      ramp(1 - Math.exp(-wm * inv), rgb);
+      const g = Math.min(1, 0.30 + sp * 0.10);
+      const r0 = rgb[0] * g, g0 = rgb[1] * g, b0 = rgb[2] * g;
+      col[3 * i] = r0; col[3 * i + 1] = g0; col[3 * i + 2] = b0;
+      // streak: where this particle was TRAIL seconds ago, to first order
+      const o6 = 6 * i, k = fresh ? 0 : TRAIL;
+      seg[o6] = nx - uw[0] * k; seg[o6 + 1] = ny - uw[1] * k; seg[o6 + 2] = nz - uw[2] * k;
+      seg[o6 + 3] = nx; seg[o6 + 4] = ny; seg[o6 + 5] = nz;
+      segCol[o6] = r0 * 0.12; segCol[o6 + 1] = g0 * 0.12; segCol[o6 + 2] = b0 * 0.12;
+      segCol[o6 + 3] = r0; segCol[o6 + 4] = g0; segCol[o6 + 5] = b0;
+    }
+    // ease the reference so the picture does not flicker as particles cross the rim tube
+    wRef += (3.6 * (wSum / N) - wRef) * 0.1;
+    wMax = wNext; uMax = uNext;
+
+    membrane.scale.setScalar(R * 0.92);
+    membrane.material.opacity = 0.08 + 0.24 * charge;
+    rimMat.opacity = 0.30 + 0.60 * charge;
+    rimMat.color.setRGB(0.18 + 0.78 * charge, 0.84 - 0.18 * charge, 0.75 - 0.5 * charge);
+    coreGuide.visible = tubeGuide.visible = params.guides;
+    coreGuide.scale.set(coreR, 3.4, coreR);
+    coreGuide.position.set(0, 0, 0.35);
+    geo.attributes.position.needsUpdate = true;
+    geo.attributes.color.needsUpdate = true;
+    segGeo.attributes.position.needsUpdate = true;
+    segGeo.attributes.color.needsUpdate = true;
+  }
+
+  // ---- readout ------------------------------------------------------------
+  const ro = document.getElementById("ro"), chargebar = document.getElementById("chargebar");
+  const mag = (v) => {
+    const a = Math.abs(v);
+    return v === 0 ? "0" : a < 0.01 || a >= 1e4 ? v.toExponential(1) : v.toFixed(2);
+  };
+  function readout() {
+    const rel = divRms / (gradRms || 1);
+    const clean = !params.leak;
+    chargebar.style.width = (charge * 100).toFixed(1) + "%";
+    // 100% and "charging" at once would be a rounding artefact, not a state — pin the ends.
+    const pct = phase === "open" ? 100 : phase === "idle" ? 0
+      : Math.min(99, Math.max(1, Math.round(charge * 100)));
+    ro.innerHTML =
+      `<u>${phase.toUpperCase()}</u> <b>${pct}%</b><br>` +
+      `a <b>${strainAt(charge).toFixed(2)}</b> ν <b>${NU}</b> ε <b>${spinAt(charge).toFixed(2)}</b><br>` +
+      `core √(2ν/a) <b>${coreR.toFixed(3)}</b><br>` +
+      `peak ω εa/ν <b>${mag(peakW)}</b> <i>seen ${mag(wMax)}</i><br>` +
+      `rim Γ <b>${rimAt(charge).toFixed(2)}</b> · τ <b>${tauNow.toFixed(3)}</b> surge <b>×${surge.toFixed(2)}</b><br>` +
+      `|u|max <b>${uMax.toFixed(2)}</b> · ‖∇u‖ <b>${mag(gradRms)}</b><br>` +
+      `∇·u <b class="${clean ? "nil" : "bad"}">${mag(divRms)}</b> ÷‖∇u‖ ` +
+      `<b class="${clean ? "nil" : "bad"}">${rel.toExponential(1)}</b> ` +
+      (clean ? `<i>≡ 0</i>` : `<i>← leaking</i>`);
+  }
+
+  // ---- loop ---------------------------------------------------------------
+  let last = 0, probeClock = 1;
+  function frame(now) {
+    const dt = last ? Math.min(0.033, (now - last) * 0.001) : 0.016;
+    last = now;
+    stepCharge(dt);
+    step(dt);
+    probeClock += dt;
+    if (probeClock > 0.1) { probeClock = 0; measureDivergence(t); }
+    readout();
+    controls.update();
+    renderer.render(scene, camera);
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  // ---- controls -----------------------------------------------------------
+  const $ = (id) => document.getElementById(id);
+  function setMode(m) {
+    params.mode = m;
+    for (const [id, k, label] of [["s-auto", "auto", "auto cycle"], ["s-idle", "idle", "idle"], ["s-open", "open", "open"]]) {
+      const on = k === m;
+      $(id).classList.toggle("on", on);
+      $(id).textContent = on ? label + " ✓" : label;
+    }
+    if (m === "auto") hold = 0;
+  }
+  $("s-auto").onclick = () => setMode("auto");
+  $("s-idle").onclick = () => setMode("idle");
+  $("s-open").onclick = () => setMode("open");
+  setMode(params.mode);   // normalise the labels rather than trusting the markup to match
+  $("dss").onclick = () => {
+    params.dss = !params.dss;
+    $("dss").classList.toggle("on", params.dss);
+    $("dss").textContent = params.dss ? "log-periodic ✓" : "log-periodic";
+    renormBase();                       // keep the idle detail level identical between the two laws
+  };
+  $("guides").onclick = () => {
+    params.guides = !params.guides;
+    $("guides").classList.toggle("on", params.guides);
+    $("guides").textContent = params.guides ? "scale guides ✓" : "scale guides";
+  };
+  $("leak").onclick = () => {
+    params.leak = !params.leak;
+    $("leak").classList.toggle("on", params.leak);
+    $("leak").textContent = params.leak ? "+ artist intake ✓ (non-solenoidal)" : "+ artist intake (non-solenoidal)";
+  };
+  $("rad").oninput = (e) => {
+    params.rad = +e.target.value; $("v-rad").textContent = params.rad.toFixed(2);
+    ringCore = RING_CORE * params.rad; buildRim(); buildTube();
+  };
+  $("str").oninput = (e) => { params.strain = +e.target.value; $("v-str").textContent = params.strain.toFixed(2); };
+  $("spn").oninput = (e) => { params.spin = +e.target.value; $("v-spn").textContent = params.spin.toFixed(2); };
+  $("rate").oninput = (e) => { params.rate = +e.target.value; $("v-rate").textContent = params.rate.toFixed(2) + "×"; };
+  $("np").oninput = (e) => {
+    params.np = +e.target.value; $("v-np").textContent = params.np;
+    allocate(); buildPoints(); setNote();
+  };
+
+  if (window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    controls.autoRotate = false;
+    setMode("open");
+  }
+
+  function setNote() {
+    $("note").textContent =
+      `${N.toLocaleString()} particles — one field.sampleUW() each per frame, drawn as a head sprite plus a ` +
+      `${(TRAIL * 1000) | 0} ms streak · plus 96 field.sampleGrad() probes every 100 ms for the divergence ` +
+      `receipt · three layers actually move things: createRing (rim) + strainedColumn (throat) + a 20-mode ` +
+      `broadband field inside collapse · the field is rebuilt from scratch every frame, which is cheap because ` +
+      `the primitives are closed forms · three.js r160`;
+  }
+  setNote();
+</script>
+</body>
+</html>

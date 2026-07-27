@@ -361,6 +361,13 @@ var BoundedFieldImpl = class {
     this._ua = [0, 0, 0, 0, 0, 0];
     this._fa = [0, 0, 0];
     this._fb = [0, 0, 0];
+    /**
+     * The output buffer for `vorticity`/`helicityDensity`, and it must NOT be `_ua`. `sampleUW` takes
+     * six finite-difference samples after filling slots 0..2, and every one of them refills `_ua` with
+     * the *raw base* field at a neighbouring point — so handing `_ua` in as the output leaves the
+     * velocity slots holding someone else's answer by the time they are read.
+     */
+    this._o6 = [0, 0, 0, 0, 0, 0];
     this.base = base;
     this.sdf = sdf;
     this.th = Math.max(opts?.thickness ?? 1, 1e-9);
@@ -448,12 +455,12 @@ var BoundedFieldImpl = class {
     return out6;
   }
   vorticity(x, y, z, t = 0) {
-    const o = this._ua;
+    const o = this._o6;
     this.sampleUW(x, y, z, o, t);
     return [o[3], o[4], o[5]];
   }
   helicityDensity(x, y, z, t = 0) {
-    const o = this._ua;
+    const o = this._o6;
     this.sampleUW(x, y, z, o, t);
     return o[0] * o[3] + o[1] * o[4] + o[2] * o[5];
   }
@@ -2029,28 +2036,36 @@ var C_TWO_SCALE = 1.6;
 function twoScale(base, detail, opts) {
   return new TwoScaleField(base, detail, opts?.detailGain ?? 1);
 }
-var _a6 = [0, 0, 0, 0, 0, 0];
-var _b6 = [0, 0, 0, 0, 0, 0];
-var _t6 = [0, 0, 0, 0, 0, 0];
-var _a9 = [0, 0, 0, 0, 0, 0, 0, 0, 0];
-var _b9 = [0, 0, 0, 0, 0, 0, 0, 0, 0];
-var _g92 = [0, 0, 0, 0, 0, 0, 0, 0, 0];
 var TwoScaleField = class {
   constructor(base, detail, detailGain) {
     this.base = base;
     this.detail = detail;
     this.detailGain = detailGain;
+    /**
+     * Per-instance, every one of them. `twoScale` is a sum node exactly as `compose` is, so a part
+     * that is itself a `TwoScaleField` would otherwise be handed the same arrays its caller is
+     * mid-sum on. Nesting in the `detail` slot is the visible case — the inner call overwrites `_a6`
+     * with its own base, so the outer field's base is dropped and the inner one counted twice — while
+     * nesting in `base` survives only because that slot happens to be scaled in place. A sum whose
+     * correctness depends on which side you nested is not one to leave standing.
+     */
+    this._a6 = [0, 0, 0, 0, 0, 0];
+    this._b6 = [0, 0, 0, 0, 0, 0];
+    this._t6 = [0, 0, 0, 0, 0, 0];
+    this._a9 = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+    this._b9 = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+    this._g9 = [0, 0, 0, 0, 0, 0, 0, 0, 0];
   }
   _sum(pick, x, y, z, out6, t) {
     const g = this.detailGain;
     if (pick === "uw") {
-      this.base.sampleUW(x, y, z, _a6, t);
-      this.detail.sampleUW(x, y, z, _b6, t);
+      this.base.sampleUW(x, y, z, this._a6, t);
+      this.detail.sampleUW(x, y, z, this._b6, t);
     } else {
-      this.base.sampleUA(x, y, z, _a6, t);
-      this.detail.sampleUA(x, y, z, _b6, t);
+      this.base.sampleUA(x, y, z, this._a6, t);
+      this.detail.sampleUA(x, y, z, this._b6, t);
     }
-    for (let i = 0; i < 6; i++) out6[i] = _a6[i] + g * _b6[i];
+    for (let i = 0; i < 6; i++) out6[i] = this._a6[i] + g * this._b6[i];
     return out6;
   }
   sampleUW(x, y, z, out6, t = 0) {
@@ -2062,37 +2077,37 @@ var TwoScaleField = class {
   /** Both scales are analytic, so their weighted sum is too. */
   sampleGrad(x, y, z, out9, t = 0) {
     if (out9.length < 9) throw new Error("helix-noise: sampleGrad needs 9 floats");
-    this.base.sampleGrad(x, y, z, _a9, t);
-    this.detail.sampleGrad(x, y, z, _b9, t);
+    this.base.sampleGrad(x, y, z, this._a9, t);
+    this.detail.sampleGrad(x, y, z, this._b9, t);
     const g = this.detailGain;
-    for (let i = 0; i < 9; i++) out9[i] = _a9[i] + g * _b9[i];
+    for (let i = 0; i < 9; i++) out9[i] = this._a9[i] + g * this._b9[i];
     return out9;
   }
   qCriterion(x, y, z, t = 0) {
-    return qFromGrad(this.sampleGrad(x, y, z, _g92, t));
+    return qFromGrad(this.sampleGrad(x, y, z, this._g9, t));
   }
   lambda2(x, y, z, t = 0) {
-    return lambda2FromGrad(this.sampleGrad(x, y, z, _g92, t));
+    return lambda2FromGrad(this.sampleGrad(x, y, z, this._g9, t));
   }
   stretching(x, y, z, t = 0) {
-    this.sampleUW(x, y, z, _t6, t);
-    return stretchFromGrad(this.sampleGrad(x, y, z, _g92, t), _t6[3], _t6[4], _t6[5]);
+    this.sampleUW(x, y, z, this._t6, t);
+    return stretchFromGrad(this.sampleGrad(x, y, z, this._g9, t), this._t6[3], this._t6[4], this._t6[5]);
   }
   sample(x, y, z, t = 0) {
-    this.sampleUW(x, y, z, _t6, t);
-    return [_t6[0], _t6[1], _t6[2]];
+    this.sampleUW(x, y, z, this._t6, t);
+    return [this._t6[0], this._t6[1], this._t6[2]];
   }
   vorticity(x, y, z, t = 0) {
-    this.sampleUW(x, y, z, _t6, t);
-    return [_t6[3], _t6[4], _t6[5]];
+    this.sampleUW(x, y, z, this._t6, t);
+    return [this._t6[3], this._t6[4], this._t6[5]];
   }
   helicityDensity(x, y, z, t = 0) {
-    this.sampleUW(x, y, z, _t6, t);
-    return _t6[0] * _t6[3] + _t6[1] * _t6[4] + _t6[2] * _t6[5];
+    this.sampleUW(x, y, z, this._t6, t);
+    return this._t6[0] * this._t6[3] + this._t6[1] * this._t6[4] + this._t6[2] * this._t6[5];
   }
   potential(x, y, z, t = 0) {
-    this.sampleUA(x, y, z, _t6, t);
-    return [_t6[3], _t6[4], _t6[5]];
+    this.sampleUA(x, y, z, this._t6, t);
+    return [this._t6[3], this._t6[4], this._t6[5]];
   }
   withBoundary(sdf, opts) {
     return new BoundedFieldImpl(this, sdf, opts);
@@ -2101,11 +2116,11 @@ var TwoScaleField = class {
     const data = new Float32Array(n * n * n * 4);
     let p = 0;
     for (let z = 0; z < n; z++) for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
-      this.sampleUW(x / n * TAU_, y / n * TAU_, z / n * TAU_, _t6, t);
-      data[p] = _t6[0];
-      data[p + 1] = _t6[1];
-      data[p + 2] = _t6[2];
-      data[p + 3] = _t6[0] * _t6[3] + _t6[1] * _t6[4] + _t6[2] * _t6[5];
+      this.sampleUW(x / n * TAU_, y / n * TAU_, z / n * TAU_, this._t6, t);
+      data[p] = this._t6[0];
+      data[p + 1] = this._t6[1];
+      data[p + 2] = this._t6[2];
+      data[p + 3] = this._t6[0] * this._t6[3] + this._t6[1] * this._t6[4] + this._t6[2] * this._t6[5];
       p += 4;
     }
     return { data, size: n, channels: 4 };
@@ -2115,12 +2130,12 @@ var TwoScaleField = class {
     let p = 0;
     for (let z = 0; z < n; z++) for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
       const px = x / n * TAU_, py = y / n * TAU_, pz = z / n * TAU_;
-      this.sampleUA(px, py, pz, _t6, t);
-      data[p] = _t6[3];
-      data[p + 1] = _t6[4];
-      data[p + 2] = _t6[5];
-      this.sampleUW(px, py, pz, _t6, t);
-      data[p + 3] = _t6[0] * _t6[3] + _t6[1] * _t6[4] + _t6[2] * _t6[5];
+      this.sampleUA(px, py, pz, this._t6, t);
+      data[p] = this._t6[3];
+      data[p + 1] = this._t6[4];
+      data[p + 2] = this._t6[5];
+      this.sampleUW(px, py, pz, this._t6, t);
+      data[p + 3] = this._t6[0] * this._t6[3] + this._t6[1] * this._t6[4] + this._t6[2] * this._t6[5];
       p += 4;
     }
     return { data, size: n, channels: 4 };
@@ -2129,11 +2144,11 @@ var TwoScaleField = class {
     const data = new Float32Array(nx * ny * 4);
     let p = 0;
     for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
-      this.sampleUW(i / nx * TAU_, j / ny * TAU_, z, _t6, t);
-      data[p] = _t6[0];
-      data[p + 1] = _t6[1];
-      data[p + 2] = _t6[2];
-      data[p + 3] = _t6[0] * _t6[3] + _t6[1] * _t6[4] + _t6[2] * _t6[5];
+      this.sampleUW(i / nx * TAU_, j / ny * TAU_, z, this._t6, t);
+      data[p] = this._t6[0];
+      data[p + 1] = this._t6[1];
+      data[p + 2] = this._t6[2];
+      data[p + 3] = this._t6[0] * this._t6[3] + this._t6[1] * this._t6[4] + this._t6[2] * this._t6[5];
       p += 4;
     }
     return { data, width: nx, height: ny, channels: 4 };
@@ -2218,79 +2233,89 @@ function norm3(v) {
   const n = Math.hypot(v[0], v[1], v[2]) || 1;
   return [v[0] / n, v[1] / n, v[2] / n];
 }
-var _t62 = [0, 0, 0, 0, 0, 0];
-var _s6 = [0, 0, 0, 0, 0, 0];
-var _g93 = [0, 0, 0, 0, 0, 0, 0, 0, 0];
 var _e9 = [0, 0, 0, 0, 0, 0, 0, 0, 0];
-var _d6 = [0, 0, 0, 0, 0, 0];
 var BaseFlow = class {
+  constructor() {
+    /** Per-instance: these are held across `sampleUW`/`sampleGrad`, which may recurse into parts. */
+    this._t6 = [0, 0, 0, 0, 0, 0];
+    this._s6 = [0, 0, 0, 0, 0, 0];
+    this._g9 = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+  }
   qCriterion(x, y, z, t = 0) {
-    return qFromGrad(this.sampleGrad(x, y, z, _g93, t));
+    return qFromGrad(this.sampleGrad(x, y, z, this._g9, t));
   }
   lambda2(x, y, z, t = 0) {
-    return lambda2FromGrad(this.sampleGrad(x, y, z, _g93, t));
+    return lambda2FromGrad(this.sampleGrad(x, y, z, this._g9, t));
   }
   stretching(x, y, z, t = 0) {
-    this.sampleUW(x, y, z, _s6, t);
-    const wx = _s6[3], wy = _s6[4], wz = _s6[5];
-    return stretchFromGrad(this.sampleGrad(x, y, z, _g93, t), wx, wy, wz);
+    const s = this._s6;
+    this.sampleUW(x, y, z, s, t);
+    const wx = s[3], wy = s[4], wz = s[5];
+    return stretchFromGrad(this.sampleGrad(x, y, z, this._g9, t), wx, wy, wz);
   }
   sample(x, y, z, t = 0) {
-    this.sampleUW(x, y, z, _t62, t);
-    return [_t62[0], _t62[1], _t62[2]];
+    const v = this._t6;
+    this.sampleUW(x, y, z, v, t);
+    return [v[0], v[1], v[2]];
   }
   vorticity(x, y, z, t = 0) {
-    this.sampleUW(x, y, z, _t62, t);
-    return [_t62[3], _t62[4], _t62[5]];
+    const v = this._t6;
+    this.sampleUW(x, y, z, v, t);
+    return [v[3], v[4], v[5]];
   }
   helicityDensity(x, y, z, t = 0) {
-    this.sampleUW(x, y, z, _t62, t);
-    return _t62[0] * _t62[3] + _t62[1] * _t62[4] + _t62[2] * _t62[5];
+    const v = this._t6;
+    this.sampleUW(x, y, z, v, t);
+    return v[0] * v[3] + v[1] * v[4] + v[2] * v[5];
   }
   potential(x, y, z, t = 0) {
-    this.sampleUA(x, y, z, _t62, t);
-    return [_t62[3], _t62[4], _t62[5]];
+    const v = this._t6;
+    this.sampleUA(x, y, z, v, t);
+    return [v[3], v[4], v[5]];
   }
   withBoundary(sdf, opts) {
     return new BoundedFieldImpl(this, sdf, opts);
   }
   bake3D(n, t = 0) {
     const data = new Float32Array(n * n * n * 4);
+    const v = this._t6;
     let p = 0;
     for (let z = 0; z < n; z++) for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
-      this.sampleUW(x / n * TAU2, y / n * TAU2, z / n * TAU2, _t62, t);
-      data[p] = _t62[0];
-      data[p + 1] = _t62[1];
-      data[p + 2] = _t62[2];
-      data[p + 3] = _t62[0] * _t62[3] + _t62[1] * _t62[4] + _t62[2] * _t62[5];
+      this.sampleUW(x / n * TAU2, y / n * TAU2, z / n * TAU2, v, t);
+      data[p] = v[0];
+      data[p + 1] = v[1];
+      data[p + 2] = v[2];
+      data[p + 3] = v[0] * v[3] + v[1] * v[4] + v[2] * v[5];
       p += 4;
     }
     return { data, size: n, channels: 4 };
   }
   bakePotential3D(n, t = 0) {
     const data = new Float32Array(n * n * n * 4);
+    const v = this._t6;
     let p = 0;
     for (let z = 0; z < n; z++) for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
       const px = x / n * TAU2, py = y / n * TAU2, pz = z / n * TAU2;
-      this.sampleUA(px, py, pz, _t62, t);
-      data[p] = _t62[3];
-      data[p + 1] = _t62[4];
-      data[p + 2] = _t62[5];
-      this.sampleUW(px, py, pz, _t62, t);
-      data[p + 3] = _t62[0] * _t62[3] + _t62[1] * _t62[4] + _t62[2] * _t62[5];
+      this.sampleUA(px, py, pz, v, t);
+      data[p] = v[3];
+      data[p + 1] = v[4];
+      data[p + 2] = v[5];
+      this.sampleUW(px, py, pz, v, t);
+      data[p + 3] = v[0] * v[3] + v[1] * v[4] + v[2] * v[5];
       p += 4;
     }
     return { data, size: n, channels: 4 };
   }
   bake2D(nx, ny, z = 0, t = 0) {
     const data = new Float32Array(nx * ny * 4);
+    const v = this._t6;
     let p = 0;
     for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
-      this.sampleUW(i / nx * TAU2, j / ny * TAU2, z, _t62, t);
-      data[p] = _t62[0];
-      data[p + 1] = _t62[1];
-      data[p + 2] = _t62[2];
-      data[p + 3] = _t62[0] * _t62[3] + _t62[1] * _t62[4] + _t62[2] * _t62[5];
+      this.sampleUW(i / nx * TAU2, j / ny * TAU2, z, v, t);
+      data[p] = v[0];
+      data[p + 1] = v[1];
+      data[p + 2] = v[2];
+      data[p + 3] = v[0] * v[3] + v[1] * v[4] + v[2] * v[5];
       p += 4;
     }
     return { data, width: nx, height: ny, channels: 4 };
@@ -2424,13 +2449,24 @@ var ComposedField = class extends BaseFlow {
   constructor(parts) {
     super();
     this.parts = parts;
+    /**
+     * Per-instance, and load-bearing. A part may itself be a `ComposedField` — `collidingRings` and
+     * `counterSwirlColumns` both are — and with a shared buffer the inner call would be handed the
+     * same array as both its output and its scratch, turning `out[i] += p[i]` into `x += x`. The
+     * effect is silent: `compose(compose(A), B)` returns `2A + B`, and `compose(compose(A, B))`
+     * returns `2B` with `A` dropped entirely. Distinct instances suffice because a field cannot
+     * contain itself, so no instance is ever re-entered while its own buffer is live.
+     */
+    this._p6 = [0, 0, 0, 0, 0, 0];
+    this._p9 = [0, 0, 0, 0, 0, 0, 0, 0, 0];
   }
   _sum(pick, x, y, z, out6, t) {
+    const p = this._p6;
     for (let i = 0; i < 6; i++) out6[i] = 0;
     for (const f of this.parts) {
-      if (pick === "uw") f.sampleUW(x, y, z, _s6, t);
-      else f.sampleUA(x, y, z, _s6, t);
-      for (let i = 0; i < 6; i++) out6[i] += _s6[i];
+      if (pick === "uw") f.sampleUW(x, y, z, p, t);
+      else f.sampleUA(x, y, z, p, t);
+      for (let i = 0; i < 6; i++) out6[i] += p[i];
     }
     return out6;
   }
@@ -2443,15 +2479,15 @@ var ComposedField = class extends BaseFlow {
   /** The gradient of a sum is the sum of the gradients — so a composed field stays analytic. */
   sampleGrad(x, y, z, out9, t = 0) {
     if (out9.length < 9) throw new Error("helix-noise: sampleGrad needs 9 floats");
+    const p = this._p9;
     for (let i = 0; i < 9; i++) out9[i] = 0;
     for (const f of this.parts) {
-      f.sampleGrad(x, y, z, _c9, t);
-      for (let i = 0; i < 9; i++) out9[i] += _c9[i];
+      f.sampleGrad(x, y, z, p, t);
+      for (let i = 0; i < 9; i++) out9[i] += p[i];
     }
     return out9;
   }
 };
-var _c9 = [0, 0, 0, 0, 0, 0, 0, 0, 0];
 var FD = 1e-5;
 function axisymmetric(opts = {}) {
   return new AxisymField(opts);
@@ -2490,6 +2526,8 @@ var AxisBase = class extends BaseFlow {
     this.analyticVorticity = false;
     this._c = [0, 0, 0, 0, 0, 0];
     this._fr = [0, 0, 0, 0, 0];
+    /** Per-instance: `dcyl` is virtual and may run a user `AxiProfile` — see the note above `_e9`. */
+    this._d6 = [0, 0, 0, 0, 0, 0];
     const c = center ?? [0, 0, 0];
     const a = norm3(axis ?? [0, 0, 1]);
     this.cx = c[0];
@@ -2509,9 +2547,15 @@ var AxisBase = class extends BaseFlow {
       ry /= r;
       rz /= r;
     } else {
-      rx = Math.abs(this.nz) < 0.9 ? -this.ny : 0;
-      ry = Math.abs(this.nz) < 0.9 ? this.nx : 1;
-      rz = 0;
+      if (Math.abs(this.nz) < 0.9) {
+        rx = -this.ny;
+        ry = this.nx;
+        rz = 0;
+      } else {
+        rx = this.nz;
+        ry = 0;
+        rz = -this.nx;
+      }
       const n = Math.hypot(rx, ry, rz) || 1;
       rx /= n;
       ry /= n;
@@ -2597,7 +2641,8 @@ var AxisBase = class extends BaseFlow {
     const rx = this._fr[2], ry = this._fr[3], rz = this._fr[4];
     this._c.fill(0);
     this.cyl(r, zc, this._c);
-    this.dcyl(r, zc, _d6);
+    const d6 = this._d6;
+    this.dcyl(r, zc, d6);
     _e9[0] = rx;
     _e9[1] = ry;
     _e9[2] = rz;
@@ -2607,7 +2652,7 @@ var AxisBase = class extends BaseFlow {
     _e9[6] = this.nx;
     _e9[7] = this.ny;
     _e9[8] = this.nz;
-    return axisymGrad(this._c[0], this._c[1], r, _d6[0], _d6[1], _d6[2], _d6[3], _d6[4], _d6[5], _e9, out9);
+    return axisymGrad(this._c[0], this._c[1], r, d6[0], d6[1], d6[2], d6[3], d6[4], d6[5], _e9, out9);
   }
   sampleUA(x, y, z, out6, _t = 0) {
     this._frame(x, y, z, this._fr);
@@ -2800,9 +2845,6 @@ function dssCollapse(field, opts = {}) {
     opts.freezeProfile !== false
   );
 }
-var _w6 = [0, 0, 0, 0, 0, 0];
-var _w9 = [0, 0, 0, 0, 0, 0, 0, 0, 0];
-var _g94 = [0, 0, 0, 0, 0, 0, 0, 0, 0];
 var WarpField = class {
   constructor(base, c, L, A, freeze) {
     this.base = base;
@@ -2810,29 +2852,40 @@ var WarpField = class {
     this.L = L;
     this.A = A;
     this.freeze = freeze;
+    /**
+     * Per-instance. A warp inside a warp survives a shared buffer by luck — every write is
+     * `out6[i] = k * _w6[i]` at the same index, so aliasing degenerates into an in-place rescale.
+     * Put a sum node in between, though, and the luck runs out: `compose` accumulates into the outer
+     * warp's buffer across its parts, and an inner warp among those parts overwrites it mid-loop, so
+     * `warp(compose(A, warp(B)))` drops A and counts B twice at two different scales.
+     */
+    this._w6 = [0, 0, 0, 0, 0, 0];
+    this._w9 = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+    this._g9 = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+    this._t6 = [0, 0, 0, 0, 0, 0];
   }
   sampleUW(x, y, z, out6, t = 0) {
     const l = this.L(t), amp = this.A(t);
-    this.base.sampleUW((x - this.c[0]) / l, (y - this.c[1]) / l, (z - this.c[2]) / l, _w6, this.freeze ? 0 : t);
-    out6[0] = amp * _w6[0];
-    out6[1] = amp * _w6[1];
-    out6[2] = amp * _w6[2];
+    this.base.sampleUW((x - this.c[0]) / l, (y - this.c[1]) / l, (z - this.c[2]) / l, this._w6, this.freeze ? 0 : t);
+    out6[0] = amp * this._w6[0];
+    out6[1] = amp * this._w6[1];
+    out6[2] = amp * this._w6[2];
     const wScale = amp / l;
-    out6[3] = wScale * _w6[3];
-    out6[4] = wScale * _w6[4];
-    out6[5] = wScale * _w6[5];
+    out6[3] = wScale * this._w6[3];
+    out6[4] = wScale * this._w6[4];
+    out6[5] = wScale * this._w6[5];
     return out6;
   }
   sampleUA(x, y, z, out6, t = 0) {
     const l = this.L(t), amp = this.A(t);
-    this.base.sampleUA((x - this.c[0]) / l, (y - this.c[1]) / l, (z - this.c[2]) / l, _w6, this.freeze ? 0 : t);
-    out6[0] = amp * _w6[0];
-    out6[1] = amp * _w6[1];
-    out6[2] = amp * _w6[2];
+    this.base.sampleUA((x - this.c[0]) / l, (y - this.c[1]) / l, (z - this.c[2]) / l, this._w6, this.freeze ? 0 : t);
+    out6[0] = amp * this._w6[0];
+    out6[1] = amp * this._w6[1];
+    out6[2] = amp * this._w6[2];
     const aScale = amp * l;
-    out6[3] = aScale * _w6[3];
-    out6[4] = aScale * _w6[4];
-    out6[5] = aScale * _w6[5];
+    out6[3] = aScale * this._w6[3];
+    out6[4] = aScale * this._w6[4];
+    out6[5] = aScale * this._w6[5];
     return out6;
   }
   /**
@@ -2846,37 +2899,37 @@ var WarpField = class {
       (x - this.c[0]) / l,
       (y - this.c[1]) / l,
       (z - this.c[2]) / l,
-      _w9,
+      this._w9,
       this.freeze ? 0 : t
     );
-    for (let i = 0; i < 9; i++) out9[i] = k * _w9[i];
+    for (let i = 0; i < 9; i++) out9[i] = k * this._w9[i];
     return out9;
   }
   qCriterion(x, y, z, t = 0) {
-    return qFromGrad(this.sampleGrad(x, y, z, _g94, t));
+    return qFromGrad(this.sampleGrad(x, y, z, this._g9, t));
   }
   lambda2(x, y, z, t = 0) {
-    return lambda2FromGrad(this.sampleGrad(x, y, z, _g94, t));
+    return lambda2FromGrad(this.sampleGrad(x, y, z, this._g9, t));
   }
   stretching(x, y, z, t = 0) {
-    this.sampleUW(x, y, z, _t63, t);
-    return stretchFromGrad(this.sampleGrad(x, y, z, _g94, t), _t63[3], _t63[4], _t63[5]);
+    this.sampleUW(x, y, z, this._t6, t);
+    return stretchFromGrad(this.sampleGrad(x, y, z, this._g9, t), this._t6[3], this._t6[4], this._t6[5]);
   }
   sample(x, y, z, t = 0) {
-    this.sampleUW(x, y, z, _t63, t);
-    return [_t63[0], _t63[1], _t63[2]];
+    this.sampleUW(x, y, z, this._t6, t);
+    return [this._t6[0], this._t6[1], this._t6[2]];
   }
   vorticity(x, y, z, t = 0) {
-    this.sampleUW(x, y, z, _t63, t);
-    return [_t63[3], _t63[4], _t63[5]];
+    this.sampleUW(x, y, z, this._t6, t);
+    return [this._t6[3], this._t6[4], this._t6[5]];
   }
   helicityDensity(x, y, z, t = 0) {
-    this.sampleUW(x, y, z, _t63, t);
-    return _t63[0] * _t63[3] + _t63[1] * _t63[4] + _t63[2] * _t63[5];
+    this.sampleUW(x, y, z, this._t6, t);
+    return this._t6[0] * this._t6[3] + this._t6[1] * this._t6[4] + this._t6[2] * this._t6[5];
   }
   potential(x, y, z, t = 0) {
-    this.sampleUA(x, y, z, _t63, t);
-    return [_t63[3], _t63[4], _t63[5]];
+    this.sampleUA(x, y, z, this._t6, t);
+    return [this._t6[3], this._t6[4], this._t6[5]];
   }
   withBoundary(sdf, opts) {
     return new BoundedFieldImpl(this, sdf, opts);
@@ -2885,11 +2938,11 @@ var WarpField = class {
     const data = new Float32Array(n * n * n * 4);
     let p = 0;
     for (let z = 0; z < n; z++) for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
-      this.sampleUW(x / n * TAU3, y / n * TAU3, z / n * TAU3, _t63, t);
-      data[p] = _t63[0];
-      data[p + 1] = _t63[1];
-      data[p + 2] = _t63[2];
-      data[p + 3] = _t63[0] * _t63[3] + _t63[1] * _t63[4] + _t63[2] * _t63[5];
+      this.sampleUW(x / n * TAU3, y / n * TAU3, z / n * TAU3, this._t6, t);
+      data[p] = this._t6[0];
+      data[p + 1] = this._t6[1];
+      data[p + 2] = this._t6[2];
+      data[p + 3] = this._t6[0] * this._t6[3] + this._t6[1] * this._t6[4] + this._t6[2] * this._t6[5];
       p += 4;
     }
     return { data, size: n, channels: 4 };
@@ -2899,12 +2952,12 @@ var WarpField = class {
     let p = 0;
     for (let z = 0; z < n; z++) for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
       const px = x / n * TAU3, py = y / n * TAU3, pz = z / n * TAU3;
-      this.sampleUA(px, py, pz, _t63, t);
-      data[p] = _t63[3];
-      data[p + 1] = _t63[4];
-      data[p + 2] = _t63[5];
-      this.sampleUW(px, py, pz, _t63, t);
-      data[p + 3] = _t63[0] * _t63[3] + _t63[1] * _t63[4] + _t63[2] * _t63[5];
+      this.sampleUA(px, py, pz, this._t6, t);
+      data[p] = this._t6[3];
+      data[p + 1] = this._t6[4];
+      data[p + 2] = this._t6[5];
+      this.sampleUW(px, py, pz, this._t6, t);
+      data[p + 3] = this._t6[0] * this._t6[3] + this._t6[1] * this._t6[4] + this._t6[2] * this._t6[5];
       p += 4;
     }
     return { data, size: n, channels: 4 };
@@ -2913,17 +2966,16 @@ var WarpField = class {
     const data = new Float32Array(nx * ny * 4);
     let p = 0;
     for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
-      this.sampleUW(i / nx * TAU3, j / ny * TAU3, z, _t63, t);
-      data[p] = _t63[0];
-      data[p + 1] = _t63[1];
-      data[p + 2] = _t63[2];
-      data[p + 3] = _t63[0] * _t63[3] + _t63[1] * _t63[4] + _t63[2] * _t63[5];
+      this.sampleUW(i / nx * TAU3, j / ny * TAU3, z, this._t6, t);
+      data[p] = this._t6[0];
+      data[p + 1] = this._t6[1];
+      data[p + 2] = this._t6[2];
+      data[p + 3] = this._t6[0] * this._t6[3] + this._t6[1] * this._t6[4] + this._t6[2] * this._t6[5];
       p += 4;
     }
     return { data, width: nx, height: ny, channels: 4 };
   }
 };
-var _t63 = [0, 0, 0, 0, 0, 0];
 
 // src/index.ts
 function create(options) {

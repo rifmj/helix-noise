@@ -3,6 +3,78 @@
 All notable changes to this project are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [1.11.3]
+
+### Fixed
+
+- **`compose` doubled one part and dropped another as soon as it nested.** The per-part accumulation
+  used module-level scratch arrays, so when a part was itself a `ComposedField` the inner call was
+  handed the same array as both its output and its scratch, and `out[i] += scratch[i]` became
+  `x += x`. Measured on two overlapping rings — `A` at `z = −0.15` with `Γ = 1.5`, `B` at
+  `(0.1, 0, 0.15)` with `Γ = −1.1`, both `core = 0.5`, sampled at `(1.05, 0.12, 0.03)` where the hand
+  sum is `6.750743634300225` in x: `compose(compose(A), B)` returned `10.752650072825293`, which is
+  `2A + B`, and `compose(compose(A, B))` returned `5.4976743915503095`, which is `2B` with `A` gone
+  entirely. One level was correct, which is why nothing caught it — and `collidingRings` and
+  `counterSwirlColumns` **are** `compose`, so
+  `compose(collidingRings(...), spectralField)`, the exact idiom the docstring advertises, was
+  silently wrong. Buffers are now per-instance, for `sampleGrad` as well as `sampleUW`/`sampleUA`.
+- **`stretching()` was wrong on any composed field, even unnested.** The same collision seen from the
+  other side: `BaseFlow.stretching` read vorticity into the array `compose` used as per-part scratch,
+  so it saw `ω = 2 × (last part)` rather than `Σ ωᵢ`. Measured on two orthogonal strained columns at
+  `(0.15, 0.12, 0.1)`: `1.6670309861260726` reported against `0.9141621188419307` recomputed from the
+  library's own `vorticity()` and `sampleGrad()` — **82% off**. It hides whenever the last part's
+  vorticity is near-parallel to the total, because the factor 2 cancels in `ξ = ω/|ω|` and `ξ·S·ξ` is
+  even in `ξ`; every previously shipped composition was parallel-axis, so the suite agreed to nine
+  digits with itself while being wrong.
+- **The on-axis frame was not orthonormal for a tilted axis with `|n_z| ≥ 0.9`.** That branch took
+  `e_ρ = ŷ` raw, so `e_ρ·n̂ = n_y ≠ 0` and the `EᵀLE` transform in `axisymGrad` stopped being a
+  similarity transform. Measured for `strainedColumn({strain: 0.9, viscosity: 0.08, circulation: 1.3,
+  axis: [0, 0.28, 0.96]})` sampled exactly on its axis: `tr(sampleGrad) = 0.07056`, which is exactly
+  `a·n_y²` — a divergence conjured out of a field that is divergence-free by construction — against
+  `2.2e-16` off-axis, and `0` for both `[0, 0, 1]` (`n_y = 0`) and `[0, 0.6, 0.8]` (the other branch,
+  always correct). On-axis `Q` read `47.038` against its closed form `51.04265625`. Both branches are
+  now cross products with `n̂`, exactly orthogonal by construction; the `0.9` split only picks the one
+  that is not short. Velocity, vorticity and potential were never affected, which is why every
+  sampler test passed.
+
+- **`twoScale` had the same aliasing, and hid it better.** It is the same sum node `compose` is, with
+  the same shared per-part buffers. Nesting in the **`detail`** slot dropped the outer base and
+  counted the inner one twice; nesting in **`base`** was accidentally correct, because that slot is
+  only ever scaled in place. So a three-scale cascade was right or wrong purely by association order.
+  Measured on three mode sums at `(0.83, 0.41, 0.22)`: `sampleUW` off by `1.456` on a signal of
+  `3.153`, `sampleGrad` by `1.615`, and the corrupted output matched "outer base dropped, inner base
+  doubled" to `4.4e-16`.
+- **A warp around a `compose` around a warp scaled one part twice.** Warp-inside-warp was safe by
+  luck — every write is `out[i] = k·buf[i]` at the same index, so aliasing degenerates into an
+  in-place rescale, which reads as evidence that sharing is fine. A sum node in the middle removes
+  the luck: `compose` accumulates into the outer warp's buffer across its parts while the inner warp
+  overwrites it mid-loop. Measured: `warp(compose(A, warp(B)))` off by `1.105` on a signal of `1.93`,
+  dropping `A` and counting `B` at two different scales.
+- **`helicityDensity()` on a bounded field was wrong today, with no nesting at all.** It handed
+  `sampleUW` the same buffer the bounded-velocity core refills with the *raw base* field at each of
+  its six finite-difference points, so by the time slots 0..2 were read they held a neighbouring
+  point's answer. Measured inside the influence band: `+0.6752` reported against `−1.0301` — the
+  wrong sign, not merely the wrong magnitude. Outside the band the two agree to the FD step, which is
+  why it went unnoticed. `vorticity()` was unaffected only because slots 3..5 are written last.
+
+### Notes
+
+- Five of the six are one defect class — a scratch buffer still live across a call into other code —
+  across four files. The rule is now stated once, normatively, in `spec/PORTING_SPEC.md` §11.6 and
+  echoed in the source: a buffer may be shared only if it is never live across such a call. Two of
+  them were *masked by an accidental success* — `twoScale` nested on the base side, and warp inside
+  warp — which is the more useful lesson: a passing nested test certified a broken implementation,
+  because the aliasing happened to be elementwise-safe in the shape that got tested.
+- The sixth, the frame, is the mirror image at the level of evidence: it is wrong only where the
+  field is frame-independent in `u`, `ω` and `A`, so only the gradient can see it.
+- Each now has a regression test that **fails on the previous release** with exactly the numbers
+  above, and each zero-assertion is paired with the non-zero that stops it passing vacuously — the
+  parts must be live and distinct, the two vorticities must be measurably non-parallel, the on-axis
+  gradient must be non-trivial before its trace vanishing means anything, and the bounded-field test
+  must land inside the influence band, where the defect actually lives.
+- `spec/parity_fixture.json` regenerates **byte-identically**: it contains no §11 primitive, so the
+  third fix, though a behaviour change for tilted-axis fields, moves nothing that is pinned.
+
 ## [1.11.2]
 
 ### Fixed

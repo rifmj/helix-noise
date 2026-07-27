@@ -110,15 +110,23 @@ export function twoScale(base: FlowField, detail: FlowField, opts?: { detailGain
   return new TwoScaleField(base, detail, opts?.detailGain ?? 1);
 }
 
-const _a6: number[] = [0, 0, 0, 0, 0, 0];
-const _b6: number[] = [0, 0, 0, 0, 0, 0];
-const _t6: number[] = [0, 0, 0, 0, 0, 0];
-const _a9: number[] = [0, 0, 0, 0, 0, 0, 0, 0, 0];
-const _b9: number[] = [0, 0, 0, 0, 0, 0, 0, 0, 0];
-const _g9: number[] = [0, 0, 0, 0, 0, 0, 0, 0, 0];
-
 /** Componentwise sum of two flow fields. @internal */
 class TwoScaleField implements FlowField {
+  /**
+   * Per-instance, every one of them. `twoScale` is a sum node exactly as `compose` is, so a part
+   * that is itself a `TwoScaleField` would otherwise be handed the same arrays its caller is
+   * mid-sum on. Nesting in the `detail` slot is the visible case — the inner call overwrites `_a6`
+   * with its own base, so the outer field's base is dropped and the inner one counted twice — while
+   * nesting in `base` survives only because that slot happens to be scaled in place. A sum whose
+   * correctness depends on which side you nested is not one to leave standing.
+   */
+  private readonly _a6: number[] = [0, 0, 0, 0, 0, 0];
+  private readonly _b6: number[] = [0, 0, 0, 0, 0, 0];
+  private readonly _t6: number[] = [0, 0, 0, 0, 0, 0];
+  private readonly _a9: number[] = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+  private readonly _b9: number[] = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+  private readonly _g9: number[] = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+
   constructor(
     readonly base: FlowField,
     readonly detail: FlowField,
@@ -135,13 +143,13 @@ class TwoScaleField implements FlowField {
   ): T {
     const g = this.detailGain;
     if (pick === "uw") {
-      this.base.sampleUW(x, y, z, _a6, t);
-      this.detail.sampleUW(x, y, z, _b6, t);
+      this.base.sampleUW(x, y, z, this._a6, t);
+      this.detail.sampleUW(x, y, z, this._b6, t);
     } else {
-      this.base.sampleUA(x, y, z, _a6, t);
-      this.detail.sampleUA(x, y, z, _b6, t);
+      this.base.sampleUA(x, y, z, this._a6, t);
+      this.detail.sampleUA(x, y, z, this._b6, t);
     }
-    for (let i = 0; i < 6; i++) out6[i] = _a6[i] + g * _b6[i];
+    for (let i = 0; i < 6; i++) out6[i] = this._a6[i] + g * this._b6[i];
     return out6;
   }
 
@@ -156,44 +164,44 @@ class TwoScaleField implements FlowField {
   /** Both scales are analytic, so their weighted sum is too. */
   sampleGrad<T extends Out6>(x: number, y: number, z: number, out9: T, t = 0): T {
     if (out9.length < 9) throw new Error("helix-noise: sampleGrad needs 9 floats");
-    this.base.sampleGrad(x, y, z, _a9, t);
-    this.detail.sampleGrad(x, y, z, _b9, t);
+    this.base.sampleGrad(x, y, z, this._a9, t);
+    this.detail.sampleGrad(x, y, z, this._b9, t);
     const g = this.detailGain;
-    for (let i = 0; i < 9; i++) out9[i] = _a9[i] + g * _b9[i];
+    for (let i = 0; i < 9; i++) out9[i] = this._a9[i] + g * this._b9[i];
     return out9;
   }
 
   qCriterion(x: number, y: number, z: number, t = 0): number {
-    return qFromGrad(this.sampleGrad(x, y, z, _g9, t));
+    return qFromGrad(this.sampleGrad(x, y, z, this._g9, t));
   }
 
   lambda2(x: number, y: number, z: number, t = 0): number {
-    return lambda2FromGrad(this.sampleGrad(x, y, z, _g9, t));
+    return lambda2FromGrad(this.sampleGrad(x, y, z, this._g9, t));
   }
 
   stretching(x: number, y: number, z: number, t = 0): number {
-    this.sampleUW(x, y, z, _t6, t);
-    return stretchFromGrad(this.sampleGrad(x, y, z, _g9, t), _t6[3], _t6[4], _t6[5]);
+    this.sampleUW(x, y, z, this._t6, t);
+    return stretchFromGrad(this.sampleGrad(x, y, z, this._g9, t), this._t6[3], this._t6[4], this._t6[5]);
   }
 
   sample(x: number, y: number, z: number, t = 0): Vec3 {
-    this.sampleUW(x, y, z, _t6, t);
-    return [_t6[0], _t6[1], _t6[2]];
+    this.sampleUW(x, y, z, this._t6, t);
+    return [this._t6[0], this._t6[1], this._t6[2]];
   }
 
   vorticity(x: number, y: number, z: number, t = 0): Vec3 {
-    this.sampleUW(x, y, z, _t6, t);
-    return [_t6[3], _t6[4], _t6[5]];
+    this.sampleUW(x, y, z, this._t6, t);
+    return [this._t6[3], this._t6[4], this._t6[5]];
   }
 
   helicityDensity(x: number, y: number, z: number, t = 0): number {
-    this.sampleUW(x, y, z, _t6, t);
-    return _t6[0] * _t6[3] + _t6[1] * _t6[4] + _t6[2] * _t6[5];
+    this.sampleUW(x, y, z, this._t6, t);
+    return this._t6[0] * this._t6[3] + this._t6[1] * this._t6[4] + this._t6[2] * this._t6[5];
   }
 
   potential(x: number, y: number, z: number, t = 0): Vec3 {
-    this.sampleUA(x, y, z, _t6, t);
-    return [_t6[3], _t6[4], _t6[5]];
+    this.sampleUA(x, y, z, this._t6, t);
+    return [this._t6[3], this._t6[4], this._t6[5]];
   }
 
   withBoundary(sdf: Sdf, opts?: BoundaryOptions): BoundedField {
@@ -204,9 +212,9 @@ class TwoScaleField implements FlowField {
     const data = new Float32Array(n * n * n * 4);
     let p = 0;
     for (let z = 0; z < n; z++) for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
-      this.sampleUW((x / n) * TAU_, (y / n) * TAU_, (z / n) * TAU_, _t6, t);
-      data[p] = _t6[0]; data[p + 1] = _t6[1]; data[p + 2] = _t6[2];
-      data[p + 3] = _t6[0] * _t6[3] + _t6[1] * _t6[4] + _t6[2] * _t6[5];
+      this.sampleUW((x / n) * TAU_, (y / n) * TAU_, (z / n) * TAU_, this._t6, t);
+      data[p] = this._t6[0]; data[p + 1] = this._t6[1]; data[p + 2] = this._t6[2];
+      data[p + 3] = this._t6[0] * this._t6[3] + this._t6[1] * this._t6[4] + this._t6[2] * this._t6[5];
       p += 4;
     }
     return { data, size: n, channels: 4 };
@@ -217,10 +225,10 @@ class TwoScaleField implements FlowField {
     let p = 0;
     for (let z = 0; z < n; z++) for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
       const px = (x / n) * TAU_, py = (y / n) * TAU_, pz = (z / n) * TAU_;
-      this.sampleUA(px, py, pz, _t6, t);
-      data[p] = _t6[3]; data[p + 1] = _t6[4]; data[p + 2] = _t6[5];
-      this.sampleUW(px, py, pz, _t6, t);
-      data[p + 3] = _t6[0] * _t6[3] + _t6[1] * _t6[4] + _t6[2] * _t6[5];
+      this.sampleUA(px, py, pz, this._t6, t);
+      data[p] = this._t6[3]; data[p + 1] = this._t6[4]; data[p + 2] = this._t6[5];
+      this.sampleUW(px, py, pz, this._t6, t);
+      data[p + 3] = this._t6[0] * this._t6[3] + this._t6[1] * this._t6[4] + this._t6[2] * this._t6[5];
       p += 4;
     }
     return { data, size: n, channels: 4 };
@@ -230,9 +238,9 @@ class TwoScaleField implements FlowField {
     const data = new Float32Array(nx * ny * 4);
     let p = 0;
     for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
-      this.sampleUW((i / nx) * TAU_, (j / ny) * TAU_, z, _t6, t);
-      data[p] = _t6[0]; data[p + 1] = _t6[1]; data[p + 2] = _t6[2];
-      data[p + 3] = _t6[0] * _t6[3] + _t6[1] * _t6[4] + _t6[2] * _t6[5];
+      this.sampleUW((i / nx) * TAU_, (j / ny) * TAU_, z, this._t6, t);
+      data[p] = this._t6[0]; data[p + 1] = this._t6[1]; data[p + 2] = this._t6[2];
+      data[p + 3] = this._t6[0] * this._t6[3] + this._t6[1] * this._t6[4] + this._t6[2] * this._t6[5];
       p += 4;
     }
     return { data, width: nx, height: ny, channels: 4 };

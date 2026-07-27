@@ -1,0 +1,548 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Helix Noise — material lab (flow-aligned procedural texture)</title>
+<style>
+  html,body{margin:0;background:#070a0e;color:#cdd6dd;font-family:system-ui,sans-serif}
+  .wrap{max-width:980px;margin:0 auto;padding:22px 16px}
+  h1{font-size:19px;font-weight:600;margin:0 0 6px}
+  h1 code{color:#f4a13c}
+  p{color:#8a97a2;font-size:13.5px;line-height:1.6;margin:0 0 14px}
+  p b{color:#cdd6dd;font-weight:500}
+  code{font-family:ui-monospace,Menlo,monospace;color:#f4a13c;font-size:12.5px}
+  #stage{position:relative;width:100%;max-width:620px;margin:0 auto;aspect-ratio:1/1;
+    border:1px solid rgba(150,180,200,.15);border-radius:10px;overflow:hidden;background:#0a0e13}
+  #view{display:block;width:100%;height:100%;image-rendering:auto}
+  .badge{position:absolute;top:10px;left:12px;font-family:ui-monospace,monospace;font-size:10.5px;
+    letter-spacing:.12em;text-transform:uppercase;color:#93a3b0;background:rgba(7,10,14,.62);
+    border:1px solid rgba(150,180,200,.14);border-radius:6px;padding:4px 8px;pointer-events:none}
+  .ro{position:absolute;top:10px;right:12px;font-family:ui-monospace,monospace;font-size:11px;color:#93a3b0;
+    background:rgba(7,10,14,.62);border:1px solid rgba(150,180,200,.14);border-radius:6px;padding:5px 9px;
+    text-align:right;line-height:1.55;pointer-events:none}
+  .ro b{font-weight:400;color:#2fd6bf}
+  .ro b.off{color:#7b8794}
+  .ro i{font-style:normal;color:#5d6b77}
+  .row{display:flex;flex-wrap:wrap;gap:14px;align-items:center;margin-top:12px;
+    font-family:ui-monospace,monospace;font-size:12px;color:#93a3b0}
+  .row label{display:flex;align-items:center;gap:8px}
+  .row label span{color:#cdd6dd;min-width:34px}
+  input[type=range]{width:104px;accent-color:#2fd6bf}
+  button{font-family:ui-monospace,monospace;font-size:11.5px;color:#cdd6dd;background:#0c1016;
+    border:1px solid rgba(150,180,200,.22);border-radius:7px;padding:6px 11px;cursor:pointer}
+  button:hover{border-color:#38d9d1}
+  button.on{border-color:#38d9d1;color:#fff}
+  .sep{width:1px;align-self:stretch;background:rgba(150,180,200,.16)}
+  .note{margin-top:12px;font-size:12px;color:#5d6b77;font-family:ui-monospace,monospace;line-height:1.6}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Material lab — <code>create({ tileable: true })</code> + <code>sampleMany</code></h1>
+  <p>A flow field is an anisotropic material. Take a periodic pattern — white noise, or a set of
+    straight bands — walk every pixel backwards along the streamlines, and read the pattern where the
+    walk ends: the bands bend into the flow and the noise smears into streaks. That is the whole
+    recipe behind <b>brushed metal, wood grain, damascus, marble and agate</b>, and it is the single
+    most common production use of flow noise. The five presets below differ only in the pattern they
+    start from, how far they advect it, and the colour ramp on the end.</p>
+  <p>Two mixing weights per preset: a <b>line-integral</b> term, which averages the pattern over the
+    whole streamline (this is what turns noise into brushed metal), and a <b>warp</b> term, which
+    takes only the far end of the walk (this is what folds bands into damascus). Everything else on
+    screen is the field: <code>anisotropy</code> γ &lt; 0 makes the streamlines prefer the grain
+    axis, <code>coherence</code> organizes them into big sweeps, <code>slope</code> decides how much
+    fine wander rides on the large ones. <b>Tile 3×3</b> shows the result repeated — because a
+    texture that does not tile is not usable.</p>
+
+  <div id="stage">
+    <canvas id="view"></canvas>
+    <div class="badge" id="badge">helix-noise · tileable field · advected pattern</div>
+    <div class="ro" id="ro">—</div>
+  </div>
+
+  <div class="row">
+    <button class="pre on" data-p="brushed">brushed metal</button>
+    <button class="pre" data-p="wood">wood</button>
+    <button class="pre" data-p="marble">marble</button>
+    <button class="pre" data-p="damascus">damascus</button>
+    <button class="pre" data-p="agate">agate</button>
+  </div>
+  <div class="row">
+    <label>advect <input id="s-steps" type="range" min="0" max="48" step="1"><span id="v-steps"></span></label>
+    <label>grain γ <input id="s-gam" type="range" min="-0.98" max="0.6" step="0.02"><span id="v-gam"></span></label>
+    <label>angle <input id="s-ang" type="range" min="0" max="180" step="1"><span id="v-ang"></span></label>
+    <label>coherence <input id="s-coh" type="range" min="0" max="0.95" step="0.05"><span id="v-coh"></span></label>
+    <label>slope <input id="s-slope" type="range" min="0.6" max="3" step="0.1"><span id="v-slope"></span></label>
+    <label>contrast <input id="s-con" type="range" min="0.4" max="3" step="0.05"><span id="v-con"></span></label>
+    <label>scale <input id="s-scale" type="range" min="0.5" max="2.4" step="0.1"><span id="v-scale"></span></label>
+  </div>
+  <div class="row">
+    <button id="b-tile">tile 3×3</button>
+    <button id="b-tileable" class="on">tileable ✓</button>
+    <div class="sep"></div>
+    <button class="res on" data-r="384">384</button>
+    <button class="res" data-r="512">512</button>
+    <button class="res" data-r="768">768</button>
+    <div class="sep"></div>
+    <button id="b-seed">↻ seed</button>
+    <button id="b-png">⭳ PNG</button>
+  </div>
+
+  <p style="margin-top:16px"><b>The seam number is the one that matters.</b> A texture is only useful
+    if the right edge continues into the left edge, and the readout prints exactly that:
+    <code>max |T(0,y) − T(2π,y)|</code> over 160 points per edge, in units of the texture's own
+    contrast range. With <code>tileable: true</code> the wavevectors are snapped to the integer
+    lattice, so the field is 2π-periodic by construction and the seam reads <b>~1e-14</b> — the
+    residue of evaluating <code>cos(k·x + 2πk)</code> in double precision, nothing else. Turn
+    <b>tileable</b> off and the same parameters rebuild the field off-lattice: the seam jumps to
+    <b>~0.7 of the full contrast range</b>, and the 3×3 view shows the grid of hard edges you would
+    have shipped. Both numbers are measured every render; the live one is teal.</p>
+  <p>The second number backs the word <i>flow-aligned</i> instead of asserting it. It is the ratio of
+    second-order structure functions across and along the local flow direction,
+    <code>⟨(T(p+hê⊥) − T(p))²⟩ / ⟨(T(p+hê) − T(p))²⟩</code> at 2000 random points, with
+    <code>ê</code> the unit in-plane velocity at <code>p</code> and <code>h</code> a 64th of the
+    tile. Printed beside it is the same ratio with <b>advect</b> at 0 — the identical pattern before
+    the flow touched it. Brushed metal, which is pure line-integral, runs about <b>14×</b> against a
+    control of 1.0; the warp presets start from bands that lie <i>across</i> the flow and end up in
+    the 1.3–2.8 range, so the number tells you honestly which presets are combed and which are only
+    folded. Drag <b>advect</b> to 0 and the live value collapses onto the control.</p>
+  <p><b>What this is not.</b> There is no simulation here: no pressure solve, no viscosity, no
+    boundaries, nothing advancing in time. It is a closed-form divergence-free velocity field sampled
+    at points. The walk uses the in-plane components of that 3-D field on a fixed <code>z</code>
+    slice, and <b>a 2-D slice of a 3-D divergence-free field is not itself divergence-free</b> — the
+    streaks converge and thin out in places, which is welcome in a material and would be wrong in a
+    fluid. Integration is first-order explicit Euler at fixed arc length, so the streaks are the
+    shape of the streamlines, not accurate trajectories. And the output is one scalar through a
+    colour ramp: an albedo map, not a shaded render — "brushed metal" here is a gradient, with no
+    lighting model behind it.</p>
+
+  <div class="note" id="note">rendering…</div>
+</div>
+
+<script src="../dist/helix-noise.global.js"></script>
+<script>
+const TAU = Math.PI * 2;
+
+/* ============================ the pattern being advected ============================
+   Everything here must be exactly 2π-periodic, or the field's tileability buys nothing.
+   The stripe wavevector is an integer lattice vector; the value noise wraps on an integer
+   lattice; the fbm octaves are rotated by an *integer* matrix so they stay periodic too.  */
+
+function h2(i, j, seed) {                       // integer hash -> [0,1)
+  let n = (Math.imul(i, 374761393) + Math.imul(j, 668265263) + Math.imul(seed, 1442695041)) | 0;
+  n = (n ^ (n >>> 13)) | 0; n = Math.imul(n, 1274126177) | 0;
+  return ((n ^ (n >>> 16)) >>> 0) / 4294967296;
+}
+/** Value noise with an exact integer period P over the tile — the wrap is an integer modulo. */
+function vnoise(x, y, P, seed) {
+  const f = P / TAU, X = x * f, Y = y * f;
+  const i0 = Math.floor(X), j0 = Math.floor(Y), fx = X - i0, fy = Y - j0;
+  const ux = fx * fx * (3 - 2 * fx), uy = fy * fy * (3 - 2 * fy);
+  const im = ((i0 % P) + P) % P, jm = ((j0 % P) + P) % P;
+  const i1 = (im + 1) % P, j1 = (jm + 1) % P;
+  const a = h2(im, jm, seed), b = h2(i1, jm, seed), c = h2(im, j1, seed), d = h2(i1, j1, seed);
+  const t0 = a + (b - a) * ux, t1 = c + (d - c) * ux;
+  return t0 + (t1 - t0) * uy;
+}
+/**
+ * fbm whose octaves are rotated by M = [[2,1],[-1,2]] — |M| = √5, so it doubles-ish per octave,
+ * and its entries are integers, so every octave is still exactly 2π-periodic. A plain
+ * square-lattice fbm leaves a visible axis-aligned weave once the LIC smears it.
+ */
+function fbm(x, y, P, oct, seed) {
+  let s = 0, amp = 1, tot = 0, ax = x, ay = y;
+  for (let o = 0; o < oct; o++) {
+    s += amp * vnoise(ax, ay, P, seed + o * 7717); tot += amp; amp *= 0.5;
+    const nx = 2 * ax + ay, ny = -ax + 2 * ay; ax = nx; ay = ny;
+  }
+  return s / tot;
+}
+/** The un-advected pattern: integer-lattice bands ⊕ periodic fbm, in ~[0,1]. */
+function base(x, y, c) {
+  const th = c.kx * x + c.ky * y;
+  const st = 0.5 + 0.5 * Math.cos(th) + c.harm * Math.cos(3 * th + 1.7);
+  return c.nMix >= 1 ? fbm(x, y, c.noiseP, c.oct, c.seed)
+       : (1 - c.nMix) * st + (c.nMix > 0 ? c.nMix * fbm(x, y, c.noiseP, c.oct, c.seed) : 0);
+}
+
+/* ================================= the advection walk =================================
+   Lock-step over a whole block of points so each streamline step is one sampleMany call —
+   mode-major and SIMD-batched inside the library, which is what makes a CPU texture this
+   size practical at all. The same function renders pixels and every measured number.       */
+
+function scratchFor(n) {
+  return { pos: new Float64Array(3 * n), vel: new Float64Array(3 * n),
+           acc: new Float64Array(n), end: new Float64Array(n) };
+}
+function walk(xs, ys, n, c, field, out, s) {
+  const pos = s.pos, vel = s.vel, acc = s.acc, end = s.end;
+  acc.fill(0, 0, n);
+  const S = c.steps, h = c.stepLen;
+  const P = pos.subarray(0, 3 * n), V = vel.subarray(0, 3 * n);
+  for (let d = 0; d < 2; d++) {
+    const dir = d === 0 ? 1 : -1;
+    for (let i = 0; i < n; i++) { pos[3 * i] = xs[i]; pos[3 * i + 1] = ys[i]; pos[3 * i + 2] = c.z0; }
+    if (dir === 1) for (let i = 0; i < n; i++) acc[i] += base(xs[i], ys[i], c);
+    for (let st = 1; st <= S; st++) {
+      field.sampleMany(P, V);
+      for (let i = 0; i < n; i++) {
+        // Near-unit-speed steps: a fixed arc length per step, so streak length does not depend on
+        // where the field happens to be fast. The +0.12 (≈12% of the field's RMS speed) is not a
+        // divide-by-zero guard — it makes the step shrink smoothly as the flow stalls. With a hard
+        // normalization the direction flips discontinuously across a stagnation point and the
+        // texture tears along a visible straight crack.
+        const vx = vel[3 * i], vy = vel[3 * i + 1];
+        const k = (h * dir) / (Math.sqrt(vx * vx + vy * vy) + 0.12);
+        pos[3 * i] += vx * k; pos[3 * i + 1] += vy * k;
+        acc[i] += base(pos[3 * i], pos[3 * i + 1], c);
+      }
+    }
+    if (dir === -1) for (let i = 0; i < n; i++) end[i] = base(pos[3 * i], pos[3 * i + 1], c);
+  }
+  const cnt = 2 * S + 1;
+  for (let i = 0; i < n; i++) out[i] = (1 - c.warp) * (acc[i] / cnt) + c.warp * end[i];
+}
+
+/* ==================================== look-up / ramp ==================================== */
+function shape(v, c, lo, hi) {
+  let u = Math.min(1, Math.max(0, (v - lo) / (hi - lo)));
+  if (c.profile === "ridge") u = Math.pow(1 - Math.abs(2 * u - 1), c.sharp);
+  else if (c.profile === "band") { const t = u * c.bands; u = Math.pow(Math.abs(2 * (t - Math.floor(t)) - 1), c.sharp); }
+  return Math.min(1, Math.max(0, 0.5 + (u - 0.5) * c.contrast));
+}
+const hexStops = (s) => s.map(([p, h]) =>
+  [p, parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)]);
+/** 256-entry LUT so the per-pixel path is two array reads, not a ramp search. */
+function makeLUT(stops) {
+  const lut = new Uint8Array(256 * 3);
+  for (let q = 0; q < 256; q++) {
+    const v = q / 255;
+    let i = 0; while (i < stops.length - 2 && v > stops[i + 1][0]) i++;
+    const a = stops[i], b = stops[i + 1];
+    const t = Math.min(1, Math.max(0, (v - a[0]) / (b[0] - a[0] || 1)));
+    lut[3 * q] = a[1] + (b[1] - a[1]) * t;
+    lut[3 * q + 1] = a[2] + (b[2] - a[2]) * t;
+    lut[3 * q + 2] = a[3] + (b[3] - a[3]) * t;
+  }
+  return lut;
+}
+
+/* ======================================= presets =======================================
+   fld  = what goes into HelixNoise.create()      cfg = the pattern + how far it is advected
+   m    = band wavenumber (0 = no bands)          across = bands laid across the grain axis   */
+const PRESETS = {
+  brushed: {
+    label: "brushed metal",
+    fld: { modes: 18, seed: 4, slope: 1.0, coherence: 0.1, kmin: 1, kmax: 1.6, anisotropy: -0.95, ellipticity: 1 },
+    cfg: { steps: 32, stepLen: 0.056, warp: 0, nMix: 1, harm: 0, noiseP: 104, oct: 2, z0: 0,
+           profile: "linear", bands: 1, sharp: 1, contrast: 1.0, seed: 11 },
+    pal: [[0, "#171d22"], [0.35, "#454f57"], [0.7, "#98a5af"], [1, "#e8f1f6"]],
+    m: 0, across: false, theta: 0,
+  },
+  wood: {
+    label: "wood",
+    fld: { modes: 26, seed: 9, slope: 2.0, coherence: 0.5, kmin: 1, kmax: 3, anisotropy: -0.75, ellipticity: 0.6 },
+    cfg: { steps: 10, stepLen: 0.09, warp: 0.85, nMix: 0.22, harm: 0.06, noiseP: 90, oct: 3, z0: 0.4,
+           profile: "band", bands: 3, sharp: 0.8, contrast: 1.35, seed: 21 },
+    pal: [[0, "#2b1608"], [0.3, "#5c3317"], [0.6, "#8d5727"], [0.85, "#b98340"], [1, "#dcab63"]],
+    m: 9, across: true, theta: 90,
+  },
+  marble: {
+    label: "marble",
+    fld: { modes: 34, seed: 2, slope: 1.7, coherence: 0.6, kmin: 1, kmax: 4, anisotropy: -0.2, ellipticity: 1 },
+    cfg: { steps: 14, stepLen: 0.09, warp: 0.8, nMix: 0.18, harm: 0.16, noiseP: 34, oct: 3, z0: 0,
+           profile: "ridge", bands: 1, sharp: 2.4, contrast: 1.25, seed: 5 },
+    pal: [[0, "#f6f8f9"], [0.3, "#e2e8ea"], [0.55, "#a8b5bc"], [0.78, "#5c686f"], [1, "#2b343a"]],
+    m: 3, across: false, theta: 34,
+  },
+  damascus: {
+    label: "damascus",
+    fld: { modes: 22, seed: 7, slope: 2.2, coherence: 0.75, kmin: 1, kmax: 3, anisotropy: -0.55, ellipticity: 1 },
+    cfg: { steps: 14, stepLen: 0.1, warp: 0.75, nMix: 0.1, harm: 0.05, noiseP: 80, oct: 2, z0: 0,
+           profile: "band", bands: 2, sharp: 0.65, contrast: 1.9, seed: 33 },
+    pal: [[0, "#191f24"], [0.35, "#39434a"], [0.6, "#7e8b93"], [0.85, "#b3bfc6"], [1, "#dbe4e9"]],
+    m: 7, across: true, theta: 90,
+  },
+  agate: {
+    label: "agate",
+    fld: { modes: 30, seed: 12, slope: 2.4, coherence: 0.75, kmin: 1, kmax: 1.8, anisotropy: -0.3, ellipticity: 0.4 },
+    cfg: { steps: 18, stepLen: 0.07, warp: 0.9, nMix: 0.1, harm: 0.1, noiseP: 40, oct: 2, z0: 1.1,
+           profile: "band", bands: 2, sharp: 1.2, contrast: 1.0, seed: 77 },
+    pal: [[0, "#4a2a18"], [0.22, "#9c6034"], [0.45, "#e0b075"], [0.62, "#f7ecd6"], [0.8, "#c98b4a"], [1, "#f2e2c4"]],
+    m: 3, across: false, theta: 52,
+  },
+};
+for (const p of Object.values(PRESETS)) p.lut = makeLUT(hexStops(p.pal));
+
+/* ==================================== live parameters ==================================== */
+const P = {
+  preset: "brushed", res: 384, tile: false, tileable: true,
+  steps: 0, gam: 0, ang: 0, coh: 0, slope: 0, contrast: 0, scale: 1, seed: 0,
+};
+let cfg = null;          // the pattern config actually used by walk()
+let fTile = null, fWild = null;   // the same parameters, on and off the integer lattice
+let lo = 0, hi = 1;      // percentile normalization from the pre-pass
+
+function adoptPreset(name) {
+  const p = PRESETS[name];
+  P.preset = name;
+  P.steps = p.cfg.steps; P.gam = p.fld.anisotropy; P.ang = p.theta;
+  P.coh = p.fld.coherence; P.slope = p.fld.slope; P.contrast = p.cfg.contrast;
+  P.scale = 1; P.seed = p.fld.seed;
+  syncControls();
+}
+
+/** Rebuild both fields + the pattern config from P. Called on every parameter change. */
+function build() {
+  const p = PRESETS[P.preset];
+  const th = (P.ang * Math.PI) / 180;
+  const axis = [Math.cos(th), Math.sin(th), 0];
+  const opts = {
+    ...p.fld, anisotropy: P.gam, coherence: P.coh, slope: P.slope, seed: P.seed, axis,
+    kmin: Math.max(0.8, p.fld.kmin * P.scale), kmax: p.fld.kmax * P.scale, churn: 0,
+  };
+  if (!fTile) { fTile = HelixNoise.create({ ...opts, tileable: true }); fWild = HelixNoise.create({ ...opts, tileable: false }); }
+  else { fTile.set({ ...opts, tileable: true }); fWild.set({ ...opts, tileable: false }); }
+
+  // Band wavevector: it must be an integer lattice vector or the tile stops closing, so the
+  // band angle is quantized — at low wavenumbers noticeably so. Same for the noise lattice.
+  const m = p.m > 0 ? Math.max(1, Math.round(p.m * P.scale)) : 0;
+  const a = th + (p.across ? Math.PI / 2 : 0);
+  let kx = 0, ky = 0;
+  if (m > 0) { kx = Math.round(m * Math.cos(a)); ky = Math.round(m * Math.sin(a)); if (!kx && !ky) ky = 1; }
+  cfg = { ...p.cfg, kx, ky, steps: P.steps, contrast: P.contrast,
+          noiseP: Math.max(6, Math.round(p.cfg.noiseP * P.scale)),
+          stepLen: p.cfg.stepLen / P.scale, seed: p.cfg.seed + P.seed };
+}
+
+/* ======================================= receipts ======================================= */
+
+/** max |T(0,y) − T(2π,y)| and |T(x,0) − T(x,2π)|, raw texture units. */
+function seamOf(field, M) {
+  const n = 4 * M;
+  const xs = new Float64Array(n), ys = new Float64Array(n), out = new Float64Array(n);
+  for (let j = 0; j < M; j++) {
+    const v = ((j + 0.5) / M) * TAU;
+    xs[j] = 0; ys[j] = v;
+    xs[M + j] = TAU; ys[M + j] = v;         // the same material point, one period along x
+    xs[2 * M + j] = v; ys[2 * M + j] = 0;
+    xs[3 * M + j] = v; ys[3 * M + j] = TAU; // …and one period along y
+  }
+  walk(xs, ys, n, cfg, field, out, scratchFor(n));
+  let mx = 0;
+  for (let j = 0; j < M; j++) mx = Math.max(mx, Math.abs(out[j] - out[M + j]), Math.abs(out[2 * M + j] - out[3 * M + j]));
+  return mx;
+}
+/** Contrast range of a field's texture, for a pre-pass grid of ng² points. */
+function rangeOf(field, ng) {
+  const n = ng * ng;
+  const xs = new Float64Array(n), ys = new Float64Array(n), v = new Float64Array(n);
+  for (let j = 0; j < ng; j++) for (let i = 0; i < ng; i++) {
+    xs[j * ng + i] = ((i + 0.5) / ng) * TAU; ys[j * ng + i] = ((j + 0.5) / ng) * TAU;
+  }
+  walk(xs, ys, n, cfg, field, v, scratchFor(n));
+  const s = Float64Array.from(v).sort();
+  return [s[Math.floor(0.005 * n)], s[Math.floor(0.995 * n)]];
+}
+/**
+ * ⟨(T(p+hê⊥) − T(p))²⟩ / ⟨(T(p+hê) − T(p))²⟩ with ê the local in-plane flow direction, and the
+ * same ratio for the pattern with the advection switched off (the control).
+ */
+function anisotropyOf(field, M, lag) {
+  let rs = 12345;
+  const rnd = () => ((rs = (Math.imul(rs, 1664525) + 1013904223) >>> 0) / 4294967296);
+  const px = new Float64Array(M), py = new Float64Array(M);
+  const probe = new Float64Array(3 * M), vel = new Float64Array(3 * M);
+  for (let i = 0; i < M; i++) {
+    px[i] = rnd() * TAU; py[i] = rnd() * TAU;
+    probe[3 * i] = px[i]; probe[3 * i + 1] = py[i]; probe[3 * i + 2] = cfg.z0;
+  }
+  field.sampleMany(probe, vel);
+  const ax = new Float64Array(M), ay = new Float64Array(M), bx = new Float64Array(M), by = new Float64Array(M);
+  for (let i = 0; i < M; i++) {
+    const vx = vel[3 * i], vy = vel[3 * i + 1], mg = Math.sqrt(vx * vx + vy * vy) + 1e-12;
+    const ex = vx / mg, ey = vy / mg;
+    ax[i] = px[i] + lag * ex; ay[i] = py[i] + lag * ey;   // along the flow
+    bx[i] = px[i] - lag * ey; by[i] = py[i] + lag * ex;   // across it
+  }
+  const s = scratchFor(M);
+  const t0 = new Float64Array(M), tA = new Float64Array(M), tB = new Float64Array(M);
+  walk(px, py, M, cfg, field, t0, s);
+  walk(ax, ay, M, cfg, field, tA, s);
+  walk(bx, by, M, cfg, field, tB, s);
+  const zero = { ...cfg, steps: 0 };
+  const z0 = new Float64Array(M), zA = new Float64Array(M), zB = new Float64Array(M);
+  walk(px, py, M, zero, field, z0, s);
+  walk(ax, ay, M, zero, field, zA, s);
+  walk(bx, by, M, zero, field, zB, s);
+  let dp = 0, dq = 0, ep = 0, eq = 0;
+  for (let i = 0; i < M; i++) {
+    const a1 = tA[i] - t0[i], b1 = tB[i] - t0[i], a2 = zA[i] - z0[i], b2 = zB[i] - z0[i];
+    dp += a1 * a1; dq += b1 * b1; ep += a2 * a2; eq += b2 * b2;
+  }
+  return { live: dq / Math.max(1e-30, dp), ctrl: eq / Math.max(1e-30, ep) };
+}
+
+/* ======================================= rendering ======================================= */
+const stage = document.getElementById("stage");
+const view = document.getElementById("view");
+const vctx = view.getContext("2d");
+const tex = document.createElement("canvas");           // the texture at native resolution
+const tctx = tex.getContext("2d");
+let img = null, job = null, stats = null;
+
+function paint() {
+  const w = view.width, h = view.height;
+  vctx.fillStyle = "#0a0e13"; vctx.fillRect(0, 0, w, h);
+  if (P.tile) { const s = w / 3; for (let j = 0; j < 3; j++) for (let i = 0; i < 3; i++) vctx.drawImage(tex, i * s, j * s, s, s); }
+  else vctx.drawImage(tex, 0, 0, w, h);
+}
+function sizeView() {
+  const dpr = Math.min(2, devicePixelRatio || 1);
+  const s = Math.round(stage.clientWidth * dpr);
+  if (view.width !== s) { view.width = s; view.height = s; }
+  vctx.imageSmoothingQuality = "high";
+  paint();
+}
+
+/** Kick off a progressive render. `draft` halves the resolution and skips the measurements. */
+function startRender(draft) {
+  build();
+  const res = draft ? Math.min(256, P.res) : P.res;
+  const field = P.tileable ? fTile : fWild;
+  if (tex.width !== res) { tex.width = res; tex.height = res; }
+  img = tctx.createImageData(res, 1);
+  [lo, hi] = rangeOf(field, draft ? 48 : 96);
+  job = { res, y: 0, field, draft, t0: performance.now(), band: 4,
+          xs: new Float64Array(res * 32), ys: new Float64Array(res * 32),
+          out: new Float64Array(res * 32), s: scratchFor(res * 32) };
+}
+
+function renderChunk() {
+  if (!job) return;
+  const { res, field } = job;
+  const t0 = performance.now();
+  // Adapt the band height to hold ~11 ms of work per frame, whatever the step count is.
+  const rows = Math.max(1, Math.min(32, job.band, res - job.y));
+  const n = res * rows;
+  for (let j = 0; j < rows; j++) for (let i = 0; i < res; i++) {
+    job.xs[j * res + i] = (i / res) * TAU; job.ys[j * res + i] = ((job.y + j) / res) * TAU;
+  }
+  walk(job.xs, job.ys, n, cfg, field, job.out, job.s);
+  const lut = PRESETS[P.preset].lut;
+  const line = img.data;
+  for (let j = 0; j < rows; j++) {
+    for (let i = 0; i < res; i++) {
+      const q = Math.min(255, Math.max(0, Math.round(shape(job.out[j * res + i], cfg, lo, hi) * 255)));
+      line[4 * i] = lut[3 * q]; line[4 * i + 1] = lut[3 * q + 1]; line[4 * i + 2] = lut[3 * q + 2]; line[4 * i + 3] = 255;
+    }
+    tctx.putImageData(img, 0, job.y + j);
+  }
+  job.y += rows;
+  const dt = performance.now() - t0;
+  job.band = Math.max(1, Math.min(32, Math.round((job.band * 11) / Math.max(0.4, dt))));
+  paint();
+  if (job.y >= res) {
+    const ms = performance.now() - job.t0;
+    if (!job.draft) {
+      const rTile = P.tileable ? [lo, hi] : rangeOf(fTile, 64);
+      const rWild = P.tileable ? rangeOf(fWild, 64) : [lo, hi];
+      stats = {
+        res, ms,
+        seamTile: seamOf(fTile, 160) / (rTile[1] - rTile[0]),
+        seamWild: seamOf(fWild, 160) / (rWild[1] - rWild[0]),
+        aniso: anisotropyOf(field, 2000, TAU / 64),
+        range: [lo, hi],
+      };
+    } else stats = { res, ms, draft: true };  // a draft is not measured — never show it last frame's numbers
+    job = null;
+    readout();
+  }
+}
+
+const ro = document.getElementById("ro");
+const ex = (v) => (v === 0 ? "0" : v < 1e-3 ? v.toExponential(1) : v.toFixed(3));
+function readout() {
+  if (!stats) { ro.textContent = "—"; return; }
+  const s = stats, on = P.tileable;
+  let h = `${s.res}² · ${(s.ms / 1000).toFixed(2)} s<br>`;
+  if (s.draft) h += `<i>draft — not measured</i>`;
+  else {
+    h += `<i>seam Δ</i> tileable <b class="${on ? "" : "off"}">${ex(s.seamTile)}</b><br>`
+      +  `<i>seam Δ</i> off-lattice <b class="${on ? "off" : ""}">${ex(s.seamWild)}</b><br>`
+      +  `D⊥/D∥ <b>${s.aniso.live.toFixed(2)}×</b><br>`
+      +  `<i>no advect</i> <b class="off">${s.aniso.ctrl.toFixed(2)}×</b>`;
+  }
+  ro.innerHTML = h;
+}
+
+/* ======================================== controls ======================================== */
+const $ = (id) => document.getElementById(id);
+let idle = 0;
+function refresh(draft) {
+  clearTimeout(idle);
+  startRender(draft);
+  if (draft) idle = setTimeout(() => startRender(false), 260);
+}
+function syncControls() {
+  $("s-steps").value = P.steps; $("v-steps").textContent = P.steps;
+  $("s-gam").value = P.gam; $("v-gam").textContent = P.gam.toFixed(2);
+  $("s-ang").value = P.ang; $("v-ang").textContent = P.ang + "°";
+  $("s-coh").value = P.coh; $("v-coh").textContent = Math.round(P.coh * 100) + "%";
+  $("s-slope").value = P.slope; $("v-slope").textContent = P.slope.toFixed(1);
+  $("s-con").value = P.contrast; $("v-con").textContent = P.contrast.toFixed(2);
+  $("s-scale").value = P.scale; $("v-scale").textContent = P.scale.toFixed(1) + "×";
+}
+const bind = (id, key, fmt, scale) => $(id).addEventListener("input", (e) => {
+  P[key] = parseFloat(e.target.value) * (scale || 1);
+  $(id.replace("s-", "v-")).textContent = fmt(P[key]);
+  refresh(true);
+});
+bind("s-steps", "steps", (v) => v);
+bind("s-gam", "gam", (v) => v.toFixed(2));
+bind("s-ang", "ang", (v) => v + "°");
+bind("s-coh", "coh", (v) => Math.round(v * 100) + "%");
+bind("s-slope", "slope", (v) => v.toFixed(1));
+bind("s-con", "contrast", (v) => v.toFixed(2));
+bind("s-scale", "scale", (v) => v.toFixed(1) + "×");
+
+for (const b of document.querySelectorAll(".pre")) b.onclick = () => {
+  for (const o of document.querySelectorAll(".pre")) o.classList.toggle("on", o === b);
+  adoptPreset(b.dataset.p);
+  document.getElementById("badge").textContent = `helix-noise · ${PRESETS[P.preset].label} · advected pattern`;
+  refresh(false);
+};
+for (const b of document.querySelectorAll(".res")) b.onclick = () => {
+  for (const o of document.querySelectorAll(".res")) o.classList.toggle("on", o === b);
+  P.res = +b.dataset.r; refresh(false);
+};
+$("b-tile").onclick = () => { P.tile = !P.tile; $("b-tile").classList.toggle("on", P.tile); paint(); };
+$("b-tileable").onclick = () => {
+  P.tileable = !P.tileable;
+  $("b-tileable").classList.toggle("on", P.tileable);
+  $("b-tileable").textContent = P.tileable ? "tileable ✓" : "tileable ✗";
+  refresh(false);
+};
+$("b-seed").onclick = () => { P.seed = (P.seed * 1103515245 + 12345) & 0x7fffffff; refresh(false); };
+$("b-png").onclick = () => {
+  const a = document.createElement("a");
+  a.download = `helix-${P.preset}-${tex.width}.png`;
+  a.href = tex.toDataURL("image/png");
+  a.click();
+};
+addEventListener("resize", sizeView);
+
+/* ========================================= start ========================================= */
+adoptPreset("brushed");
+sizeView();
+refresh(false);
+(function loop() { renderChunk(); requestAnimationFrame(loop); })();
+
+document.getElementById("note").innerHTML =
+  "one field · 2 × advect streamline steps per pixel, each step one <code>field.sampleMany()</code> over a whole band of " +
+  "pixels · 512² = 262 144 pixels × 30 steps ≈ 16 M field samples for the default brushed preset, rendered progressively " +
+  "in ~11 ms slices so the page stays at 60 fps while it fills · ⭳ PNG exports the texture at its native resolution " +
+  "through <code>canvas.toDataURL</code>, no library involved";
+</script>
+</body>
+</html>

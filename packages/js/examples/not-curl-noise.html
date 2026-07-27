@@ -1,0 +1,490 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Helix Noise — why this is not curl noise (incompressibility, with a control)</title>
+<style>
+  html,body{margin:0;background:#070a0e;color:#cdd6dd;font-family:system-ui,sans-serif}
+  .wrap{max-width:1000px;margin:0 auto;padding:22px 16px}
+  h1{font-size:19px;font-weight:600;margin:0 0 6px}
+  h1 code{color:#f4a13c}
+  p{color:#8a97a2;font-size:13.5px;line-height:1.6;margin:0 0 14px}
+  p b{color:#cdd6dd;font-weight:500}
+  code{font-family:ui-monospace,Menlo,monospace;color:#f4a13c;font-size:12.5px}
+  .split{display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:start}
+  @media (max-width:700px){ .split{grid-template-columns:1fr} }
+  .cell{position:relative;border:1px solid rgba(150,180,200,.15);border-radius:10px;overflow:hidden;background:#070a0e;aspect-ratio:1/1}
+  .cell canvas{display:block;width:100%;height:100%;image-rendering:auto}
+  .cap{position:absolute;left:10px;top:9px;font-family:ui-monospace,monospace;font-size:10px;color:#93a3b0;
+    background:rgba(7,10,14,.62);border:1px solid rgba(150,180,200,.14);border-radius:5px;padding:3px 7px;
+    pointer-events:none;letter-spacing:.05em}
+  .ro{position:absolute;right:10px;top:9px;font-family:ui-monospace,monospace;font-size:10.5px;color:#93a3b0;
+    background:rgba(7,10,14,.62);border:1px solid rgba(150,180,200,.14);border-radius:6px;padding:5px 8px;
+    text-align:right;line-height:1.5;pointer-events:none}
+  .ro b{font-weight:400;color:#2fd6bf}
+  .ro b.warn{color:#f4a13c}
+  .phase{position:absolute;left:0;bottom:0;height:3px;background:rgba(150,180,200,.1);width:100%}
+  .phase i{display:block;height:100%;background:#38d9d1;width:0}
+  .row{display:flex;flex-wrap:wrap;gap:14px;align-items:center;margin-top:12px;font-family:ui-monospace,monospace;font-size:12px;color:#93a3b0}
+  .row label{display:flex;align-items:center;gap:8px}
+  input[type=range]{width:130px}
+  button{font-family:ui-monospace,monospace;font-size:11.5px;color:#cdd6dd;background:#0c1016;
+    border:1px solid rgba(150,180,200,.22);border-radius:7px;padding:6px 11px;cursor:pointer}
+  button:hover{border-color:#38d9d1}
+  button.on{border-color:#38d9d1;color:#fff}
+  .rc{border:1px solid rgba(150,180,200,.16);border-radius:9px;padding:12px 14px;margin-top:14px}
+  .rc h3{margin:0 0 4px;font-size:12px;color:#cdd6dd;font-weight:500}
+  .rc .sub{font-size:12px;color:#6c7d8a;font-family:ui-monospace,monospace;margin-bottom:9px}
+  table{width:100%;border-collapse:collapse;font-size:12.5px}
+  th,td{text-align:left;padding:5px 6px;border-bottom:1px solid rgba(150,180,200,.09);vertical-align:top}
+  th{font-weight:500;color:#6c7d8a;font-size:11px;font-family:ui-monospace,monospace;letter-spacing:.04em}
+  td.q{color:#8a97a2;line-height:1.5}
+  td.q i{font-style:normal;color:#5d6b77}
+  td.n{font-family:ui-monospace,monospace;text-align:right;white-space:nowrap;width:120px}
+  .num{color:#2fd6bf}
+  .num.warn{color:#f4a13c}
+  .note{margin-top:12px;font-size:12px;color:#5d6b77;font-family:ui-monospace,monospace;line-height:1.7}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Why this is not curl noise — <code>create</code>, <code>sampleMany</code>, <code>sampleGrad</code></h1>
+  <p>Curl noise takes a noise potential and finite-differences its curl: divergence-free up to the
+    truncation error of the stencil, on the grid it was differenced on. This field is a
+    <b>closed-form curl</b>, so <code>∇·u = 0</code> is an identity you can measure at any point, at
+    any scale, with no grid anywhere. The consequence stated all over this repo is that advected ink
+    stretches and folds but is only ever <b>rearranged</b> — it never piles up and never tears open a
+    void. That claim is worth nothing without something to compare it to, so the right-hand panel is
+    the same field with its divergence <b>dialled up until you can photograph it</b>.</p>
+  <p>Both panels start from the identical particle set, run the identical RK4 integrator at the
+    identical step, and read their velocities from the identical <code>HelixNoise.create</code>
+    field. The only difference is a post-transform applied to the sampled velocity on the right:
+    <b>scale u<sub>z</sub></b> multiplies the third component by <code>1−s</code>, which makes
+    <code>∇·u = −s·∂<sub>z</sub>u<sub>z</sub></code>; <b>+ ∇φ</b> adds
+    <code>s·∇(cos x + cos y + cos z)</code>, a pure gradient — the exact opposite of a curl. The
+    library cannot produce either one; they are built on this page, on purpose, by breaking the field
+    it does produce. Drag <b>break</b> to 0 and the right column of the table collapses onto the left,
+    which is the point: this is one code path with a knob, not a passing panel and a separate failing one.</p>
+
+  <div class="split">
+    <div class="cell">
+      <canvas id="cvA"></canvas>
+      <div class="cap">helix field · exactly ∇·u = 0</div>
+      <div class="ro" id="roA">—</div>
+      <div class="phase"><i id="phA"></i></div>
+    </div>
+    <div class="cell">
+      <canvas id="cvB"></canvas>
+      <div class="cap" id="capB">control · ∇·u ≠ 0</div>
+      <div class="ro" id="roB">—</div>
+      <div class="phase"><i id="phB"></i></div>
+    </div>
+  </div>
+
+  <div class="row">
+    <label>break s <input id="s" type="range" min="0" max="0.9" step="0.05" value="0.6"><span id="v-s">0.60</span></label>
+    <button id="m-sq" class="on">scale u_z</button>
+    <button id="m-gr">+ ∇φ</button>
+    <button id="zero">break = 0</button>
+    <button id="rerun">restart run</button>
+    <button id="pause">pause</button>
+  </div>
+
+  <div class="rc">
+    <h3>Receipts — measured this frame, both panels, same code</h3>
+    <div class="sub" id="clock">—</div>
+    <table>
+      <thead><tr><th>quantity</th><th style="text-align:right">helix field</th><th style="text-align:right">control</th></tr></thead>
+      <tbody>
+        <tr>
+          <td class="q">max |tr ∇u| ⁄ max ‖∇u‖<sub>F</sub>, from <code>sampleGrad</code>
+            <i>— the trace of the velocity gradient <em>is</em> the divergence. Pass &lt; 1e−12.</i></td>
+          <td class="n" id="r-a1">—</td><td class="n" id="r-b1">—</td>
+        </tr>
+        <tr>
+          <td class="q">max |∇·u| ⁄ max ‖∇u‖<sub>F</sub>, central differences of <code>sample</code>, h = 1e−3
+            <i>— independent of the gradient routine, so it cannot be zero by construction. Its floor is
+            the O(h²) truncation error, not the field. Pass &lt; 1e−5.</i></td>
+          <td class="n" id="r-a2">—</td><td class="n" id="r-b2">—</td>
+        </tr>
+        <tr>
+          <td class="q">worst |det F − 1| over 32 tracers
+            <i>— F is the deformation gradient carried along a trajectory by dF/dt = (∇u)·F, integrated
+            with the same RK4. Volume ratio of a transported blob; det F ≡ 1 exactly when ∇·u ≡ 0.
+            Pass &lt; 1e−4.</i></td>
+          <td class="n" id="r-a3">—</td><td class="n" id="r-b3">—</td>
+        </tr>
+        <tr>
+          <td class="q">particle occupancy σ⁄μ over 8³ cells of the box
+            <i>— <span class="np">—</span> particles seeded uniformly at random; a measure-preserving flow
+            map leaves them uniform forever, so this should sit on the Poisson floor
+            <span id="floor">—</span> and not move.</i></td>
+          <td class="n" id="r-a4">—</td><td class="n" id="r-b4">—</td>
+        </tr>
+        <tr>
+          <td class="q">occupancy max ⁄ min over the same cells
+            <i>— the same statistic in the cruder form: how much fuller is the fullest cell than the
+            emptiest. An empty cell counts as 1, so this saturates rather than dividing by zero.</i></td>
+          <td class="n" id="r-a5">—</td><td class="n" id="r-b5">—</td>
+        </tr>
+        <tr>
+          <td class="q">max |x<sub>control</sub> − x<sub>helix</sub>| over all <span class="np">—</span> particles
+            <i>— how far the two experiments have actually separated. Exactly 0 on a run started at
+            break = 0: same seed, same step, same integrator, one experiment.</i></td>
+          <td class="n" id="r-a6">—</td><td class="n" id="r-b6">—</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p style="margin-top:14px">Two honest notes about the numbers. The <b>finite-difference</b> row is
+    the one that matters most: checking <code>tr ∇u</code> from <code>sampleGrad</code> alone would
+    only prove the gradient routine is internally consistent, so the second row differences
+    <code>sample</code> itself and reads its own truncation floor of about <code>3e−7</code> — six
+    decades below the control, and nowhere near zero. And the <b>det F</b> row is a statistic of the
+    integrator as much as of the field: the residual on the left is RK4 error and floating-point
+    cancellation in a matrix whose entries have already stretched by two to three decades, not a defect
+    in <code>∇·u</code>. Neither number is ever exactly zero, and that is how you can tell they were
+    actually computed.</p>
+
+  <div class="note" id="note">—</div>
+</div>
+
+<script src="../dist/helix-noise.global.js"></script>
+<script>
+(() => {
+  const TAU = Math.PI * 2;
+  const N = 9000;               // particles per panel
+  const RES = 128;              // density-accumulation grid
+  const DT = 0.02;              // fixed simulation step, one per frame — not wall-clock
+  const RUN = 8.0;              // seconds per run, then both panels reset together
+  const DECAY = 0.90;           // trail memory (~10 frames)
+  const NC = 8;                 // occupancy cells per axis
+  const NT = 32;                // det-F tracers per panel
+  const NP = 60;                // divergence probe points per panel
+  const HP = 1e-3;              // central-difference step for the independent divergence check
+  const GN = Math.sqrt(1.5);    // normaliser making |∇φ| unit-RMS, to match the field's unit-RMS speed
+
+  // One field, sampled by both panels. Tileable so the box [0,2π)³ is a torus and wrapping is exact:
+  // that is what makes "uniform stays uniform" a statement about the flow rather than about the walls.
+  const base = HelixNoise.create({
+    modes: 14, seed: 3, slope: 1.5, coherence: 0.35,
+    kmin: 1, kmax: 4, tileable: true, churn: 0,
+  });
+
+  const params = { mode: "squash", s: 0.6, playing: true };
+
+  // ---- the break ---------------------------------------------------------
+  // Applied to the *sampled* velocity, so the control is literally the same numbers as the left panel
+  // until s leaves zero. Both breaks have a closed-form Jacobian, so nothing below needs a finite
+  // difference except the check that is deliberately built out of one.
+  //   squash: u -> (ux, uy, (1-s)uz)          ∇·u = -s ∂z uz
+  //   grad:   u -> u + s ∇(cos x+cos y+cos z)/G   ∇·u = s Δφ/G
+  function breakVel(s, pos, out, n) {
+    if (s === 0) return;
+    if (params.mode === "squash") { for (let i = 0; i < n; i++) out[3 * i + 2] *= 1 - s; return; }
+    for (let i = 0; i < n; i++) {
+      out[3 * i]     += (s * -Math.sin(pos[3 * i]))     / GN;
+      out[3 * i + 1] += (s * -Math.sin(pos[3 * i + 1])) / GN;
+      out[3 * i + 2] += (s * -Math.sin(pos[3 * i + 2])) / GN;
+    }
+  }
+  const _v3 = [0, 0, 0];
+  function vel1(s, x, y, z) {
+    const v = base.sample(x, y, z, 0);
+    _v3[0] = v[0]; _v3[1] = v[1]; _v3[2] = v[2];
+    if (s !== 0) {
+      if (params.mode === "squash") _v3[2] *= 1 - s;
+      else { _v3[0] += (s * -Math.sin(x)) / GN; _v3[1] += (s * -Math.sin(y)) / GN; _v3[2] += (s * -Math.sin(z)) / GN; }
+    }
+    return _v3;
+  }
+  /** out9[3m+n] = ∂u_n/∂x_m for the broken field, exactly. */
+  function grad9(s, x, y, z, g) {
+    base.sampleGrad(x, y, z, g, 0);
+    if (s === 0) return g;
+    if (params.mode === "squash") { g[2] *= 1 - s; g[5] *= 1 - s; g[8] *= 1 - s; }
+    else { g[0] += (s * -Math.cos(x)) / GN; g[4] += (s * -Math.cos(y)) / GN; g[8] += (s * -Math.cos(z)) / GN; }
+    return g;
+  }
+
+  // ---- panels ------------------------------------------------------------
+  const TEAL = [47, 214, 191], AMBER = [244, 161, 60];
+
+  function makePanel(id) {
+    const cv = document.getElementById(id);
+    cv.width = RES; cv.height = RES;
+    const ctx = cv.getContext("2d", { alpha: false });
+    return {
+      cv, ctx, img: ctx.createImageData(RES, RES),
+      s: 0,
+      p: new Float64Array(N * 3), dye: new Uint8Array(N),
+      k1: new Float64Array(N * 3), k2: new Float64Array(N * 3),
+      k3: new Float64Array(N * 3), k4: new Float64Array(N * 3), tmp: new Float64Array(N * 3),
+      cnt: new Float64Array(RES * RES), cr: new Float64Array(RES * RES),
+      cg: new Float64Array(RES * RES), cb: new Float64Array(RES * RES),
+      tx: new Float64Array(NT * 3), F: new Float64Array(NT * 9),
+      stat: { anal: 0, fd: 0, det: 0, sig: 0, ratio: 0 },
+    };
+  }
+  const A = makePanel("cvA"), B = makePanel("cvB");
+
+  /** Both panels get byte-identical initial conditions from the same generator. */
+  function seedPanel(pn) {
+    let rs = 424242;
+    const rnd = () => ((rs = (rs * 1664525 + 1013904223) >>> 0) / 4294967296);
+    for (let i = 0; i < N; i++) {
+      const x = rnd() * TAU, y = rnd() * TAU, z = rnd() * TAU;
+      pn.p[3 * i] = x; pn.p[3 * i + 1] = y; pn.p[3 * i + 2] = z;
+      pn.dye[i] = ((x / TAU * 4) | 0) % 2;              // four vertical bands of ink
+    }
+    for (let m = 0; m < NT; m++) {
+      pn.tx[3 * m] = rnd() * TAU; pn.tx[3 * m + 1] = rnd() * TAU; pn.tx[3 * m + 2] = rnd() * TAU;
+      for (let c = 0; c < 9; c++) pn.F[9 * m + c] = c % 4 === 0 ? 1 : 0;
+    }
+    pn.cnt.fill(0); pn.cr.fill(0); pn.cg.fill(0); pn.cb.fill(0);
+    splat(pn, 1 / (1 - DECAY));   // charge the trail buffer to its steady state, so t = 0 is not a sparse frame
+  }
+
+  // ---- integration -------------------------------------------------------
+  function velocity(pn, pos, out) {
+    base.sampleMany(pos, out, 0);
+    breakVel(pn.s, pos, out, N);
+  }
+  function stepParticles(pn) {
+    const { p, k1, k2, k3, k4, tmp } = pn;
+    velocity(pn, p, k1);
+    for (let i = 0; i < N * 3; i++) tmp[i] = p[i] + (DT / 2) * k1[i];
+    velocity(pn, tmp, k2);
+    for (let i = 0; i < N * 3; i++) tmp[i] = p[i] + (DT / 2) * k2[i];
+    velocity(pn, tmp, k3);
+    for (let i = 0; i < N * 3; i++) tmp[i] = p[i] + DT * k3[i];
+    velocity(pn, tmp, k4);
+    for (let i = 0; i < N * 3; i++) p[i] += (DT / 6) * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i]);
+  }
+
+  // Tracers carry a 3×3 deformation gradient alongside the trajectory: dF/dt = (∇u)F, same RK4.
+  // det F is the volume ratio of an infinitesimal blob, and Liouville says it stays exactly 1
+  // while ∇·u = 0 — whatever the trajectory does, however chaotic it is.
+  const g9 = new Float64Array(9);
+  /** One RK4 stage: velocity at (x,y,z) and dF/dt for the F handed in. Returns [u(3), dF(9)]. */
+  function tracerDeriv(s, x, y, z, F, out12) {
+    const u = vel1(s, x, y, z);
+    out12[0] = u[0]; out12[1] = u[1]; out12[2] = u[2];
+    grad9(s, x, y, z, g9);
+    for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) {
+      let acc = 0;
+      for (let k = 0; k < 3; k++) acc += g9[k * 3 + r] * F[k * 3 + c];
+      out12[3 + r * 3 + c] = acc;
+    }
+    return out12;
+  }
+  const kk = [new Float64Array(12), new Float64Array(12), new Float64Array(12), new Float64Array(12)];
+  const Ftmp = new Float64Array(9);
+  function stepTracers(pn) {
+    let worst = 0;
+    for (let m = 0; m < NT; m++) {
+      const o3 = 3 * m, o9 = 9 * m;
+      const x = pn.tx[o3], y = pn.tx[o3 + 1], z = pn.tx[o3 + 2];
+      const F = pn.F;
+      tracerDeriv(pn.s, x, y, z, F.subarray(o9, o9 + 9), kk[0]);
+      for (let st = 1; st < 4; st++) {
+        const h = st === 3 ? DT : DT / 2, k = kk[st - 1];
+        for (let c = 0; c < 9; c++) Ftmp[c] = F[o9 + c] + h * k[3 + c];
+        tracerDeriv(pn.s, x + h * k[0], y + h * k[1], z + h * k[2], Ftmp, kk[st]);
+      }
+      for (let c = 0; c < 3; c++) pn.tx[o3 + c] += (DT / 6) * (kk[0][c] + 2 * kk[1][c] + 2 * kk[2][c] + kk[3][c]);
+      for (let c = 0; c < 9; c++) F[o9 + c] += (DT / 6) * (kk[0][3 + c] + 2 * kk[1][3 + c] + 2 * kk[2][3 + c] + kk[3][3 + c]);
+      const f = F.subarray(o9, o9 + 9);
+      const det = f[0] * (f[4] * f[8] - f[5] * f[7]) - f[1] * (f[3] * f[8] - f[5] * f[6]) + f[2] * (f[3] * f[7] - f[4] * f[6]);
+      worst = Math.max(worst, Math.abs(det - 1));
+    }
+    pn.stat.det = worst;
+  }
+
+  // ---- receipts ----------------------------------------------------------
+  /** Fixed probe lattice, recomputed every frame: same points, so the number is reproducible. */
+  const probes = [];
+  for (let i = 0; i < NP; i++) probes.push([Math.sin(i * 1.7) * 3.1 + 3.1, Math.cos(i * 2.3) * 3.1 + 3.1, Math.sin(i * 0.9) * 3.1 + 3.1]);
+
+  function divergence(pn) {
+    let anal = 0, fd = 0, scale = 1e-30;
+    for (let i = 0; i < NP; i++) {
+      const x = probes[i][0], y = probes[i][1], z = probes[i][2];
+      grad9(pn.s, x, y, z, g9);
+      anal = Math.max(anal, Math.abs(g9[0] + g9[4] + g9[8]));
+      let fro = 0; for (let c = 0; c < 9; c++) fro += g9[c] * g9[c];
+      scale = Math.max(scale, Math.sqrt(fro));
+      // Independent of sampleGrad: this differences `sample` itself, so a gradient routine that
+      // forced its own trace to zero could not hide here.
+      let d = 0;
+      d += (vel1(pn.s, x + HP, y, z)[0] - vel1(pn.s, x - HP, y, z)[0]) / (2 * HP);
+      d += (vel1(pn.s, x, y + HP, z)[1] - vel1(pn.s, x, y - HP, z)[1]) / (2 * HP);
+      d += (vel1(pn.s, x, y, z + HP)[2] - vel1(pn.s, x, y, z - HP)[2]) / (2 * HP);
+      fd = Math.max(fd, Math.abs(d));
+    }
+    pn.stat.anal = anal / scale;
+    pn.stat.fd = fd / scale;
+  }
+
+  const cells = new Float64Array(NC * NC * NC);
+  const MU = N / (NC * NC * NC), FLOOR = 1 / Math.sqrt(MU);
+  function occupancy(pn) {
+    cells.fill(0);
+    const w = (v) => { const a = ((v % TAU) + TAU) % TAU; return Math.min(NC - 1, (a / TAU * NC) | 0); };
+    for (let i = 0; i < N; i++) cells[w(pn.p[3 * i]) * NC * NC + w(pn.p[3 * i + 1]) * NC + w(pn.p[3 * i + 2])]++;
+    let v2 = 0, mn = Infinity, mx = 0;
+    for (let c = 0; c < cells.length; c++) {
+      const d = cells[c] - MU; v2 += d * d;
+      if (cells[c] < mn) mn = cells[c];
+      if (cells[c] > mx) mx = cells[c];
+    }
+    pn.stat.sig = Math.sqrt(v2 / cells.length) / MU;
+    pn.stat.ratio = mx / Math.max(mn, 1);
+  }
+
+  function panelGap() {
+    let m = 0;
+    for (let i = 0; i < N * 3; i++) { const d = Math.abs(B.p[i] - A.p[i]); if (d > m) m = d; }
+    return m;
+  }
+
+  // ---- rendering ---------------------------------------------------------
+  // Projected particle density along z with an exponential trail. The brightness scale is FIXED:
+  // renormalising per frame would hide exactly the thing being measured.
+  function splat(pn, weight) {
+    const w0 = weight === undefined ? 1 : weight;
+    if (weight === undefined) {
+      for (let o = 0; o < RES * RES; o++) { pn.cnt[o] *= DECAY; pn.cr[o] *= DECAY; pn.cg[o] *= DECAY; pn.cb[o] *= DECAY; }
+    }
+    for (let i = 0; i < N; i++) {
+      const fx = ((((pn.p[3 * i] % TAU) + TAU) % TAU) / TAU) * RES;
+      const fy = ((((pn.p[3 * i + 1] % TAU) + TAU) % TAU) / TAU) * RES;
+      const x0 = Math.floor(fx), y0 = Math.floor(fy), ax = fx - x0, ay = fy - y0;
+      const col = pn.dye[i] ? TEAL : AMBER;
+      for (let dy = 0; dy < 2; dy++) for (let dx = 0; dx < 2; dx++) {
+        const w = w0 * (dx ? ax : 1 - ax) * (dy ? ay : 1 - ay);
+        const o = ((((y0 + dy) % RES) + RES) % RES) * RES + ((((x0 + dx) % RES) + RES) % RES);
+        pn.cnt[o] += w; pn.cr[o] += w * col[0]; pn.cg[o] += w * col[1]; pn.cb[o] += w * col[2];
+      }
+    }
+  }
+  const PIXMU = (N / (RES * RES)) / (1 - DECAY);
+  function draw(pn) {
+    const d = pn.img.data;
+    for (let o = 0; o < RES * RES; o++) {
+      const b = Math.min(1, Math.pow(pn.cnt[o] / (PIXMU * 1.9), 0.8));
+      const inv = pn.cnt[o] > 1e-9 ? 1 / pn.cnt[o] : 0;
+      const q = o * 4;
+      d[q] = Math.min(255, 7 + pn.cr[o] * inv * b);
+      d[q + 1] = Math.min(255, 10 + pn.cg[o] * inv * b);
+      d[q + 2] = Math.min(255, 14 + pn.cb[o] * inv * b);
+      d[q + 3] = 255;
+    }
+    pn.ctx.putImageData(pn.img, 0, 0);
+  }
+
+  // ---- readout -----------------------------------------------------------
+  const $ = (id) => document.getElementById(id);
+  const mag = (v) => (v === 0 ? "0" : Math.abs(v) < 0.01 || Math.abs(v) >= 1e4 ? v.toExponential(1) : v.toFixed(3));
+  const cell = (id, v, pass) => {
+    $(id).innerHTML = '<span class="num' + (pass ? "" : " warn") + '">' + mag(v) + "</span>";
+  };
+  function report(t, frame) {
+    const pass = (pn) => ({
+      a1: pn.stat.anal < 1e-12, a2: pn.stat.fd < 1e-5,
+      a3: pn.stat.det < 1e-4, a4: pn.stat.sig < FLOOR * 1.5, a5: pn.stat.ratio < 15,
+    });
+    const pa = pass(A), pb = pass(B), gap = panelGap();
+    cell("r-a1", A.stat.anal, pa.a1); cell("r-b1", B.stat.anal, pb.a1);
+    cell("r-a2", A.stat.fd, pa.a2);   cell("r-b2", B.stat.fd, pb.a2);
+    cell("r-a3", A.stat.det, pa.a3);  cell("r-b3", B.stat.det, pb.a3);
+    cell("r-a4", A.stat.sig, pa.a4);  cell("r-b4", B.stat.sig, pb.a4);
+    cell("r-a5", A.stat.ratio, pa.a5); cell("r-b5", B.stat.ratio, pb.a5);
+    cell("r-a6", 0, true); cell("r-b6", gap, gap === 0);
+    $("clock").textContent =
+      "run t = " + t.toFixed(2) + " s of " + RUN.toFixed(1) + " · repaint " + frame +
+      " · " + NP + " probe points × 2 panels · " + NT + " det-F tracers × 2 · " +
+      N.toLocaleString() + " particles × 2 · break s = " + params.s.toFixed(2) +
+      " · " + (params.mode === "squash" ? "u_z ×" + (1 - params.s).toFixed(2) : "+" + params.s.toFixed(2) + "·∇φ");
+    const line = (pn) =>
+      "|∇·u| <b" + (pn.stat.anal < 1e-12 ? "" : ' class="warn"') + ">" + mag(pn.stat.anal) + "</b><br>" +
+      "|detF−1| <b" + (pn.stat.det < 1e-4 ? "" : ' class="warn"') + ">" + mag(pn.stat.det) + "</b><br>" +
+      "σ/μ <b" + (pn.stat.sig < FLOOR * 1.5 ? "" : ' class="warn"') + ">" + pn.stat.sig.toFixed(3) + "</b>";
+    $("roA").innerHTML = line(A);
+    $("roB").innerHTML = line(B);
+    const ph = (t / RUN * 100) + "%";
+    $("phA").style.width = ph; $("phB").style.width = ph;
+  }
+
+  // ---- loop --------------------------------------------------------------
+  let t = 0, frame = 0;
+  function reset() {
+    A.s = 0; B.s = params.s;
+    seedPanel(A); seedPanel(B);
+    t = 0;
+    draw(A); draw(B);
+    divergence(A); divergence(B);
+    occupancy(A); occupancy(B);
+    report(t, frame);
+  }
+
+  function tick() {
+    if (params.playing) {
+      if (t >= RUN - 1e-9) reset();
+      stepParticles(A); stepParticles(B);
+      stepTracers(A); stepTracers(B);
+      splat(A); splat(B);
+      t += DT;
+    }
+    draw(A); draw(B);
+    divergence(A); divergence(B);   // recomputed every frame, so a frozen number means a frozen page
+    occupancy(A); occupancy(B);
+    frame++;                        // counts repaints, not steps: it keeps ticking while paused
+    report(t, frame);
+    requestAnimationFrame(tick);
+  }
+
+  // ---- controls ----------------------------------------------------------
+  // `input` retunes the control mid-run so the divergence rows move under the cursor; `change`
+  // (pointer release) restarts, so the transported rows are measured over a clean horizon.
+  $("s").oninput = (e) => { params.s = +e.target.value; $("v-s").textContent = params.s.toFixed(2); B.s = params.s; capB(); };
+  $("s").onchange = reset;
+  $("zero").onclick = () => { params.s = 0; $("s").value = 0; $("v-s").textContent = "0.00"; B.s = 0; capB(); reset(); };
+  $("rerun").onclick = reset;
+  $("pause").onclick = () => { params.playing = !params.playing; $("pause").textContent = params.playing ? "pause" : "play"; };
+  const setMode = (m) => {
+    params.mode = m;
+    $("m-sq").classList.toggle("on", m === "squash");
+    $("m-gr").classList.toggle("on", m === "grad");
+    capB(); reset();
+  };
+  $("m-sq").onclick = () => setMode("squash");
+  $("m-gr").onclick = () => setMode("grad");
+  function capB() {
+    $("capB").textContent = params.s === 0
+      ? "control · break = 0 — identical to the left"
+      : params.mode === "squash"
+        ? "control · u_z × " + (1 - params.s).toFixed(2) + " → ∇·u = −" + params.s.toFixed(2) + " ∂z uz"
+        : "control · + " + params.s.toFixed(2) + "·∇φ → ∇·u = " + params.s.toFixed(2) + " Δφ/√1.5";
+  }
+
+  $("floor").textContent = FLOOR.toFixed(3);
+  for (const e of document.querySelectorAll(".np")) e.textContent = N.toLocaleString();
+  capB();
+  reset();
+  $("note").innerHTML =
+    N.toLocaleString() + " particles per panel on the torus [0,2π)³, RK4 at a fixed dt = " + DT.toFixed(3) +
+    " (one step per frame — simulation time, not wall clock, so the numbers reproduce on a slow machine) · " +
+    "velocities from <code>field.sampleMany()</code>, gradients from <code>field.sampleGrad()</code>, " +
+    "no finite differences anywhere except the check that is built out of one · " +
+    "the picture is projected particle density along z on a " + RES + "² grid with an exponential trail " +
+    "(≈" + Math.round(1 / (1 - DECAY)) + " frames) and a fixed brightness scale · " +
+    "ink is dyed by starting band, so folding is visible while brightness still means density · " +
+    "the run restarts every " + RUN.toFixed(1) + " s";
+  requestAnimationFrame(tick);
+})();
+</script>
+</body>
+</html>

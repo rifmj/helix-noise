@@ -1,0 +1,641 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Helix Noise — a strained vortex column meets an obstacle</title>
+<style>
+  html,body{margin:0;background:#070a0e;color:#cdd6dd;font-family:system-ui,sans-serif}
+  .wrap{max-width:980px;margin:0 auto;padding:22px 16px}
+  h1{font-size:19px;font-weight:600;margin:0 0 6px}
+  h1 code{color:#f4a13c}
+  p{color:#8a97a2;font-size:13.5px;line-height:1.6;margin:0 0 14px}
+  p b{color:#cdd6dd;font-weight:500}
+  code{font-family:ui-monospace,Menlo,monospace;color:#f4a13c;font-size:12.5px}
+  #stage{position:relative;width:100%;aspect-ratio:16/10;border:1px solid rgba(150,180,200,.15);border-radius:10px;overflow:hidden;background:#070a0e}
+  .badge{position:absolute;bottom:10px;left:12px;font-family:ui-monospace,monospace;font-size:10.5px;
+    letter-spacing:.12em;text-transform:uppercase;color:#93a3b0;background:rgba(7,10,14,.55);
+    border:1px solid rgba(150,180,200,.14);border-radius:6px;padding:4px 8px;pointer-events:none}
+  .ro{position:absolute;top:10px;right:12px;font-family:ui-monospace,monospace;font-size:11px;color:#93a3b0;
+    background:rgba(7,10,14,.55);border:1px solid rgba(150,180,200,.14);border-radius:6px;padding:6px 9px;
+    text-align:right;line-height:1.55;pointer-events:none}
+  .ro b{font-weight:400;color:#2fd6bf}
+  .ro b.bad{color:#e2564a}
+  .ro i{font-style:normal;color:#5d6b77}
+  .row{display:flex;flex-wrap:wrap;gap:14px;align-items:center;margin-top:12px;font-family:ui-monospace,monospace;font-size:12px;color:#93a3b0}
+  .row label{display:flex;align-items:center;gap:8px}
+  .row span.lbl{color:#5d6b77}
+  input[type=range]{width:112px}
+  button{font-family:ui-monospace,monospace;font-size:11.5px;color:#cdd6dd;background:#0c1016;
+    border:1px solid rgba(150,180,200,.22);border-radius:7px;padding:6px 11px;cursor:pointer}
+  button:hover{border-color:#38d9d1}
+  button.on{border-color:#38d9d1;color:#fff}
+  .note{margin-top:12px;font-size:12px;color:#5d6b77;font-family:ui-monospace,monospace;line-height:1.7}
+  .key{display:inline-flex;align-items:center;gap:6px;margin-right:14px}
+  .sw{width:10px;height:10px;border-radius:2px;display:inline-block}
+  .proof{margin-top:14px;border:1px solid rgba(150,180,200,.15);border-radius:10px;padding:12px 13px;background:#090d12}
+  .proof h2{margin:0 0 9px;font-size:11px;letter-spacing:.11em;text-transform:uppercase;color:#93a3b0;font-weight:500;
+    font-family:ui-monospace,monospace}
+  .scroll{overflow-x:auto}
+  table{border-collapse:collapse;width:100%;min-width:520px;font-family:ui-monospace,monospace;font-size:11.5px}
+  th{color:#8a97a2;font-weight:400;text-align:right;padding:0 0 7px 14px;white-space:nowrap;vertical-align:bottom}
+  th i{display:block;font-style:normal;color:#5d6b77;font-size:10px;margin-top:2px}
+  th.l{text-align:left;padding-left:0;color:#5d6b77}
+  td{padding:4px 0 4px 14px;text-align:right;color:#2fd6bf;white-space:nowrap}
+  td.l{text-align:left;color:#8a97a2;padding-left:0;width:99%}
+  tr.act td.l{color:#cdd6dd}
+  tr.act td{background:rgba(56,217,209,.055)}
+  td.big{color:#f4a13c}
+  td.void{color:#7b8794}
+  .proof .foot{margin-top:9px;font-size:11px;color:#5d6b77;font-family:ui-monospace,monospace;line-height:1.65}
+  .proof .foot b{color:#8a97a2;font-weight:400}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>A tornado meets a wall — <code>strainedColumn</code> + <code>withBoundary</code></h1>
+
+  <p><code>strainedColumn</code> is an <b>exact stationary solution</b> of the incompressible
+    Navier–Stokes equations: an inward strain <code>u^r = −a·r</code> holds a filament open against
+    viscosity, and the balance closes in closed form — the vorticity is purely axial and Gaussian,
+    <code>ω_z = (εa/ν)·e^(−a r²/2ν)</code>, with core radius <code>√(2ν/a)</code>. Raise the strain
+    and the column gets <b>thinner and brighter at once</b>, because the peak <code>εa/ν</code> climbs
+    while the width falls. Both numbers are printed, next to the same two quantities measured back out
+    of the sampled field.</p>
+
+  <p><code>withBoundary</code> takes any field's analytic vector potential <code>A</code>, ramps it to
+    zero across a signed-distance surface, and returns <code>∇×(ramp·A)</code> — expanded exactly as
+    <code>u_b = ramp′·(∇d×A) + ramp·u</code>. It is still a curl, so still exactly divergence-free; it
+    is tangent at the wall because <b>both</b> terms lose their normal part there (<code>ramp(0) = 0</code>
+    kills the second, and <code>(∇d×A)·∇d = 0</code> kills the first); and beyond the band it is
+    bit-identical to the untouched field. Every other <code>withBoundary</code> page in this repo hands
+    it a broadband mode sum. This is the first time it is handed a closed-form solution. The receipt
+    below probes a shell <code>ε = 1e-9</code> outside the surface rather than the surface itself,
+    where what is left is the ramp's own linear tail — a measured quantity, not a floating-point
+    artefact, and not the exactly-zero field <em>inside</em> the obstacle that a probe sitting on
+    <code>d = 0</code> would read half the time.</p>
+
+  <div id="stage">
+    <div class="badge">helix-noise · exact NS column + obstacle</div>
+    <div class="ro" id="ro">loading three.js…</div>
+  </div>
+
+  <div class="row">
+    <span class="lbl">obstacle</span>
+    <button id="sh-sphere" class="on">sphere</button>
+    <button id="sh-box">box</button>
+    <button id="sh-wall">wall</button>
+    <span class="lbl" style="margin-left:10px">field</span>
+    <button id="fm-curl" class="on">∇×(ramp·A)</button>
+    <button id="fm-none">no obstacle</button>
+    <button id="fm-mask">naive ramp·u</button>
+  </div>
+  <div class="row">
+    <span class="lbl">∇d</span>
+    <button id="gr-exact" class="on">analytic</button>
+    <button id="gr-fd">finite-diff</button>
+    <button id="gr-skew">skewed 25°</button>
+    <label>strain a <input id="strain" type="range" min="0.2" max="2" step="0.05" value="0.7"><span id="v-strain">0.70</span></label>
+    <label>band <input id="band" type="range" min="0.2" max="1.6" step="0.05" value="0.55"><span id="v-band">0.55</span></label>
+  </div>
+
+  <div class="proof">
+    <h2>receipt — remeasured every frame, all three fields, whichever one is driving the particles</h2>
+    <div class="scroll">
+    <table>
+      <thead><tr>
+        <th class="l">field</th>
+        <th>max |u·n̂|<i>at the wall</i></th>
+        <th>max |u|<i>same points</i></th>
+        <th>max |∇·u|<i>in the band</i></th>
+        <th>|∇u|<i>same points</i></th>
+      </tr></thead>
+      <tbody>
+        <tr id="r-curl" class="act"><td class="l" id="n-curl">∇×(ramp·A)</td><td id="c-un">—</td><td id="c-sp">—</td><td id="c-dv">—</td><td id="c-gs">—</td></tr>
+        <tr id="r-none"><td class="l">no obstacle — the bare column</td><td id="o-un">—</td><td id="o-sp">—</td><td id="o-dv">—</td><td id="o-gs">—</td></tr>
+        <tr id="r-mask"><td class="l">naive mask ramp·u</td><td id="m-un">—</td><td id="m-sp">—</td><td id="m-dv">—</td><td id="m-gs">—</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <div class="foot" id="foot">—</div>
+  </div>
+
+  <p style="margin-top:16px"><b>How to read the table.</b> The first column on its own proves nothing,
+    and the table is built to make that impossible to miss. The <b>naive mask</b> <code>ramp(d/th)·u</code>
+    — fade the velocity instead of the potential, which is the tempting shortcut — scores
+    <code>5.4e-9</code> for normal flow at the wall: <b>the same number, to every digit shown, as the
+    real construction</b>. It has to, because both are <code>ramp(ε/th)·(u·n̂)</code> at that point.
+    What separates them is the column beside it. The correct field is moving at <code>|u| ≈ 7</code>
+    there and sliding around the obstacle; the naive mask's <em>whole</em> velocity is
+    <code>6e-9</code>, because it does not deflect the flow, it stops it — particles arrive and pile
+    into a stalled crust, and the closest-approach readout falls to <code>~1e-9</code> instead of
+    settling at a few hundredths. Its last column is the verdict: scaling a divergence-free field by a
+    scalar destroys <code>∇·u = 0</code>, and the measured divergence goes from <code>~1e-10</code> to
+    <code>4.5</code>.</p>
+
+  <p><b>How to break the real one.</b> Two of the controls are wired to make the receipt fail.
+    <b>skewed 25°</b> hands <code>withBoundary</code> a gradient that does not match the SDF it is
+    paired with — a plausible bug, not a contrived one, since you supply the two separately. The
+    picture still looks bounded; <code>max|u·n̂|</code> jumps to <code>~3</code> and the divergence to
+    <code>~7</code> (the exact values depend on the shape), because <code>ramp·A</code> is no longer
+    being curled against its own geometry.
+    <b>finite-diff</b> is what the library actually does when you pass no <code>gradient</code> at all:
+    on a sphere that costs the truncation error and the number rises to <code>~2e-6</code>; on a box
+    face or a plane the central difference of the distance is <em>exact</em>, and it does not move at
+    all. That last fact is worth more than the first two — it is the sort of thing a demo that only
+    printed a passing zero would have hidden.</p>
+
+  <p><b>What this is not.</b> <code>withBoundary</code> makes the flow <b>tangent</b> to the obstacle.
+    It does not solve a no-slip boundary layer — there is no viscous wall here, no vorticity generated at
+    the surface, no drag, no wake. It is a <b>kinematic deflection</b>: an algebraic identity that steers
+    an already-chosen field around a shape while preserving <code>∇·u = 0</code>. Two consequences worth
+    stating rather than discovering. First, the wall slip speed is set by <code>ramp′(0)/th·|∇d×A|</code>,
+    so a thin band manufactures a fast sheet — the readout prints <code>|u|wall / |u|free</code>, which
+    runs <b>3.9</b> at the default band, <b>10.8</b> at <code>band = 0.2</code> and <b>1.3</b> at
+    <code>band = 1.6</code>. The flow does not slow down at this wall; it speeds up. Second,
+    <code>u_b</code> depends on <code>A</code> and not only on <code>u</code>, and <code>A</code> is fixed
+    only up to a gradient — a different, equally valid potential for the same column would give a
+    different slip flow on the same obstacle. That is a property of the method. Related: the column's
+    potential grows like <code>ln r</code> and is <b>not</b> compactly supported (a swirling column cannot
+    have one), so unlike <code>createRing</code> an obstacle placed far away still feels it.</p>
+
+  <div class="note">
+    <span class="key"><span class="sw" style="background:#2fd6bf"></span>outside the band — field bit-identical to the bare column</span>
+    <span class="key"><span class="sw" style="background:#f4a13c"></span>inside the band — deflected</span>
+    <span class="key"><span class="sw" style="background:#e2564a"></span>inside the obstacle — should never appear under ∇×(ramp·A)</span>
+  </div>
+  <div class="note" id="note">loading…</div>
+</div>
+
+<script src="../dist/helix-noise.global.js"></script>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+  import * as THREE from "three";
+  import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+  const NU = 0.05, EPS = 1.0;
+  const P = { shape: "sphere", mode: "curl", grad: "exact", strain: 0.7, band: 0.55 };
+
+  // ---- the obstacles ------------------------------------------------------
+  // An SDF plus its exact gradient, plus a generator of surface points *with their exact outward
+  // normals* — the probe needs n̂ from geometry, never from the same finite differences the field
+  // might be using, or it would be checking a quantity against itself.
+  const GOLD = Math.PI * (3 - Math.sqrt(5));
+  const fibDir = (i, n, ph) => {
+    const z = 1 - (2 * i + 1) / n, r = Math.sqrt(Math.max(0, 1 - z * z)), t = i * GOLD + ph;
+    return [r * Math.cos(t), r * Math.sin(t), z];
+  };
+  const frac = (v) => v - Math.floor(v);
+
+  const SC = [1.55, 0, 0.30], SR = 0.60;
+  const BC = [1.45, 0, 0.00], BH = [0.45, 0.70, 0.85];
+  const WX = 1.20, WT = 0.22;
+
+  const SHAPES = {
+    sphere: {
+      label: "sphere",
+      sdf: (x, y, z) => Math.hypot(x - SC[0], y - SC[1], z - SC[2]) - SR,
+      grad: (x, y, z) => {
+        const dx = x - SC[0], dy = y - SC[1], dz = z - SC[2], r = Math.hypot(dx, dy, dz) || 1;
+        return [dx / r, dy / r, dz / r];
+      },
+      surface: (n, ph, out) => {
+        for (let i = 0; i < n; i++) {
+          const d = fibDir(i, n, ph), s = out[i] || (out[i] = { p: [0, 0, 0], n: [0, 0, 0] });
+          for (let c = 0; c < 3; c++) { s.n[c] = d[c]; s.p[c] = SC[c] + SR * d[c]; }
+        }
+      },
+      mesh: () => new THREE.SphereGeometry(SR, 40, 28),
+      // a sphere has no sharp edges for EdgesGeometry to find, so it gets a coarse wireframe instead
+      wire: () => new THREE.WireframeGeometry(new THREE.SphereGeometry(SR, 18, 11)),
+      at: SC,
+    },
+    box: {
+      label: "box",
+      sdf: (x, y, z) => {
+        const qx = Math.abs(x - BC[0]) - BH[0], qy = Math.abs(y - BC[1]) - BH[1], qz = Math.abs(z - BC[2]) - BH[2];
+        const ox = Math.max(qx, 0), oy = Math.max(qy, 0), oz = Math.max(qz, 0);
+        return Math.hypot(ox, oy, oz) + Math.min(Math.max(qx, qy, qz), 0);
+      },
+      grad: (x, y, z) => {
+        const sx = Math.sign(x - BC[0]) || 1, sy = Math.sign(y - BC[1]) || 1, sz = Math.sign(z - BC[2]) || 1;
+        const qx = Math.abs(x - BC[0]) - BH[0], qy = Math.abs(y - BC[1]) - BH[1], qz = Math.abs(z - BC[2]) - BH[2];
+        const ox = Math.max(qx, 0), oy = Math.max(qy, 0), oz = Math.max(qz, 0);
+        const L = Math.hypot(ox, oy, oz);
+        if (L > 1e-12) return [(sx * ox) / L, (sy * oy) / L, (sz * oz) / L];
+        const m = Math.max(qx, qy, qz);
+        return [m === qx ? sx : 0, m === qy ? sy : 0, m === qz ? sz : 0];
+      },
+      // face interiors only: an edge or a corner has no single normal, so u·n̂ is not defined there
+      surface: (n, ph, out) => {
+        const F = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
+        for (let i = 0; i < n; i++) {
+          const f = F[i % 6], k = (i / 6) | 0;
+          const ax = f[0] ? 0 : f[1] ? 1 : 2, u = (ax + 1) % 3, v = (ax + 2) % 3;
+          const a = frac(k * 0.7548776662 + ph * 0.031) * 1.6 - 0.8;   // inset 20% from the edges
+          const b = frac(k * 0.5698402909 + ph * 0.047) * 1.6 - 0.8;
+          const s = out[i] || (out[i] = { p: [0, 0, 0], n: [0, 0, 0] });
+          s.n[0] = f[0]; s.n[1] = f[1]; s.n[2] = f[2];
+          s.p[ax] = BC[ax] + f[ax] * BH[ax];
+          s.p[u] = BC[u] + a * BH[u];
+          s.p[v] = BC[v] + b * BH[v];
+        }
+      },
+      mesh: () => new THREE.BoxGeometry(2 * BH[0], 2 * BH[1], 2 * BH[2]),
+      wire: () => new THREE.EdgesGeometry(new THREE.BoxGeometry(2 * BH[0], 2 * BH[1], 2 * BH[2])),
+      at: BC,
+    },
+    wall: {
+      label: "wall (slab)",
+      sdf: (x) => Math.abs(x - WX) - WT,
+      grad: (x) => [Math.sign(x - WX) || 1, 0, 0],
+      surface: (n, ph, out) => {
+        for (let i = 0; i < n; i++) {
+          const sg = i % 2 ? 1 : -1;
+          const a = frac(i * 0.7548776662 + ph * 0.037) * 2 - 1;
+          const b = frac(i * 0.5698402909 + ph * 0.053) * 2 - 1;
+          const s = out[i] || (out[i] = { p: [0, 0, 0], n: [0, 0, 0] });
+          s.n[0] = sg; s.n[1] = 0; s.n[2] = 0;
+          s.p[0] = WX + sg * WT; s.p[1] = a * 2.4; s.p[2] = b * 2.0;
+        }
+      },
+      mesh: () => new THREE.BoxGeometry(2 * WT, 5.6, 4.6),
+      wire: () => new THREE.EdgesGeometry(new THREE.BoxGeometry(2 * WT, 5.6, 4.6)),
+      at: [WX, 0, 0],
+    },
+  };
+
+  // ---- the fields ---------------------------------------------------------
+  // Bridson's quintic, copied so the naive mask fades on exactly the same profile the real
+  // construction uses — otherwise the comparison would be between two different things.
+  function ramp(x) {
+    if (x <= 0) return 0;
+    if (x >= 1) return 1;
+    const x2 = x * x;
+    return (x * (15 - 10 * x2 + 3 * x2 * x2)) / 8;
+  }
+
+  const CS = Math.cos(25 * Math.PI / 180), SN = Math.sin(25 * Math.PI / 180);
+  let shape, column, bCurl, coreR, peakW, bGauss;
+
+  function build() {
+    shape = SHAPES[P.shape];
+    column = HelixNoise.strainedColumn({ strain: P.strain, viscosity: NU, circulation: EPS, axis: [0, 0, 1] });
+    coreR = HelixNoise.columnCore(P.strain, NU);
+    peakW = HelixNoise.columnPeakVorticity(P.strain, NU, EPS);
+    bGauss = P.strain / (2 * NU);   // ω_z ∝ e^(−b r²); 1/e at r = √(2ν/a) = coreR, by definition
+    const opt = { thickness: P.band };
+    if (P.grad === "exact") opt.gradient = shape.grad;
+    // A gradient that does not agree with the SDF it is paired with. This is the bug the receipt
+    // exists to catch: the field still looks bounded, and it is still divergence-free, but the wall
+    // has stopped being a wall.
+    if (P.grad === "skew") opt.gradient = (x, y, z) => {
+      const g = shape.grad(x, y, z);
+      return [CS * g[0] - SN * g[1], SN * g[0] + CS * g[1], g[2]];
+    };
+    bCurl = column.withBoundary(shape.sdf, opt);   // "fd" = pass nothing, the library differences it
+  }
+  build();
+
+  const _u6 = [0, 0, 0, 0, 0, 0];
+  /** Velocity of whichever field the reader has selected, into out[0..2]. */
+  function velocity(kind, x, y, z, out) {
+    if (kind === "none") {
+      column.sampleUW(x, y, z, _u6, 0);
+      out[0] = _u6[0]; out[1] = _u6[1]; out[2] = _u6[2];
+      return out;
+    }
+    if (kind === "mask") {
+      const d = shape.sdf(x, y, z);
+      if (d <= 0) { out[0] = out[1] = out[2] = 0; return out; }
+      column.sampleUW(x, y, z, _u6, 0);
+      const r = ramp(d / P.band);
+      out[0] = r * _u6[0]; out[1] = r * _u6[1]; out[2] = r * _u6[2];
+      return out;
+    }
+    const u = bCurl.sample(x, y, z, 0);
+    out[0] = u[0]; out[1] = u[1]; out[2] = u[2];
+    return out;
+  }
+
+  // ---- the receipt --------------------------------------------------------
+  // Three fields × three quantities, all measured, every frame, from the same probe points.
+  //
+  // max|u·n̂| alone is not evidence of anything: the naive mask scores 1e-16 on it and is wrong.
+  // So max|u| at the *same* points is printed beside it — a normal component that is small because
+  // the whole velocity is small is not a boundary condition, it is a stalled field. And divergence
+  // is measured with one shared central-difference stencil, so the three rows are comparable.
+  //
+  // The surface probe sits EPSW outside the wall, not on it. `withBoundary` defines the field to be
+  // exactly zero for d ≤ 0, so a point placed at d = 0 lands on the wrong side of that test about
+  // half the time — and then the probe would be reading the zero *inside* the obstacle and calling
+  // it a boundary condition. On a box face, where d = 0 is exact, it would do so every time.
+  // At 1e-9 the remaining normal flow is the ramp's own linear tail, ramp′(0)/th·ε·(u·n̂) ≈ 5e-9,
+  // which is a measured quantity rather than a floating-point artefact.
+  const NSURF = 96, NBAND = 24, HFD = 1e-3, EPSW = 1e-9;
+  const surf = [];
+  const _a3 = [0, 0, 0], _b3 = [0, 0, 0], _c3 = [0, 0, 0], _d3 = [0, 0, 0], _e3 = [0, 0, 0];
+  const KINDS = ["curl", "none", "mask"];
+  const R = { curl: {}, none: {}, mask: {} };
+  let probes = 0, slipRatio = 0, identOut = 0, identIn = 0;
+
+  function measure(phase) {
+    shape.surface(NSURF, phase, surf);
+    for (const k of KINDS) { R[k].un = 0; R[k].sp = 0; R[k].dv = 0; R[k].gs = 0; }
+
+    // (1) normal flow and speed on the wall shell
+    const w = [0, 0, 0];
+    for (let i = 0; i < NSURF; i++) {
+      const s = surf[i];
+      for (let c = 0; c < 3; c++) w[c] = s.p[c] + EPSW * s.n[c];
+      for (const k of KINDS) {
+        velocity(k, w[0], w[1], w[2], _a3);
+        const d = Math.abs(_a3[0] * s.n[0] + _a3[1] * s.n[1] + _a3[2] * s.n[2]);
+        const m = Math.hypot(_a3[0], _a3[1], _a3[2]);
+        if (d > R[k].un) R[k].un = d;
+        if (m > R[k].sp) R[k].sp = m;
+      }
+    }
+    // free-stream speed on the same points, for the slip ratio
+    slipRatio = R.none.sp > 1e-12 ? R.curl.sp / R.none.sp : 0;
+
+    // (2) divergence inside the ramp band, offset far enough out that no stencil straddles the wall
+    //     (the field is discontinuous across d = 0 — it is set to zero inside — so a stencil that
+    //     crosses would report the jump, not the divergence)
+    const q = [0, 0, 0];
+    for (let i = 0; i < NBAND; i++) {
+      const s = surf[(i * 7) % NSURF];
+      const off = 0.06 + (P.band - 0.12) * frac(i * 0.6180339887 + phase * 0.017);
+      for (let c = 0; c < 3; c++) q[c] = s.p[c] + Math.max(off, 0.05) * s.n[c];
+      for (const k of KINDS) {
+        let div = 0, gs = 0;
+        for (let ax = 0; ax < 3; ax++) {
+          const sv = q[ax];
+          q[ax] = sv + HFD; velocity(k, q[0], q[1], q[2], _b3);
+          q[ax] = sv - HFD; velocity(k, q[0], q[1], q[2], _c3);
+          q[ax] = sv + 2 * HFD; velocity(k, q[0], q[1], q[2], _d3);
+          q[ax] = sv - 2 * HFD; velocity(k, q[0], q[1], q[2], _e3);
+          q[ax] = sv;
+          for (let c = 0; c < 3; c++) {
+            // Fourth order, not second: the ramp's derivatives scale like 1/th³, so an O(h²)
+            // stencil's own truncation error climbs past 1e-3 at a thin band and the reader could
+            // not tell the instrument from the field. At O(h⁴) the floor stays near 1e-10 across
+            // the whole slider.
+            const g = (8 * (_b3[c] - _c3[c]) - (_d3[c] - _e3[c])) / (12 * HFD);
+            if (c === ax) div += g;
+            const ag = Math.abs(g);
+            if (ag > gs) gs = ag;
+          }
+        }
+        if (Math.abs(div) > R[k].dv) R[k].dv = Math.abs(div);
+        if (gs > R[k].gs) R[k].gs = gs;
+      }
+    }
+
+    // (3) "bit-identical beyond the band" — a zero, so it is printed next to the same difference
+    //     measured *inside* the band, where it had better not be zero.
+    identOut = 0; identIn = 0;
+    for (let i = 0; i < 40; i++) {
+      const s = surf[(i * 11) % NSURF];
+      for (const [off, sink] of [[P.band + 0.02 + 1.2 * frac(i * 0.618 + 0.1), 0], [0.05 + 0.8 * P.band * frac(i * 0.382 + 0.3), 1]]) {
+        for (let c = 0; c < 3; c++) q[c] = s.p[c] + off * s.n[c];
+        velocity("curl", q[0], q[1], q[2], _b3);
+        velocity("none", q[0], q[1], q[2], _c3);
+        const e = Math.max(Math.abs(_b3[0] - _c3[0]), Math.abs(_b3[1] - _c3[1]), Math.abs(_b3[2] - _c3[2]));
+        if (sink === 0) { if (e > identOut) identOut = e; } else if (e > identIn) identIn = e;
+      }
+    }
+    probes++;
+  }
+
+  /** Core radius and peak vorticity read back out of the sampled field, not out of the formula. */
+  function measuredScales() {
+    column.sampleUW(0, 0, 0, _u6, 0);
+    const w0 = Math.hypot(_u6[3], _u6[4], _u6[5]);
+    const target = w0 / Math.E;
+    let lo = 0, hi = 4;
+    for (let i = 0; i < 44; i++) {
+      const mid = (lo + hi) / 2;
+      column.sampleUW(mid, 0, 0, _u6, 0);
+      if (Math.hypot(_u6[3], _u6[4], _u6[5]) > target) lo = mid; else hi = mid;
+    }
+    return { w0, core: (lo + hi) / 2 };
+  }
+
+  // ---- particles ----------------------------------------------------------
+  const N = 5000;
+  const pos = new Float32Array(3 * N);
+  const posD = new Float64Array(3 * N);
+  const col = new Float32Array(3 * N);
+  const life = new Float32Array(N);
+  let rs = 20260726;
+  const rnd = () => ((rs = (rs * 1664525 + 1013904223) >>> 0) / 4294967296);
+
+  // Seeded in a cylindrical annulus rather than a box: the strain sweeps everything toward the axis
+  // and out along it, so the corners of a box are just dust that never reaches anything.
+  function spawn(i) {
+    for (let tries = 0; tries < 24; tries++) {
+      const r = 0.12 + 2.3 * Math.sqrt(rnd()), th = rnd() * Math.PI * 2;
+      const x = r * Math.cos(th), y = r * Math.sin(th), z = (rnd() - 0.5) * 4.2;
+      if (shape.sdf(x, y, z) > 0.04) { posD[3 * i] = x; posD[3 * i + 1] = y; posD[3 * i + 2] = z; break; }
+    }
+    life[i] = 70 + rnd() * 200;
+  }
+  for (let i = 0; i < N; i++) spawn(i);
+
+  // ---- three.js -----------------------------------------------------------
+  const stage = document.getElementById("stage");
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(Math.min(2, devicePixelRatio));
+  stage.appendChild(renderer.domElement);
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x070a0e);
+  const camera = new THREE.PerspectiveCamera(45, 16 / 10, 0.1, 100);
+  // The column's axis is z, and three.js orbits about +Y by default — leave that and a tornado
+  // renders on the diagonal.
+  camera.up.set(0, 0, 1);
+  camera.position.set(4.3, -6.0, 2.1);
+  const controls = new OrbitControls(camera, renderer.domElement);
+  controls.target.set(0.55, 0, 0);
+  controls.enableDamping = true; controls.autoRotate = true; controls.autoRotateSpeed = 0.4;
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute("color", new THREE.BufferAttribute(col, 3));
+  const points = new THREE.Points(geo, new THREE.PointsMaterial({
+    size: 0.05, vertexColors: true, transparent: true, opacity: 0.92,
+    blending: THREE.AdditiveBlending, depthWrite: false,
+  }));
+  points.renderOrder = 2;
+  scene.add(points);
+
+  // The obstacle, translucent and not writing depth, so a particle that gets *inside* is visible —
+  // which is the whole point of the "no obstacle" row.
+  const obMat = new THREE.MeshBasicMaterial({ color: 0x16202a, transparent: true, opacity: 0.30, depthWrite: false, side: THREE.DoubleSide });
+  const edgeMat = new THREE.LineBasicMaterial({ color: 0x4c6472, transparent: true, opacity: 0.75 });
+  let obstacle = null, obEdges = null;
+  function layoutObstacle() {
+    if (obstacle) { scene.remove(obstacle); obstacle.geometry.dispose(); }
+    if (obEdges) { scene.remove(obEdges); obEdges.geometry.dispose(); }
+    obstacle = new THREE.Mesh(shape.mesh(), obMat);
+    obstacle.position.set(shape.at[0], shape.at[1], shape.at[2]);
+    obstacle.renderOrder = 1;
+    obEdges = new THREE.LineSegments(shape.wire(), edgeMat);
+    obEdges.position.copy(obstacle.position);
+    scene.add(obstacle, obEdges);
+  }
+
+  // The analytic core √(2ν/a), drawn — so the printed number has something in the picture to be about.
+  // Built by hand as rings + rails: a wireframe cylinder triangulates into long diagonals that read
+  // as scratches across the view rather than as a radius.
+  const coreMat = new THREE.LineBasicMaterial({ color: 0x39707c, transparent: true, opacity: 0.55 });
+  let coreMesh = null;
+  function layoutCore() {
+    if (coreMesh) { scene.remove(coreMesh); coreMesh.geometry.dispose(); }
+    const v = [], SEG = 48, ZS = [-2.1, -1.4, -0.7, 0, 0.7, 1.4, 2.1];
+    for (const z of ZS) for (let i = 0; i < SEG; i++) {
+      const a = (i / SEG) * Math.PI * 2, b = ((i + 1) / SEG) * Math.PI * 2;
+      v.push(coreR * Math.cos(a), coreR * Math.sin(a), z, coreR * Math.cos(b), coreR * Math.sin(b), z);
+    }
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2, cx = coreR * Math.cos(a), cy = coreR * Math.sin(a);
+      v.push(cx, cy, -2.1, cx, cy, 2.1);
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.Float32BufferAttribute(v, 3));
+    coreMesh = new THREE.LineSegments(g, coreMat);
+    scene.add(coreMesh);
+  }
+  layoutObstacle(); layoutCore();
+
+  function resize() {
+    renderer.setSize(stage.clientWidth, stage.clientHeight);
+    camera.aspect = stage.clientWidth / stage.clientHeight;
+    camera.updateProjectionMatrix();
+  }
+  addEventListener("resize", resize); resize();
+
+  // ---- advection ----------------------------------------------------------
+  const TEAL = [0.184, 0.839, 0.749], AMBER = [0.957, 0.631, 0.235], RED = [0.886, 0.337, 0.290];
+  let inside = 0, closest = 0, umax = 0;
+  function step() {
+    const dt = 0.02;
+    let ins = 0, near = Infinity;
+    umax = 0;
+    for (let i = 0; i < N; i++) {
+      const x = posD[3 * i], y = posD[3 * i + 1], z = posD[3 * i + 2];
+      velocity(P.mode, x, y, z, _a3);
+      const sp = Math.hypot(_a3[0], _a3[1], _a3[2]);
+      if (sp > umax) umax = sp;
+      posD[3 * i] = x + _a3[0] * dt;
+      posD[3 * i + 1] = y + _a3[1] * dt;
+      posD[3 * i + 2] = z + _a3[2] * dt;
+      const d = shape.sdf(posD[3 * i], posD[3 * i + 1], posD[3 * i + 2]);
+      if (d < near) near = d;
+      if (d < 0) ins++;
+      // Particles are *not* recycled for being inside the obstacle — under "no obstacle" they are
+      // supposed to be visible in there. Only the domain and the lifetime recycle them.
+      if (--life[i] <= 0 || Math.abs(posD[3 * i + 2]) > 2.9 || Math.hypot(posD[3 * i], posD[3 * i + 1]) > 3.4) spawn(i);
+      pos[3 * i] = posD[3 * i]; pos[3 * i + 1] = posD[3 * i + 1]; pos[3 * i + 2] = posD[3 * i + 2];
+      // Colour is the influence band, read off the SDF: teal outside it (the field there is the
+      // untouched column, bit for bit), amber inside it, red if the particle is inside the obstacle.
+      const c = d < 0 ? RED : d < P.band ? AMBER : TEAL;
+      // Brightness blends local speed with the column's own Gaussian vorticity e^(−a r²/2ν) — the
+      // same closed form the readout prints — so the core lights up exactly where √(2ν/a) says it
+      // should, and narrows as you raise the strain. Speed alone would put the brightest particles
+      // in the far field, where the strain u ~ a·r is largest and nothing interesting happens.
+      const rr = posD[3 * i] * posD[3 * i] + posD[3 * i + 1] * posD[3 * i + 1];
+      const g = Math.min(1, 0.30 + 0.09 * sp + 0.55 * Math.exp(-bGauss * rr));
+      col[3 * i] = c[0] * g; col[3 * i + 1] = c[1] * g; col[3 * i + 2] = c[2] * g;
+    }
+    inside = ins; closest = near;
+    geo.attributes.position.needsUpdate = true;
+    geo.attributes.color.needsUpdate = true;
+  }
+
+  // ---- readout ------------------------------------------------------------
+  const $ = (id) => document.getElementById(id);
+  const ro = $("ro");
+  const mag = (v) => (v === 0 ? "0" : Math.abs(v) < 0.01 || Math.abs(v) >= 1e4 ? v.toExponential(2) : v.toFixed(3));
+  const GLAB = { exact: "analytic ∇d", fd: "finite-diff ∇d", skew: "skewed ∇d (broken)" };
+
+  function paint() {
+    const m = measuredScales();
+    const coreErr = Math.abs(m.core - coreR), peakErr = Math.abs(m.w0 - peakW);
+    ro.innerHTML =
+      `a <b>${P.strain.toFixed(2)}</b> · ν <b>${NU}</b> · ε <b>${EPS.toFixed(2)}</b><br>` +
+      `core √(2ν/a) <b>${coreR.toFixed(4)}</b> <i>meas</i> <b>${m.core.toFixed(4)}</b><br>` +
+      `peak ω εa/ν <b>${peakW.toFixed(2)}</b> <i>meas</i> <b>${m.w0.toFixed(2)}</b><br>` +
+      `<i>Δ</i> <b>${mag(coreErr)}</b> / <b>${mag(peakErr)}</b><br>` +
+      `|u| wall / free <b>${slipRatio.toFixed(2)}</b><br>` +
+      `|u|max <b>${umax.toFixed(2)}</b><br>` +
+      `inside obstacle <b class="${inside ? "bad" : ""}">${inside}</b> <i>of ${N}</i><br>` +
+      `closest d <b class="${closest < 0 ? "bad" : ""}">${mag(closest)}</b><br>` +
+      `probe <i>#</i><b>${probes}</b>`;
+
+    // amber = this number is a failure; grey = this number is at the instrument floor and is not
+    // evidence of anything on its own; teal = a real measured value above the floor.
+    const put = (id, v, big) => {
+      const el = $(id);
+      el.textContent = mag(v);
+      el.className = big ? "big" : Math.abs(v) < 1e-6 ? "void" : "";
+    };
+    put("c-un", R.curl.un, R.curl.un > 1e-3); put("c-sp", R.curl.sp, false);
+    put("c-dv", R.curl.dv, R.curl.dv > 1e-3); put("c-gs", R.curl.gs, false);
+    put("o-un", R.none.un, R.none.un > 1e-3); put("o-sp", R.none.sp, false);
+    put("o-dv", R.none.dv, R.none.dv > 1e-3); put("o-gs", R.none.gs, false);
+    put("m-un", R.mask.un, R.mask.un > 1e-3); put("m-sp", R.mask.sp, false);
+    put("m-dv", R.mask.dv, R.mask.dv > 1e-3); put("m-gs", R.mask.gs, false);
+    $("n-curl").textContent = `∇×(ramp·A) — ${GLAB[P.grad]}`;
+
+    $("foot").innerHTML =
+      `<b>${NSURF}</b> points on a shell 1e-9 outside the wall, with n̂ taken from the geometry and never ` +
+      `from the same differences the field might be using · <b>${NBAND}</b> divergence points inside the ` +
+      `band, O(h⁴) stencil at h = 1e-3 · both sets reshuffled every frame — probe <b>#${probes}</b>, so a ` +
+      `frozen number here is a stale page, not a passing test.<br>` +
+      `beyond the band (d &gt; ${P.band.toFixed(2)}) the boundary is meant to vanish: ` +
+      `max|u_bounded − u_column| = <b>${mag(identOut)}</b> — worth nothing by itself, so measured again ` +
+      `<i>inside</i> the band on the same frame, where it reads <b>${mag(identIn)}</b>.`;
+  }
+
+  function frame() {
+    step();
+    measure(probes * 0.41);
+    paint();
+    controls.update();
+    renderer.render(scene, camera);
+    requestAnimationFrame(frame);
+  }
+  frame();
+
+  // ---- controls -----------------------------------------------------------
+  function rebuild(relayout) {
+    build();
+    if (relayout) { layoutObstacle(); for (let i = 0; i < N; i++) spawn(i); }
+    layoutCore();
+  }
+  const group = (ids, pick) => ids.forEach((id) => {
+    $(id).onclick = () => { ids.forEach((o) => $(o).classList.toggle("on", o === id)); pick(id); };
+  });
+  group(["sh-sphere", "sh-box", "sh-wall"], (id) => { P.shape = id.slice(3); rebuild(true); });
+  group(["fm-curl", "fm-none", "fm-mask"], (id) => {
+    P.mode = id.slice(3);
+    for (const [r, k] of [["r-curl", "curl"], ["r-none", "none"], ["r-mask", "mask"]]) $(r).classList.toggle("act", k === P.mode);
+  });
+  group(["gr-exact", "gr-fd", "gr-skew"], (id) => { P.grad = id.slice(3); rebuild(false); });
+  $("strain").oninput = (e) => { P.strain = +e.target.value; $("v-strain").textContent = P.strain.toFixed(2); rebuild(false); };
+  $("band").oninput = (e) => { P.band = +e.target.value; $("v-band").textContent = P.band.toFixed(2); rebuild(false); };
+
+  $("note").innerHTML =
+    `${N.toLocaleString()} particles advected by the selected field at dt = 0.02 · hue is the influence band, ` +
+    `read off the SDF; brightness blends local speed with the column's analytic Gaussian ` +
+    `e^(−a r²/2ν), so the glow narrows as you raise the strain and the wireframe cylinder tracking ` +
+    `√(2ν/a) closes on it · drag to orbit · three.js r160`;
+</script>
+</body>
+</html>

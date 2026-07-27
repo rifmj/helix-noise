@@ -1,0 +1,580 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Helix Noise — hair and fur in wind (sampled along the strand)</title>
+<style>
+  html,body{margin:0;background:#070a0e;color:#cdd6dd;font-family:system-ui,sans-serif}
+  .wrap{max-width:980px;margin:0 auto;padding:22px 16px}
+  h1{font-size:19px;font-weight:600;margin:0 0 6px}
+  h1 code{color:#f4a13c}
+  p{color:#8a97a2;font-size:13.5px;line-height:1.6;margin:0 0 14px}
+  p b{color:#cdd6dd;font-weight:500}
+  code{font-family:ui-monospace,Menlo,monospace;color:#f4a13c;font-size:12.5px}
+  #stage{position:relative;width:100%;aspect-ratio:16/10;border:1px solid rgba(150,180,200,.15);
+    border-radius:10px;overflow:hidden;background:#070a0e;cursor:grab;touch-action:none}
+  #stage.drag{cursor:grabbing}
+  .badge{position:absolute;top:10px;left:12px;font-family:ui-monospace,monospace;font-size:10.5px;
+    letter-spacing:.12em;text-transform:uppercase;color:#93a3b0;background:rgba(7,10,14,.55);
+    border:1px solid rgba(150,180,200,.14);border-radius:6px;padding:4px 8px;pointer-events:none}
+  .ro{position:absolute;top:10px;right:12px;font-family:ui-monospace,monospace;font-size:11px;color:#93a3b0;
+    background:rgba(7,10,14,.62);border:1px solid rgba(150,180,200,.14);border-radius:6px;padding:5px 9px;
+    text-align:right;line-height:1.55;pointer-events:none}
+  .ro b{font-weight:400;color:#2fd6bf}
+  .ro b.amb{color:#f4a13c}
+  .ro b.nil{color:#7b8794}
+  .ro i{font-style:normal;color:#5d6b77}
+  .ro hr{border:0;border-top:1px solid rgba(150,180,200,.16);margin:4px 0}
+  #plot{position:absolute;left:12px;bottom:10px;background:rgba(7,10,14,.62);
+    border:1px solid rgba(150,180,200,.14);border-radius:6px;pointer-events:none}
+  .row{display:flex;flex-wrap:wrap;gap:14px;align-items:center;margin-top:12px;
+    font-family:ui-monospace,monospace;font-size:12px;color:#93a3b0}
+  .row label{display:flex;align-items:center;gap:8px}
+  .row label span{color:#cdd6dd;min-width:36px}
+  input[type=range]{width:96px}
+  button{font-family:ui-monospace,monospace;font-size:11.5px;color:#cdd6dd;background:#0c1016;
+    border:1px solid rgba(150,180,200,.22);border-radius:7px;padding:6px 11px;cursor:pointer}
+  button:hover{border-color:#38d9d1}
+  button.on{border-color:#38d9d1;color:#fff}
+  .note{margin-top:12px;font-size:12px;color:#5d6b77;font-family:ui-monospace,monospace;line-height:1.6}
+  .key{display:inline-flex;align-items:center;gap:6px;margin-right:14px}
+  .sw{width:10px;height:10px;border-radius:2px;display:inline-block}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Hair and fur in wind — <code>sampleMany</code> at every strand vertex</h1>
+  <p>A groom is a few thousand strands, each a chain of 12 segments. Every segment is bent by the
+    velocity sampled at <b>its own position, at the current field time</b> — the whole strand is walked
+    through the field from root to tip, one <code>field.sampleMany(pos, out, t)</code> per segment layer
+    across all strands at once. That is the difference between hair and a flag: the root barely moves,
+    the middle leans, the tip whips, and the three disagree because they are reading three different
+    places in one continuous field.</p>
+  <p>The thing a grid or a per-strand random phase cannot give you for free: <b>neighbouring strands
+    read nearby points of the same field, so they agree — and strands a head apart read far-apart points,
+    so they do not.</b> That is what a gust <i>is</i>. Drag <b>gust size</b> up and the whole head moves as
+    one slab; drag it down and the groom breaks into fine independent twitching. <b>scatter</b> is the
+    control: it gives each strand its own random offset into the field — the usual "every strand gets its
+    own noise" shortcut — and you can watch the near-neighbour correlation collapse. Drag to orbit,
+    scroll to zoom.</p>
+  <p><b>gust size</b> is not the library's <code>coherence</code> parameter, and this page keeps the two
+    apart on purpose. Gust size is the world scale the field is read at: sampling at <code>p / L</code>
+    with <code>|k| ∈ [1, 6.2]</code> is the same field as sampling at <code>p</code> with
+    <code>|k| ∈ [1/L, 6.2/L]</code>, so that slider <i>is</i> the wavenumber band — which is what sets a
+    correlation length. <code>coherence</code> locks the mode phases toward shared centres instead: it
+    decides whether gusts sweep the groom as rigid fronts or dissolve where they stand, and over its
+    whole range it moves the far correlation by about <code>0.25 → 0.26</code> — plainly visible in the
+    motion, almost nothing in this measurement. Two knobs, two jobs; the receipt answers to the one that
+    owns it.</p>
+
+  <div id="stage">
+    <div class="badge">helix-noise · sampleMany(pos, out, t) · THREE.LineSegments</div>
+    <div class="ro" id="ro">—</div>
+    <canvas id="plot" width="416" height="188"></canvas>
+  </div>
+
+  <div class="row">
+    <button id="g-head" class="on">head</button>
+    <button id="g-pelt">fur patch</button>
+    <label>strands <input id="np" type="range" min="600" max="6000" step="200" value="2600"><span id="v-np">2600</span></label>
+    <label>length <input id="len" type="range" min="0.35" max="1.5" step="0.05" value="0.85"><span id="v-len">0.85</span></label>
+    <label>root stiffness <input id="stiff" type="range" min="0.6" max="3" step="0.1" value="1.7"><span id="v-stiff">1.7</span></label>
+    <label>give <input id="give" type="range" min="0.2" max="1.6" step="0.05" value="0.95"><span id="v-give">0.95</span></label>
+  </div>
+  <div class="row">
+    <label>wind <input id="wind" type="range" min="0" max="1.2" step="0.05" value="0.55"><span id="v-wind">0.55</span></label>
+    <label>gust size <input id="gust" type="range" min="0.1" max="3" step="0.05" value="0.7"><span id="v-gust">0.70</span></label>
+    <label>churn <input id="churn" type="range" min="0" max="2.5" step="0.05" value="0.9"><span id="v-churn">0.90</span></label>
+    <label>coherence <input id="coh" type="range" min="0" max="1" step="0.05" value="0.35"><span id="v-coh">0.35</span></label>
+    <label>scatter <input id="scat" type="range" min="0" max="1" step="0.05" value="0"><span id="v-scat">0.00</span></label>
+    <button id="reseed">↻ seed</button>
+  </div>
+
+  <p style="margin-top:14px"><b>The measured number.</b> <code>C(r)</code> is the correlation between the
+    field-driven tip displacements of two strands whose roots are <code>r</code> apart — the tip's offset
+    from where it would hang under the mean wind alone, per unit strand length, correlated pairwise and
+    normalised by Cauchy–Schwarz so it cannot exceed 1. The readout prints it at a <b>near</b> pair
+    (r ≈ 0.06, about two strand spacings) and a <b>far</b> pair (r ≈ 0.85, opposite sides of the head)
+    at the same time, and the inset plots the whole curve. On the head at the defaults it settles at
+    <code>0.97</code> near and <code>0.25</code> far. Raise <b>gust size</b> to 3 and far climbs to about
+    <code>0.77</code> — one gust now covers the whole head. Drop it to 0.25 and far falls to roughly
+    <code>0.00</code> (it dips mildly negative on the way: two strands on opposite sides of one gust lean
+    opposite ways) while near still holds <code>0.89</code>. That fall-off <i>is</i> the field's
+    correlation length, read off the hair. The fur patch is flatter and combed one way, so its strands
+    agree further: <code>0.99</code> near and <code>0.65</code> far at the same settings.</p>
+  <p><b>Why the grey line is not zero, and why one frame is not the number.</b> The dim curve is the same
+    measurement with every strand's field lookup displaced by its own random offset — statistically
+    independent samples, the "each strand gets its own noise" shortcut. It lands near <code>0.18</code>
+    at close range rather than at 0, and that residue is the <i>groom</i>, not the field: two neighbouring
+    strands share a root, a direction and a length, so their average response to any wind at all is the
+    same. At far separation, where the geometry differs too, the control does fall to about
+    <code>0.05</code>. Read the teal curve against the grey one, not against zero. And note that a single
+    frame is a single realisation of the field — instantaneously the far number swings by a few tenths as
+    gusts drift across the groom — so what is printed is a 3.5-second running average, which is what an
+    offline sweep over many field times converges to. It says <i>settling…</i> until that average has had
+    time to mean anything.</p>
+  <p><b>What this is not.</b> It is a kinematic velocity field, not a simulation. There is no pressure
+    solve, no viscosity, no strand dynamics — no mass, no inertia, no stretch or bend stiffness being
+    integrated in time, so a strand cannot overshoot or ring. <b>There is no collision of any kind</b>:
+    strands pass through each other freely, and the only thing keeping them off the scalp is a radial
+    clamp that pushes a vertex back outside the head ellipsoid. That clamp is a cosmetic projection, not
+    a contact solve, and it is applied to the wind-only reference too so it does not bias the receipt.
+    What the field genuinely guarantees is that it is analytic, grid-free, exactly divergence-free, and
+    the same everywhere — which is why sampling it at every vertex of every strand costs nothing but
+    arithmetic and needs no simulation domain around the head.</p>
+
+  <div class="note">
+    <span class="key"><span class="sw" style="background:#2fd6bf"></span>C(r), field sampled at each vertex's own position</span>
+    <span class="key"><span class="sw" style="background:#5d6b77"></span>same measurement, strands scattered to independent field points</span>
+  </div>
+  <div class="note" id="note">loading three.js…</div>
+</div>
+
+<script src="../dist/helix-noise.global.js"></script>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+  import * as THREE from "three";
+  import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+  // ---- constants shared with the verification script -----------------------
+  const SEG = 12;                       // segments per strand
+  const SCAT_MAX = 4;                   // field units of per-strand offset at scatter = 1
+  const GUST_AMP = 1.35;                // gust speed relative to the mean wind
+  const GRAV = 0.6;                     // droop
+  const DRIFT = 0.6;                    // how fast gusts travel downwind
+  const WAVE = 0.085, WAVE_K = 0.8;     // static per-strand wave, so a strand is not a straight spike
+  const WCOS = new Float64Array(SEG + 1), WSIN = new Float64Array(SEG + 1);
+  for (let s = 0; s <= SEG; s++) { WCOS[s] = Math.cos(s * WAVE_K); WSIN[s] = Math.sin(s * WAVE_K); }
+  const HX = 0.95, HY = 1.12, HZ = 1.02;// head ellipsoid semi-axes
+  const WD = (() => { const m = Math.hypot(0.95, 0.31); return [0.95 / m, 0, 0.31 / m]; })();
+  const NC = 1300;                      // strands in the scattered control (a prefix of the groom)
+
+  const P = { groom: "head", np: 2600, len: 0.85, stiff: 1.7, give: 0.95,
+              wind: 0.55, gust: 0.7, churn: 0.9, coh: 0.35, scat: 0, seed: 3 };
+
+  const field = HelixNoise.create({ modes: 24, slope: 1.7, helicity: 0.3,
+    coherence: P.coh, churn: P.churn, seed: 11, kmin: 1, kmax: 6.2 });
+
+  function mulberry(s) { return function () { s |= 0; s = (s + 0x6D2B79F5) | 0;
+    let t = Math.imul(s ^ s >>> 15, 1 | s); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+
+  // ---- three.js ------------------------------------------------------------
+  const stage = document.getElementById("stage");
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(Math.min(2, devicePixelRatio));
+  stage.appendChild(renderer.domElement);
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x070a0e);
+  scene.fog = new THREE.Fog(0x070a0e, 3.4, 11);
+  const camera = new THREE.PerspectiveCamera(38, 16 / 10, 0.05, 60);
+  camera.position.set(3.05, 1.35, 4.35);
+  const controls = new OrbitControls(camera, renderer.domElement);
+  controls.target.set(0, -0.15, 0);
+  controls.enableDamping = true; controls.autoRotate = true; controls.autoRotateSpeed = 0.42;
+  controls.minDistance = 2; controls.maxDistance = 12;
+  renderer.domElement.addEventListener("pointerdown", () => stage.classList.add("drag"));
+  addEventListener("pointerup", () => stage.classList.remove("drag"));
+
+  scene.add(new THREE.HemisphereLight(0x6f8496, 0x05080b, 0.55));
+  const key = new THREE.DirectionalLight(0xffd9ab, 1.1); key.position.set(-2.4, 3.2, 2.6); scene.add(key);
+  const rimL = new THREE.DirectionalLight(0x2fd6bf, 0.26); rimL.position.set(1.6, 0.9, -3.2); scene.add(rimL);
+
+  const headMesh = new THREE.Mesh(
+    new THREE.SphereGeometry(1, 44, 30),
+    new THREE.MeshStandardMaterial({ color: 0x1d242b, roughness: 0.95, metalness: 0 }));
+  headMesh.scale.set(HX * 0.985, HY * 0.985, HZ * 0.985);
+  scene.add(headMesh);
+
+  const ground = new THREE.Mesh(
+    new THREE.PlaneGeometry(14, 14),
+    new THREE.MeshStandardMaterial({ color: 0x0b1015, roughness: 1 }));
+  ground.rotation.x = -Math.PI / 2; ground.position.y = -0.002; ground.visible = false;
+  scene.add(ground);
+
+  // ---- the groom -----------------------------------------------------------
+  // Roots, rest directions, per-strand length and per-strand scatter direction. Rebuilt only when
+  // the groom itself changes (count / kind / seed) — the pair lists below hang off these positions.
+  let G = null, geo = null, lines = null;
+  let pos32, col32, sampleBuf, uOut, subPos, subOut, px, py, pz, dx, dy, dz;
+  let refTipX, refTipY, refTipZ;           // wind-only reference tips (no field at all)
+  let fldTipX, fldTipY, fldTipZ;           // tips of the groom you can see
+  let ctlTipX, ctlTipY, ctlTipZ;           // scattered-control tips
+  let bx, by, bz, bm;                      // per-strand bend scratch
+  let bandsFull = [], bandsCtl = [];
+
+  // separation bands for the plot; index 0 is the "near" readout, index 6 the "far" readout
+  const BANDS = [[0.03, 0.08], [0.08, 0.15], [0.15, 0.25], [0.25, 0.38], [0.38, 0.55],
+                 [0.55, 0.75], [0.75, 0.95], [0.95, 1.25], [1.25, 1.60]];
+  const NEAR_I = 0, FAR_I = 6;
+  const BAND_R = BANDS.map(b => (b[0] + b[1]) / 2);
+  const BAND_CAP = 1000;
+
+  function buildGroom() {
+    const n = P.np, rng = mulberry((P.seed * 2654435761) >>> 0 || 1);
+    const g = { n,
+      rx: new Float64Array(n), ry: new Float64Array(n), rz: new Float64Array(n),
+      dx: new Float64Array(n), dy: new Float64Array(n), dz: new Float64Array(n),
+      len: new Float64Array(n), lf: new Float64Array(n),
+      ox: new Float64Array(n), oy: new Float64Array(n), oz: new Float64Array(n),
+      wc: new Float64Array(n), ws: new Float64Array(n), tone: new Float64Array(n) };
+    let i = 0;
+    while (i < n) {
+      if (P.groom === "head") {
+        const z = 1 - 2 * rng(), th = 2 * Math.PI * rng(), r = Math.sqrt(Math.max(0, 1 - z * z));
+        const nx = r * Math.cos(th), ny = z, nz = r * Math.sin(th);
+        if (ny < -0.25) continue;                       // hairline
+        if (nz > 0.42 && ny < 0.30) continue;           // face
+        g.rx[i] = nx * HX; g.ry[i] = ny * HY; g.rz[i] = nz * HZ;
+        const m = Math.hypot(nx / HX, ny / HY, nz / HZ) || 1;   // ellipsoid normal
+        g.dx[i] = nx / HX / m; g.dy[i] = ny / HY / m; g.dz[i] = nz / HZ / m;
+        g.lf[i] = (0.72 + 0.45 * rng()) * (1 + 0.30 * (1 - ny)); // longer at the sides and back
+      } else {
+        g.rx[i] = (rng() - 0.5) * 2.8; g.ry[i] = 0; g.rz[i] = (rng() - 0.5) * 2.8;
+        const c = 0.55, m = Math.hypot(c, 1);           // combed downwind, as a groomed pelt is
+        g.dx[i] = c / m; g.dy[i] = 1 / m; g.dz[i] = 0;
+        g.lf[i] = 0.40 * (0.78 + 0.44 * rng());
+      }
+      const z2 = 1 - 2 * rng(), t2 = 2 * Math.PI * rng(), r2 = Math.sqrt(Math.max(0, 1 - z2 * z2));
+      g.ox[i] = r2 * Math.cos(t2); g.oy[i] = z2; g.oz[i] = r2 * Math.sin(t2);
+      const wp = 2 * Math.PI * rng();
+      g.wc[i] = Math.cos(wp); g.ws[i] = Math.sin(wp);
+      g.tone[i] = 0.82 + 0.36 * rng();
+      i++;
+    }
+    G = g;
+    applyLength();
+
+    // buffers
+    const V = n * (SEG + 1);
+    pos32 = new Float32Array(V * 3); col32 = new Float32Array(V * 3);
+    const idx = new Uint32Array(n * SEG * 2);
+    for (let s2 = 0, q = 0; s2 < n; s2++) {
+      const base = s2 * (SEG + 1);
+      for (let k = 0; k < SEG; k++) { idx[q++] = base + k; idx[q++] = base + k + 1; }
+    }
+    sampleBuf = new Float64Array(3 * n); uOut = new Float64Array(3 * n);
+    px = new Float64Array(n); py = new Float64Array(n); pz = new Float64Array(n);
+    dx = new Float64Array(n); dy = new Float64Array(n); dz = new Float64Array(n);
+    refTipX = new Float64Array(n); refTipY = new Float64Array(n); refTipZ = new Float64Array(n);
+    fldTipX = new Float64Array(n); fldTipY = new Float64Array(n); fldTipZ = new Float64Array(n);
+    bx = new Float64Array(n); by = new Float64Array(n); bz = new Float64Array(n); bm = new Float64Array(n);
+    const nc = Math.min(NC, n);
+    ctlTipX = new Float64Array(nc); ctlTipY = new Float64Array(nc); ctlTipZ = new Float64Array(nc);
+    subPos = sampleBuf.subarray(0, 3 * nc); subOut = uOut.subarray(0, 3 * nc);
+
+    if (lines) { scene.remove(lines); geo.dispose(); lines.material.dispose(); }
+    geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.BufferAttribute(pos32, 3));
+    geo.setAttribute("color", new THREE.BufferAttribute(col32, 3));
+    geo.setIndex(new THREE.BufferAttribute(idx, 1));
+    geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0, 0), 6);
+    lines = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({
+      vertexColors: true, transparent: true, opacity: 0.92 }));
+    scene.add(lines);
+
+    buildPairs();
+    rebuildReference();
+    resetMeasure();
+  }
+
+  function applyLength() { for (let i = 0; i < G.n; i++) G.len[i] = P.len * G.lf[i]; }
+
+  /** One bucketing pass: draw random root pairs, drop each into its separation band.
+   *  Pairs that fall inside the control prefix are bucketed for the control curve too. */
+  function buildPairs() {
+    const n = G.n, nc = Math.min(NC, n), rng = mulberry(20260726);
+    bandsFull = BANDS.map(() => ({ a: [], b: [] }));
+    bandsCtl = BANDS.map(() => ({ a: [], b: [] }));
+    const DRAWS = 400000;
+    for (let q = 0; q < DRAWS; q++) {
+      const i = (rng() * n) | 0, j = (rng() * n) | 0;
+      if (i === j) continue;
+      const d = Math.hypot(G.rx[i] - G.rx[j], G.ry[i] - G.ry[j], G.rz[i] - G.rz[j]);
+      for (let k = 0; k < BANDS.length; k++) {
+        if (d >= BANDS[k][0] && d < BANDS[k][1]) {
+          if (bandsFull[k].a.length < BAND_CAP) { bandsFull[k].a.push(i); bandsFull[k].b.push(j); }
+          if (i < nc && j < nc && bandsCtl[k].a.length < BAND_CAP) { bandsCtl[k].a.push(i); bandsCtl[k].b.push(j); }
+          break;
+        }
+      }
+    }
+  }
+
+  // ---- the strand walk -----------------------------------------------------
+  // mode 0: full groom, writes geometry + colour.  mode 1: wind-only reference (no field at all).
+  // mode 2: scattered control over the first `nc` strands (each reads an unrelated field point).
+  const KL = (() => { const v = [-0.55, 0.78, 0.62], m = Math.hypot(...v); return v.map(c => c / m); })();
+  const RL = (() => { const v = [0.42, 0.28, -0.86], m = Math.hypot(...v); return v.map(c => c / m); })();
+  const C_ROOT = [0.085, 0.052, 0.036], C_MID = [0.40, 0.215, 0.105], C_TIP = [0.86, 0.56, 0.27];
+  let ex = 0, ey = 0, ez = 1;   // view direction, refreshed per frame
+
+  function walk(mode, t) {
+    const n = mode === 2 ? Math.min(NC, G.n) : G.n;
+    const useField = mode !== 1;
+    const scat = (mode === 2 ? 1 : P.scat) * SCAT_MAX;
+    const inv = 1 / P.gust, sh = DRIFT * P.wind * t;
+    const wx = P.wind * WD[0], wz = P.wind * WD[2], ga = P.wind * GUST_AMP;
+    const shade = mode === 0;
+    for (let i = 0; i < n; i++) {
+      px[i] = G.rx[i]; py[i] = G.ry[i]; pz[i] = G.rz[i];
+      dx[i] = G.dx[i]; dy[i] = G.dy[i]; dz[i] = G.dz[i];
+      if (shade) { const o = i * (SEG + 1) * 3;
+        pos32[o] = px[i]; pos32[o + 1] = py[i]; pos32[o + 2] = pz[i];
+        shadeVertex(o, i, 0, dx[i], dy[i], dz[i]); }
+    }
+    for (let s = 0; s < SEG; s++) {
+      if (useField) {
+        for (let i = 0; i < n; i++) {
+          sampleBuf[3 * i]     = (px[i] - WD[0] * sh) * inv + scat * G.ox[i];
+          sampleBuf[3 * i + 1] = py[i] * inv + scat * G.oy[i];
+          sampleBuf[3 * i + 2] = (pz[i] - WD[2] * sh) * inv + scat * G.oz[i];
+        }
+        // one batched call per segment layer: all strands advance their sth vertex together
+        if (mode === 2) field.sampleMany(subPos, subOut, t);
+        else field.sampleMany(sampleBuf, uOut, t);
+      }
+      const w = P.give * Math.pow((s + 1) / SEG, P.stiff);   // root stiff, tip floppy
+      // static wave, identical in the reference walk, so it never enters the measured bend
+      const wvA = WAVE * WCOS[s + 1], wvB = WAVE * WSIN[s + 1];
+      for (let i = 0; i < n; i++) {
+        const seg = G.len[i] / SEG;
+        const ux = useField ? uOut[3 * i] * ga : 0;
+        const uy = useField ? uOut[3 * i + 1] * ga : 0;
+        const uz = useField ? uOut[3 * i + 2] * ga : 0;
+        const wv = wvA * G.wc[i] - wvB * G.ws[i], wv2 = wvA * G.ws[i] + wvB * G.wc[i];
+        let tx = dx[i] + w * (ux + wx) + wv;
+        let ty = dy[i] + w * uy - GRAV * w;
+        let tz = dz[i] + w * (uz + wz) + wv2;
+        const m = Math.hypot(tx, ty, tz) || 1;
+        tx /= m; ty /= m; tz /= m;
+        dx[i] = tx; dy[i] = ty; dz[i] = tz;
+        let nx = px[i] + tx * seg, ny = py[i] + ty * seg, nz = pz[i] + tz * seg;
+        if (P.groom === "head") {                    // cosmetic clamp, NOT a collision solve
+          const q = Math.hypot(nx / HX, ny / HY, nz / HZ);
+          if (q < 1.004) { const f = 1.004 / (q || 1e-9); nx *= f; ny *= f; nz *= f; }
+        } else if (ny < 0.008) ny = 0.008;
+        px[i] = nx; py[i] = ny; pz[i] = nz;
+        if (shade) { const o = (i * (SEG + 1) + s + 1) * 3;
+          pos32[o] = nx; pos32[o + 1] = ny; pos32[o + 2] = nz;
+          shadeVertex(o, i, (s + 1) / SEG, tx, ty, tz); }
+      }
+    }
+    const dstX = mode === 0 ? fldTipX : mode === 1 ? refTipX : ctlTipX;
+    const dstY = mode === 0 ? fldTipY : mode === 1 ? refTipY : ctlTipY;
+    const dstZ = mode === 0 ? fldTipZ : mode === 1 ? refTipZ : ctlTipZ;
+    for (let i = 0; i < n; i++) { dstX[i] = px[i]; dstY[i] = py[i]; dstZ[i] = pz[i]; }
+  }
+
+  /** Kajiya–Kay: hair has a tangent, not a normal. Cheap enough to run per vertex per frame. */
+  function shadeVertex(o, i, u, tx, ty, tz) {
+    const a = u < 0.5 ? u * 2 : 0, b = u < 0.5 ? 0 : (u - 0.5) * 2;
+    const c0 = u < 0.5 ? C_ROOT : C_MID, c1 = u < 0.5 ? C_MID : C_TIP, m = u < 0.5 ? a : b;
+    const tone = G.tone[i];
+    const tl = tx * KL[0] + ty * KL[1] + tz * KL[2];
+    const te = tx * ex + ty * ey + tz * ez;
+    const sl = Math.sqrt(Math.max(0, 1 - tl * tl)), se = Math.sqrt(Math.max(0, 1 - te * te));
+    let sp = sl * se - tl * te; sp = sp > 0 ? sp : 0;
+    const s2 = sp * sp, s4 = s2 * s2, s8 = s4 * s4, s16 = s8 * s8, spec = s16 * s16 * s8; // ^40
+    const tr = tx * RL[0] + ty * RL[1] + tz * RL[2];
+    const rim = Math.max(0, 1 - tr * tr); const rim3 = rim * rim * rim;
+    const d = 0.15 + 0.74 * sl;
+    col32[o]     = (c0[0] + (c1[0] - c0[0]) * m) * tone * d + 1.00 * spec * 0.34 + 0.18 * rim3 * 0.15;
+    col32[o + 1] = (c0[1] + (c1[1] - c0[1]) * m) * tone * d + 0.86 * spec * 0.34 + 0.84 * rim3 * 0.15;
+    col32[o + 2] = (c0[2] + (c1[2] - c0[2]) * m) * tone * d + 0.66 * spec * 0.34 + 0.75 * rim3 * 0.15;
+  }
+
+  function rebuildReference() { walk(1, 0); }
+
+  // ---- the receipt ---------------------------------------------------------
+  // b_i = (tip_with_field − tip_wind_only) / strand length: the field-driven part of the bend.
+  // C = Σ b_i·b_j / Σ |b_i||b_j| over a pair list — Cauchy–Schwarz, so |C| ≤ 1 always.
+  function bends(tx, ty, tz, n) {
+    for (let i = 0; i < n; i++) {
+      const L = G.len[i] || 1e-9;
+      const ax = (tx[i] - refTipX[i]) / L, ay = (ty[i] - refTipY[i]) / L, az = (tz[i] - refTipZ[i]) / L;
+      bx[i] = ax; by[i] = ay; bz[i] = az; bm[i] = Math.hypot(ax, ay, az);
+    }
+  }
+  function corr(list) {
+    let num = 0, den = 0;
+    for (let q = 0; q < list.a.length; q++) {
+      const i = list.a[q], j = list.b[q];
+      num += bx[i] * bx[j] + by[i] * by[j] + bz[i] * bz[j];
+      den += bm[i] * bm[j];
+    }
+    return den > 1e-30 ? num / den : NaN;
+  }
+  let cField = new Array(BANDS.length).fill(NaN);
+  let cCtl = new Array(BANDS.length).fill(NaN);
+  // A single frame is one realisation of the field: C(r) computed on it is an unbiased but noisy
+  // estimate, and at large r it swings by ±0.3 as gusts drift across the groom. The readout is a
+  // time average over TAU seconds of field time, which is the quantity the sweep script converges to.
+  const TAU = 3.5;
+  let alpha = 0.02;
+  function accumulate(into, lists) {
+    for (let k = 0; k < BANDS.length; k++) {
+      const v = lists[k].a.length >= 40 ? corr(lists[k]) : NaN;
+      into[k] = Number.isNaN(into[k]) || Number.isNaN(v) ? v : into[k] + alpha * (v - into[k]);
+    }
+  }
+  function measureField() { bends(fldTipX, fldTipY, fldTipZ, G.n); accumulate(cField, bandsFull); }
+  function measureCtl() { bends(ctlTipX, ctlTipY, ctlTipZ, Math.min(NC, G.n)); accumulate(cCtl, bandsCtl); }
+  function resetMeasure() { cField = cField.map(() => NaN); cCtl = cCtl.map(() => NaN); settle = 0; }
+  let settle = 0;
+
+  // ---- readout + plot ------------------------------------------------------
+  const ro = document.getElementById("ro");
+  const plot = document.getElementById("plot"), pctx = plot.getContext("2d");
+  const num = v => Number.isNaN(v) ? "—" : (v >= 0 ? " " : "") + v.toFixed(2);
+  let fps = 60;
+
+  function readout() {
+    const cn = cField[NEAR_I], cf = cField[FAR_I];
+    const kn = cCtl[NEAR_I], kf = cCtl[FAR_I];
+    const s = settle < TAU * 1.6 ? ` <i>settling…</i>` : "";
+    ro.innerHTML =
+      `${G.n.toLocaleString()} strands × ${SEG} seg<br>` +
+      `${(G.n * SEG).toLocaleString()} samples/frame · <b class="nil">${fps.toFixed(0)} fps</b><hr>` +
+      `C(r=${BAND_R[NEAR_I].toFixed(2)}) near <b>${num(cn)}</b><br>` +
+      `C(r=${BAND_R[FAR_I].toFixed(2)}) far <b class="amb">${num(cf)}</b>${s}<hr>` +
+      `<i>scattered control</i><br>` +
+      `near <b class="nil">${num(kn)}</b> · far <b class="nil">${num(kf)}</b>`;
+  }
+
+  function drawPlot() {
+    const W = plot.width, H = plot.height, dpr = 2;
+    const L = 34 * dpr, R = W - 8 * dpr, T = 12 * dpr, B = H - 20 * dpr;
+    const rmax = 1.6, cx = r => L + (R - L) * Math.min(1, r / rmax);
+    const cy = c => B - (B - T) * (Math.max(-0.2, Math.min(1, c)) + 0.2) / 1.2;
+    pctx.clearRect(0, 0, W, H);
+    pctx.font = `${9 * dpr}px ui-monospace, monospace`;
+    pctx.textBaseline = "middle";
+    pctx.strokeStyle = "rgba(150,180,200,.16)"; pctx.lineWidth = dpr;
+    for (const c of [1, 0.5, 0]) {
+      pctx.beginPath(); pctx.moveTo(L, cy(c)); pctx.lineTo(R, cy(c)); pctx.stroke();
+      pctx.fillStyle = "#5d6b77"; pctx.textAlign = "right";
+      pctx.fillText(c.toFixed(1), L - 4 * dpr, cy(c));
+    }
+    // the two separations the readout prints
+    pctx.setLineDash([2 * dpr, 3 * dpr]); pctx.strokeStyle = "rgba(244,161,60,.30)";
+    for (const i of [NEAR_I, FAR_I]) {
+      pctx.beginPath(); pctx.moveTo(cx(BAND_R[i]), T); pctx.lineTo(cx(BAND_R[i]), B); pctx.stroke();
+    }
+    pctx.setLineDash([]);
+    const line = (arr, colour, width) => {
+      pctx.strokeStyle = colour; pctx.lineWidth = width * dpr; pctx.beginPath();
+      let started = false;
+      for (let k = 0; k < BANDS.length; k++) {
+        if (Number.isNaN(arr[k])) continue;
+        const X = cx(BAND_R[k]), Y = cy(arr[k]);
+        if (started) pctx.lineTo(X, Y); else { pctx.moveTo(X, Y); started = true; }
+      }
+      pctx.stroke();
+      for (let k = 0; k < BANDS.length; k++) {
+        if (Number.isNaN(arr[k])) continue;
+        pctx.fillStyle = colour;
+        pctx.beginPath(); pctx.arc(cx(BAND_R[k]), cy(arr[k]), 1.6 * dpr, 0, 6.284); pctx.fill();
+      }
+    };
+    line(cCtl, "#5d6b77", 1.2);
+    line(cField, "#2fd6bf", 1.6);
+    pctx.fillStyle = "#5d6b77"; pctx.textAlign = "left";
+    pctx.fillText("C(r)", L + 2 * dpr, T + 2 * dpr);
+    pctx.textAlign = "center";
+    pctx.fillText("root separation r →", (L + R) / 2, B + 10 * dpr);
+    pctx.textAlign = "right";
+    pctx.fillText(rmax.toFixed(1), R, B + 10 * dpr);
+  }
+
+  // ---- loop ----------------------------------------------------------------
+  function size() {
+    renderer.setSize(stage.clientWidth, stage.clientHeight);
+    camera.aspect = stage.clientWidth / stage.clientHeight; camera.updateProjectionMatrix();
+    const s = Math.min(1, stage.clientWidth / 620);
+    plot.style.width = (208 * s) + "px"; plot.style.height = (94 * s) + "px";
+  }
+  addEventListener("resize", size);
+
+  let ft = 0, frames = 0;
+  function frame(now) {
+    const dt = frame.last ? Math.min(0.05, (now - frame.last) * 0.001) : 0.016;
+    if (frame.last) fps += 0.06 * (1 / Math.max(1e-3, dt) - fps);
+    frame.last = now;
+    ft += dt;
+    alpha = 1 - Math.exp(-dt / TAU);
+    settle += dt;
+    const cl = Math.hypot(camera.position.x, camera.position.y, camera.position.z) || 1;
+    ex = camera.position.x / cl; ey = camera.position.y / cl; ez = camera.position.z / cl;
+    walk(0, ft);
+    geo.attributes.position.needsUpdate = true;
+    geo.attributes.color.needsUpdate = true;
+    measureField();
+    if (frames & 1) { walk(2, ft); measureCtl(); }   // control every other frame, half the cost
+    if ((frames++ & 3) === 0) { readout(); drawPlot(); }
+    controls.update();
+    renderer.render(scene, camera);
+    requestAnimationFrame(frame);
+  }
+
+  // ---- controls ------------------------------------------------------------
+  const $ = id => document.getElementById(id);
+  const fmt = (id, v, d = 2) => { $("v-" + id).textContent = v.toFixed(d); };
+  function slider(id, key, digits, after) {
+    $(id).addEventListener("input", e => {
+      P[key] = parseFloat(e.target.value); fmt(id, P[key], digits);
+      if (after) after();
+      resetMeasure();   // the time average is only meaningful for one setting at a time
+    });
+  }
+  slider("len", "len", 2, () => { applyLength(); rebuildReference(); });
+  slider("stiff", "stiff", 1, rebuildReference);
+  slider("give", "give", 2, rebuildReference);
+  slider("wind", "wind", 2, rebuildReference);
+  slider("gust", "gust", 2);
+  slider("scat", "scat", 2);
+  slider("churn", "churn", 2, () => field.set({ churn: P.churn }));
+  slider("coh", "coh", 2, () => field.set({ coherence: P.coh }));
+  $("np").addEventListener("input", e => {
+    P.np = parseInt(e.target.value, 10); $("v-np").textContent = P.np; buildGroom(); note();
+  });
+  function pickGroom(kind) {
+    P.groom = kind;
+    $("g-head").classList.toggle("on", kind === "head");
+    $("g-pelt").classList.toggle("on", kind === "pelt");
+    headMesh.visible = kind === "head"; ground.visible = kind === "pelt";
+    if (kind === "head") { camera.position.set(3.05, 1.35, 4.35); controls.target.set(0, -0.15, 0); }
+    else { camera.position.set(1.75, 1.55, 2.5); controls.target.set(0, 0.02, 0); }
+    buildGroom(); note();
+  }
+  $("g-head").onclick = () => pickGroom("head");
+  $("g-pelt").onclick = () => pickGroom("pelt");
+  $("reseed").onclick = () => {
+    P.seed = (P.seed * 1103515245 + 12345) >>> 0;
+    field.set({ seed: (P.seed % 100000) + 1 });
+    buildGroom();
+  };
+
+  function note() {
+    document.getElementById("note").textContent =
+      `${P.groom === "head" ? "head groom" : "fur patch"} · ${G.n.toLocaleString()} strands × ${SEG} segments ` +
+      `= ${(G.n * SEG).toLocaleString()} field samples per frame from ${SEG} batched sampleMany() calls, plus ` +
+      `${(Math.min(NC, G.n) * SEG).toLocaleString()} on alternate frames for the scattered control · 24 modes · ` +
+      `THREE.LineSegments, one draw call, vertex colours shaded on the CPU · three.js r160`;
+  }
+
+  size(); buildGroom(); note();
+  if (window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    controls.autoRotate = false; P.churn = 0; field.set({ churn: 0 });
+    $("churn").value = "0"; fmt("churn", 0);
+  }
+  requestAnimationFrame(frame);
+</script>
+</body>
+</html>

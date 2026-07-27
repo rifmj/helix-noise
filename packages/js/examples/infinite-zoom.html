@@ -1,0 +1,411 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Helix Noise — infinite zoom (the dive and the clock)</title>
+<style>
+  html,body{margin:0;background:#070a0e;color:#cdd6dd;font-family:system-ui,sans-serif}
+  .wrap{max-width:980px;margin:0 auto;padding:22px 16px}
+  .wrap.tight{padding-top:16px;padding-bottom:10px}
+  h1{font-size:19px;font-weight:600;margin:0 0 6px}
+  h1 code{color:#f4a13c}
+  p{color:#8a97a2;font-size:13.5px;line-height:1.6;margin:0 0 14px}
+  p b{color:#cdd6dd;font-weight:500}
+  code{font-family:ui-monospace,Menlo,monospace;color:#f4a13c;font-size:12.5px}
+  #stage{position:relative;width:100%;height:74vh;min-height:340px;overflow:hidden;
+    background:#070a0e;border-top:1px solid rgba(150,180,200,.15);border-bottom:1px solid rgba(150,180,200,.15)}
+  #main{width:100%;height:100%;display:block}
+  .badge{position:absolute;top:10px;left:12px;font-family:ui-monospace,monospace;font-size:10.5px;
+    letter-spacing:.12em;text-transform:uppercase;color:#93a3b0;background:rgba(7,10,14,.55);
+    border:1px solid rgba(150,180,200,.14);border-radius:6px;padding:4px 8px;pointer-events:none}
+  .ro{position:absolute;top:10px;right:12px;font-family:ui-monospace,monospace;font-size:11px;color:#93a3b0;
+    background:rgba(7,10,14,.62);border:1px solid rgba(150,180,200,.14);border-radius:6px;padding:6px 9px;
+    text-align:right;line-height:1.55;pointer-events:none}
+  .ro b{font-weight:400;color:#2fd6bf}
+  .ro b.bad{color:#f4a13c}
+  .ro i{font-style:normal;color:#5d6b77}
+  .alarm{position:absolute;top:10px;left:50%;transform:translateX(-50%);font-family:ui-monospace,monospace;
+    font-size:11px;color:#f4a13c;background:rgba(7,10,14,.62);border:1px solid rgba(244,161,60,.45);
+    border-radius:6px;padding:5px 10px;pointer-events:none;display:none}
+  .proof{position:absolute;left:12px;bottom:14px;display:flex;gap:8px;align-items:flex-end;
+    background:rgba(7,10,14,.6);border:1px solid rgba(150,180,200,.14);border-radius:8px;padding:8px;pointer-events:none}
+  .proof figure{margin:0;text-align:center}
+  .proof canvas{width:64px;height:64px;display:block;border-radius:4px;background:#04070a}
+  .proof figcaption{font-family:ui-monospace,monospace;font-size:9px;color:#6c7d8a;margin-top:4px;letter-spacing:.04em}
+  .phase{position:absolute;left:0;right:0;bottom:0;height:3px;background:rgba(150,180,200,.1)}
+  .phase i{display:block;height:100%;background:#38d9d1;width:0}
+  .row{display:flex;flex-wrap:wrap;gap:14px;align-items:center;margin-top:12px;font-family:ui-monospace,monospace;font-size:12px;color:#93a3b0}
+  .row label{display:flex;align-items:center;gap:8px}
+  input[type=range]{width:110px}
+  button{font-family:ui-monospace,monospace;font-size:11.5px;color:#cdd6dd;background:#0c1016;
+    border:1px solid rgba(150,180,200,.22);border-radius:7px;padding:6px 11px;cursor:pointer}
+  button:hover{border-color:#38d9d1}
+  button.on{border-color:#38d9d1;color:#fff}
+  button.warn{border-color:#f4a13c;color:#f4a13c}
+  .note{margin-top:12px;font-size:12px;color:#5d6b77;font-family:ui-monospace,monospace;line-height:1.6}
+</style>
+</head>
+<body>
+<div class="wrap tight">
+  <h1>Infinite zoom — <code>dssCollapse</code>, <code>compose</code></h1>
+  <p>The field is a function of position, not an array of samples, so there is no resolution to run
+    out of: evaluating it at <code>1e-30</code> costs exactly what evaluating it at <code>1</code>
+    costs. That alone does not buy you an infinite zoom, and this page is careful about the
+    difference. A smooth field magnified far enough is <b>correctly featureless</b> — the answer is
+    exact and there is nothing in it. What keeps the picture full at every depth is the collapse
+    law: advance the renormalisation time <code>s = −log(T−t)</code> by <code>log λ</code> and the
+    field returns to <b>exactly</b> what it was, rescaled by <code>λ^−b</code> in space and
+    <code>λ^a</code> in amplitude. Camera and clock advance together, and one period tiles the
+    entire dive.</p>
+</div>
+
+<div id="stage">
+  <canvas id="main"></canvas>
+  <div class="badge">helix-noise · log-periodic dive · canvas2d</div>
+  <div class="ro" id="ro">—</div>
+  <div class="alarm" id="alarm">tile mismatch</div>
+  <div class="proof">
+    <figure><canvas id="pa" width="48" height="48"></canvas><figcaption>now</figcaption></figure>
+    <figure><canvas id="pb" width="48" height="48"></canvas><figcaption>−1 period ×λ^(2a+b)</figcaption></figure>
+    <figure><canvas id="pd" width="48" height="48"></canvas><figcaption>diff <span id="dmax">—</span></figcaption></figure>
+  </div>
+  <div class="phase"><i id="ph"></i></div>
+</div>
+
+<div class="wrap">
+  <div class="row">
+    <button id="b-clock" class="on">clock: matched ✓</button>
+    <button id="b-loop" class="on">loop: exact ✓</button>
+    <button id="b-bake">sampling: analytic</button>
+    <button id="b-reset">restart at ×1</button>
+  </div>
+  <div class="row">
+    <label>λ <input id="lam" type="range" min="2" max="5" step="0.5" value="3"><span id="v-lam">3.0</span></label>
+    <label>b <input id="b" type="range" min="0.40" max="0.95" step="0.01" value="0.62"><span id="v-b">0.62</span></label>
+    <label>a <input id="a" type="range" min="0.5" max="1.4" step="0.01" value="0.90"><span id="v-a">0.90</span></label>
+    <label>speed <input id="sp" type="range" min="0.05" max="0.8" step="0.01" value="0.25"><span id="v-sp">0.25</span></label>
+  </div>
+
+  <p><b>The receipt is the tile error.</b> Every frame the page takes 48 of the points it is about to
+    draw, samples the field there, and compares them against the same 48 screen points one period
+    earlier — a window <code>λ^b</code> wider, at <code>s − log λ</code> — rescaled by
+    <code>λ^a</code>. That is precisely the claim the dive rests on, so if it fails the dive is a
+    lie. It reads about <code>1e-14</code> relative: not <code>1e-16</code>, because the camera is
+    recomputed from scratch at both ends and <code>exp</code>/<code>pow</code> disagree in the last
+    couple of bits, which is roundoff in the test rig rather than error in the law.
+    <b>loop: broken</b> sets <code>freezeProfile: false</code>, so the wrapped field keeps its own
+    clock and no longer repeats — the number jumps to <b>~1.1</b>, the difference panel lights up,
+    and you can see the picture snap once per period. <b>clock: off</b> pins the field's time and
+    lets the camera keep diving into a frozen field: the tile error goes to <b>~2.6</b> and, more
+    tellingly, <code>detail</code> collapses from <code>0.99</code> to <code>1e-4</code> within four
+    decades. That is the honest limit of zooming into a fixed analytic field, and it is why the
+    clock has to move.</p>
+
+  <p><b>And the grid.</b> <code>sampling: baked 512³</code> quantises the sample position to a fixed
+    world lattice — a nearest-neighbour lookup into a volume baked once at 512³, which for three
+    float32 velocity components is 1.6 GB and lasts until magnification 512. The relative error
+    against the analytic value is printed whether the toggle is on or off, so you can watch it climb
+    before you look at it: about <code>5e-2</code> at ×1, <code>9e-1</code> by ×60, and pinned near
+    <code>1.3</code> once the whole view fits inside one voxel. Trilinear filtering would soften the
+    blocks and not change that number. You could instead bake the <em>profile</em> once, in the frame
+    the law rescales, and do the rescaling analytically — that genuinely works, it is worth knowing
+    it works, and it costs you an interpolation error at every sample plus the requirement that your
+    field have an exact rescaling law in the first place.</p>
+
+  <p><b>What is honestly unbounded, and what is not.</b> The depth counter is a log accumulator, so
+    it passes <code>1e30</code> with no special case, and the renderer stays in one period by
+    subtracting <code>log λ</code> from <code>s</code> whenever it wraps — which is legitimate only
+    because the loop is exact, which is the number above. The base profile is small: two octave bands
+    composed with <code>compose</code>, <code>k = 1…24</code> in 18 modes, about 1.4 decades of
+    content. Nothing in it knows about <code>1e30</code>. What is unbounded is the law that rescales
+    it, and the price of that is repetition — a zoom that stays sharp forever <em>has</em> to repeat,
+    because there is one profile and it is being reused. This page shows you the repetition rather
+    than hiding it behind a cross-fade.</p>
+
+  <div class="note" id="note">—</div>
+</div>
+
+<script src="../dist/helix-noise.global.js"></script>
+<script>
+(() => {
+  const TAU = Math.PI * 2, LN10 = Math.LN10, T = 1;
+  // W0 sets how much of the profile one screen holds; ORB/SWAY are the camera's own motion, chosen
+  // 1-periodic so that the movie closes exactly when the field does. NBAKE is the imagined texture.
+  const W0 = 1.9, ORB = 0.55, SWAY = 0.4, NBAKE = 512;
+  const params = { lambda: 3, b: 0.62, a: 0.9, speed: 0.25, clock: true, loop: true, baked: false };
+
+  /** 1-periodic, strictly positive: the only freedom the dss law leaves in L(t). */
+  const theta = (p) => Math.exp(SWAY * Math.cos(TAU * p));
+
+  // ---- the field ---------------------------------------------------------
+  // Two octave bands rather than one: the coarse band draws the structures, the fine one gives them
+  // texture, and `compose` sums them without touching divergence-freedom. 1.4 decades, 18 modes.
+  let field, logL;
+  function build() {
+    logL = Math.log(params.lambda);
+    const base = HelixNoise.compose(
+      HelixNoise.create({ modes: 10, kmin: 1, kmax: 6, amplitude: 1, slope: 1.2, coherence: 0.5, seed: 11, churn: 1 }),
+      HelixNoise.create({ modes: 8, kmin: 6, kmax: 24, amplitude: 0.35, slope: 1.2, coherence: 0.3, seed: 12, churn: 1 })
+    );
+    field = HelixNoise.dssCollapse(base, {
+      T, lambda: params.lambda, b: params.b, a: params.a,
+      freezeProfile: params.loop, scaleProfile: theta, minTau: 1e-12,
+    });
+  }
+  build();
+
+  // ---- state -------------------------------------------------------------
+  // `sInt` is the renormalisation time actually sampled; it is kept inside one period. `depth10` is
+  // log10 of the true magnification and is never wrapped — it is the only unbounded quantity here.
+  let sInt = 1e-3, periods = 0, depth10 = 0, tPin = 0;
+
+  const stage = document.getElementById("stage");
+  const main = document.getElementById("main");
+  const mctx = main.getContext("2d", { alpha: false });
+  let RES = 300, RW = 300, RH = 170, img = null, buf = null;
+  function setRes(w) {
+    RES = w;
+    const asp = Math.max(1, stage.clientWidth / Math.max(1, stage.clientHeight));
+    RW = Math.round(w); RH = Math.max(80, Math.round(w / asp));
+    main.width = RW; main.height = RH;
+    img = mctx.createImageData(RW, RH);
+    buf = new Float64Array(RW * RH);
+  }
+  setRes(RES);
+  addEventListener("resize", () => setRes(RES));
+
+  const uw = [0, 0, 0, 0, 0, 0], uw2 = [0, 0, 0, 0, 0, 0];
+
+  // ---- camera ------------------------------------------------------------
+  // W ∝ (T−t)^b is the one rate at which the base box stays put: dive faster and the picture goes
+  // smooth, dive slower and it drops below the pixel. Everything else is 1-periodic in the phase,
+  // so x(u, s + log λ) = λ^−b · x(u, s) exactly — which is what makes the tile test meaningful.
+  function camera(s) {
+    const tau = Math.exp(-s), W = W0 * Math.pow(tau, params.b);
+    const ph = ((s / logL) % 1 + 1) % 1, ang = TAU * ph;
+    const co = Math.cos(ang), si = Math.sin(ang);
+    return { W, ph, co, si, cx: W * ORB * co, cy: W * ORB * si, t: T - tau, asp: RW / RH };
+  }
+  const wx = (c, ux, uy) => c.cx + c.W * (c.co * ux * c.asp - c.si * uy);
+  const wy = (c, ux, uy) => c.cy + c.W * (c.si * ux * c.asp + c.co * uy);
+
+  /**
+   * Lattice pitch of the imagined bake, expressed in the coordinates we are sampling in. The bake
+   * lives in *true* world units, and the renderer's coordinates are the true ones scaled up by one
+   * factor of λ^b per tiled period — so the voxels grow relative to the view, which is exactly the
+   * thing a baked field cannot avoid. Capped when the view no longer spans one voxel, purely to
+   * keep the sample coordinate in a range where sin() still means something.
+   */
+  function pitch(c) {
+    const h = ((2 * W0) / NBAKE) * Math.exp(depth10 * LN10 - params.b * sInt);
+    return Math.min(h, 1e4 * c.W);
+  }
+  const snap = (v, h) => (Math.floor(v / h) + 0.5) * h;
+
+  // ---- colour ------------------------------------------------------------
+  const paint = (data, arr, n, peak, gain) => {
+    let p = 0;
+    for (let i = 0; i < n; i++) {
+      const v = Math.sign(arr[i]) * Math.pow(Math.min(1, Math.abs(arr[i]) / peak * gain), 0.55);
+      const pos = Math.max(0, v), neg = Math.max(0, -v);
+      data[p++] = 20 + neg * 224;
+      data[p++] = 26 + pos * 190 + neg * 135;
+      data[p++] = 32 + pos * 165 + neg * 28;
+      data[p++] = 255;
+    }
+  };
+
+  // ---- the slice ---------------------------------------------------------
+  // u·ω at z = 0: signed, so the two handednesses separate, and renormalised per frame because the
+  // amplitude law sweeps decades. Returns the measured peak and `detail` — the rms variation across
+  // the screen over the rms level, which is 1 for a picture and 0 for a wash.
+  function drawSlice(c, tFld) {
+    const h = params.baked ? pitch(c) : 0, zq = params.baked ? 0.5 * h : 0;
+    let n = 0, peak = 1e-300, s1 = 0, s2 = 0;
+    for (let j = 0; j < RH; j++) {
+      const uy = ((j + 0.5) / RH) * 2 - 1;
+      for (let i = 0; i < RW; i++) {
+        const ux = ((i + 0.5) / RW) * 2 - 1;
+        let x = wx(c, ux, uy), y = wy(c, ux, uy);
+        if (params.baked) { x = snap(x, h); y = snap(y, h); }
+        field.sampleUW(x, y, zq, uw, tFld);
+        const v = uw[0] * uw[3] + uw[1] * uw[4] + uw[2] * uw[5];
+        buf[n++] = v;
+        const m = Math.abs(v);
+        if (m > peak) peak = m;
+        s1 += v; s2 += v * v;
+      }
+    }
+    paint(img.data, buf, n, peak, 1);
+    mctx.putImageData(img, 0, 0);
+    const mean = s1 / n, msq = s2 / n;
+    return { peak, detail: Math.sqrt(Math.max(0, msq - mean * mean) / Math.max(msq, 1e-300)) };
+  }
+
+  // ---- receipt 1: the tile error -----------------------------------------
+  // The claim: this screen, one period ago, was the same screen λ^b wider and λ^a fainter. Measured
+  // on the points being drawn, not on a convenient subset of the field.
+  const PTS = [];
+  for (let i = 0; i < 48; i++) PTS.push([Math.sin(i * 1.7) * 0.94, Math.cos(i * 2.3) * 0.94]);
+  function tileError() {
+    const now = camera(sInt), prev = camera(sInt - logL);
+    const sAm = Math.pow(params.lambda, params.a);
+    const tN = params.clock ? now.t : tPin, tP = params.clock ? prev.t : tPin;
+    let err = 0, mag = 1e-300;
+    for (const [ux, uy] of PTS) {
+      field.sampleUW(wx(now, ux, uy), wy(now, ux, uy), 0, uw, tN);
+      field.sampleUW(wx(prev, ux, uy), wy(prev, ux, uy), 0, uw2, tP);
+      for (let k = 0; k < 3; k++) {
+        const d = Math.abs(uw[k] - sAm * uw2[k]);
+        if (d > err) err = d;
+        const m = Math.abs(uw[k]);
+        if (m > mag) mag = m;
+      }
+    }
+    // Both halves of the ratio, because a small quotient with an unstated denominator is not
+    // evidence: `mag` is the size of the thing that agreed, and it has to be visibly non-zero.
+    return { rel: err / mag, mag };
+  }
+
+  // ---- receipt 2: what a bake would cost ---------------------------------
+  // Computed every frame whether or not the picture is quantised, so the cost is visible before you
+  // ask to see it. Relative L2 over the velocity vector, on a 16×16 grid of screen points.
+  function gridError(c, tFld) {
+    const h = pitch(c);
+    let num = 0, den = 1e-300;
+    for (let j = 0; j < 16; j++) for (let i = 0; i < 16; i++) {
+      const ux = (i / 15) * 1.9 - 0.95, uy = (j / 15) * 1.9 - 0.95;
+      const x = wx(c, ux, uy), y = wy(c, ux, uy);
+      field.sampleUW(x, y, 0, uw, tFld);
+      field.sampleUW(snap(x, h), snap(y, h), 0.5 * h, uw2, tFld);
+      for (let k = 0; k < 3; k++) { const d = uw2[k] - uw[k]; num += d * d; den += uw[k] * uw[k]; }
+    }
+    return Math.sqrt(num / den);
+  }
+
+  // ---- receipt 3: the same thing as pictures ------------------------------
+  const P = 48;
+  const pcv = ["pa", "pb", "pd"].map((id) => {
+    const cx = document.getElementById(id).getContext("2d");
+    return { ctx: cx, img: cx.createImageData(P, P) };
+  });
+  const A = new Float64Array(P * P), B = new Float64Array(P * P), D = new Float64Array(P * P);
+  function drawProof(c, tFld) {
+    const prev = camera(sInt - logL), tP = params.clock ? prev.t : tPin;
+    // u·ω carries A²/L, so one period back it is fainter by λ^(2a+b) — not λ^a.
+    const g = Math.pow(params.lambda, 2 * params.a + params.b);
+    let peak = 1e-300, dmax = 0;
+    for (let j = 0; j < P; j++) for (let i = 0; i < P; i++) {
+      const ux = ((i + 0.5) / P) * 2 - 1, uy = ((j + 0.5) / P) * 2 - 1, n = j * P + i;
+      field.sampleUW(wx(c, ux, uy), wy(c, ux, uy), 0, uw, tFld);
+      A[n] = uw[0] * uw[3] + uw[1] * uw[4] + uw[2] * uw[5];
+      field.sampleUW(wx(prev, ux, uy), wy(prev, ux, uy), 0, uw2, tP);
+      B[n] = g * (uw2[0] * uw2[3] + uw2[1] * uw2[4] + uw2[2] * uw2[5]);
+      D[n] = A[n] - B[n];
+      peak = Math.max(peak, Math.abs(A[n]));
+      dmax = Math.max(dmax, Math.abs(D[n]));
+    }
+    paint(pcv[0].img.data, A, P * P, peak, 1); pcv[0].ctx.putImageData(pcv[0].img, 0, 0);
+    paint(pcv[1].img.data, B, P * P, peak, 1); pcv[1].ctx.putImageData(pcv[1].img, 0, 0);
+    paint(pcv[2].img.data, D, P * P, peak, 1e6); pcv[2].ctx.putImageData(pcv[2].img, 0, 0);
+    // A black difference panel is also what a panel that never ran looks like, so the panel carries
+    // its own measured maximum: "—" until it has drawn, a number every time after.
+    document.getElementById("dmax").textContent = (dmax / peak).toExponential(0);
+  }
+
+  // ---- loop --------------------------------------------------------------
+  const ro = document.getElementById("ro"), ph = document.getElementById("ph"), alarm = document.getElementById("alarm");
+  /** Print 10^L without ever forming it — the true amplitude passes 1e308 long before the picture cares. */
+  function dec(L) {
+    const e = Math.floor(L), m = Math.pow(10, L - e);
+    return m.toFixed(2) + "e" + (e < 0 ? "" : "+") + e;
+  }
+  let last = performance.now(), proofClock = 1, fps = 0, frames = 0, sinceTune = 0, ms = 0;
+
+  function frame(now) {
+    const dt = Math.min(0.05, (now - last) / 1000); last = now;
+    const ds = dt * params.speed;
+    sInt += ds;
+    depth10 += (params.b * ds) / LN10;
+    // Staying inside one period is the loop being *used*, not just measured. With the loop broken
+    // this same subtraction is what makes the picture jump.
+    if (params.clock) while (sInt >= logL) { sInt -= logL; periods++; }
+
+    const t0 = performance.now();
+    const c = camera(sInt);
+    const tFld = params.clock ? c.t : tPin;
+    const st = drawSlice(c, tFld);
+    const tile = tileError();
+    const grid = gridError(c, tFld);
+    ms = ms * 0.9 + (performance.now() - t0) * 0.1;
+    fps = fps * 0.9 + (1 / Math.max(dt, 1e-3)) * 0.1;
+    frames++;
+
+    proofClock += dt;
+    if (proofClock > 0.16) { proofClock = 0; drawProof(c, tFld); }
+
+    // Keep the render inside a frame budget rather than picking a resolution and hoping.
+    if (++sinceTune > 30) {
+      if (ms > 34 && RES > 200) { setRes(RES - 20); sinceTune = 0; }
+      else if (ms < 20 && RES < 440) { setRes(RES + 20); sinceTune = 0; }
+    }
+
+    ph.style.width = (c.ph * 100).toFixed(1) + "%";
+    const broken = tile.rel > 1e-6;
+    alarm.style.display = broken ? "block" : "none";
+    alarm.textContent = "tile mismatch — the period does not close (" + tile.rel.toExponential(1) + ")";
+    const hPeak = Math.log10(st.peak) + periods * (2 * params.a + params.b) * Math.log10(params.lambda);
+    ro.innerHTML =
+      `zoom <b>×${dec(depth10)}</b><br>` +
+      `view <b>${dec(Math.log10(2 * W0) - depth10)}</b> wide<br>` +
+      `|u·ω| peak <b>${dec(hPeak)}</b><br>` +
+      `periods tiled <b>${periods}</b> · φ <b>${c.ph.toFixed(3)}</b><br>` +
+      `tile err <b class="${broken ? "bad" : ""}">${tile.rel.toExponential(1)}</b> ` +
+      `<i>48 pts, of |u| ${tile.mag.toExponential(1)}</i><br>` +
+      `detail <b class="${st.detail < 0.05 ? "bad" : ""}">${st.detail.toFixed(3)}</b> · ` +
+      `bake err <b class="${grid > 0.2 ? "bad" : ""}">${grid.toExponential(1)}</b><br>` +
+      `<i>${RW}×${RH} · ${fps.toFixed(0)} fps · frame ${frames}</i>`;
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  // ---- controls ----------------------------------------------------------
+  const $ = (id) => document.getElementById(id);
+  $("b-clock").onclick = () => {
+    params.clock = !params.clock;
+    if (!params.clock) tPin = camera(sInt).t;          // freeze the field where it stands
+    else { const n = Math.floor(sInt / logL); sInt -= n * logL; periods += n; }  // let the clock catch up
+    $("b-clock").classList.toggle("on", params.clock);
+    $("b-clock").classList.toggle("warn", !params.clock);
+    $("b-clock").textContent = params.clock ? "clock: matched ✓" : "clock: off";
+  };
+  $("b-loop").onclick = () => {
+    params.loop = !params.loop;
+    $("b-loop").classList.toggle("on", params.loop);
+    $("b-loop").classList.toggle("warn", !params.loop);
+    $("b-loop").textContent = params.loop ? "loop: exact ✓" : "loop: broken";
+    build();
+  };
+  $("b-bake").onclick = () => {
+    params.baked = !params.baked;
+    $("b-bake").classList.toggle("warn", params.baked);
+    $("b-bake").textContent = params.baked ? "sampling: baked 512³" : "sampling: analytic";
+  };
+  $("b-reset").onclick = () => { sInt = 1e-3; periods = 0; depth10 = 0; tPin = camera(sInt).t; };
+  $("lam").oninput = (e) => { params.lambda = +e.target.value; $("v-lam").textContent = params.lambda.toFixed(1); build(); };
+  $("b").oninput = (e) => { params.b = +e.target.value; $("v-b").textContent = params.b.toFixed(2); build(); };
+  $("a").oninput = (e) => { params.a = +e.target.value; $("v-a").textContent = params.a.toFixed(2); build(); };
+  $("sp").oninput = (e) => { params.speed = +e.target.value; $("v-sp").textContent = params.speed.toFixed(2); };
+
+  $("note").innerHTML =
+    "u·ω on the z = 0 plane, renormalised per frame · the camera pans a circle and the window breathes " +
+    "on <code>Θ(φ) = e^(0.4·cos 2πφ)</code>; both are 1-periodic camera choices, so the movie closes when " +
+    "the field does — the field supplies the scale law, not the flight path<br>" +
+    "the exponents are free here: a hypothetical Navier–Stokes singularity would need ½ &lt; b &lt; 1 and " +
+    "b &lt; a &lt; (1+b)/2, but that is a necessary budget for an object nobody has exhibited — this is an " +
+    "animation law, not a claim about turbulence";
+})();
+</script>
+</body>
+</html>

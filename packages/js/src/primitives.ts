@@ -98,14 +98,25 @@ function norm3(v: Vec3): Vec3 {
   return [v[0] / n, v[1] / n, v[2] / n];
 }
 
-const _t6: number[] = [0, 0, 0, 0, 0, 0];
-const _s6: number[] = [0, 0, 0, 0, 0, 0];
-const _g9: number[] = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+/**
+ * The one scratch buffer that is still module-level, and the rule that lets it be: **a buffer may be
+ * module-level only if it is never held across a call into other code.** `_e9` qualifies — it is
+ * filled and then handed straight to `axisymGrad`, a pure function, with nothing in between. Every
+ * other buffer here is per-instance, because a shared one hands a callee the very array its caller
+ * is mid-way through writing: for `ComposedField` that turns `out[i] += s[i]` into `x += x`, and for
+ * `AxisBase`'s cylindrical partials it lets a user-supplied `AxiProfile` overwrite the slots `dcyl`
+ * has already filled (measured: the trace of a divergence-free field going from `2e-16` to `0.46`).
+ * @internal
+ */
 const _e9: number[] = [0, 0, 0, 0, 0, 0, 0, 0, 0];
-const _d6: number[] = [0, 0, 0, 0, 0, 0];
 
 /** Shared bake/boundary plumbing for the closed-form primitives. @internal */
 abstract class BaseFlow implements FlowField {
+  /** Per-instance: these are held across `sampleUW`/`sampleGrad`, which may recurse into parts. */
+  private readonly _t6: number[] = [0, 0, 0, 0, 0, 0];
+  private readonly _s6: number[] = [0, 0, 0, 0, 0, 0];
+  private readonly _g9: number[] = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+
   abstract sampleUW<T extends Out6>(x: number, y: number, z: number, out6: T, t?: number): T;
   abstract sampleUA<T extends Out6>(x: number, y: number, z: number, out6: T, t?: number): T;
   /**
@@ -116,37 +127,42 @@ abstract class BaseFlow implements FlowField {
   abstract sampleGrad<T extends Out6>(x: number, y: number, z: number, out9: T, t?: number): T;
 
   qCriterion(x: number, y: number, z: number, t = 0): number {
-    return qFromGrad(this.sampleGrad(x, y, z, _g9, t));
+    return qFromGrad(this.sampleGrad(x, y, z, this._g9, t));
   }
 
   lambda2(x: number, y: number, z: number, t = 0): number {
-    return lambda2FromGrad(this.sampleGrad(x, y, z, _g9, t));
+    return lambda2FromGrad(this.sampleGrad(x, y, z, this._g9, t));
   }
 
   stretching(x: number, y: number, z: number, t = 0): number {
-    this.sampleUW(x, y, z, _s6, t);
-    const wx = _s6[3], wy = _s6[4], wz = _s6[5];
-    return stretchFromGrad(this.sampleGrad(x, y, z, _g9, t), wx, wy, wz);
+    const s = this._s6;
+    this.sampleUW(x, y, z, s, t);
+    const wx = s[3], wy = s[4], wz = s[5];
+    return stretchFromGrad(this.sampleGrad(x, y, z, this._g9, t), wx, wy, wz);
   }
 
   sample(x: number, y: number, z: number, t = 0): Vec3 {
-    this.sampleUW(x, y, z, _t6, t);
-    return [_t6[0], _t6[1], _t6[2]];
+    const v = this._t6;
+    this.sampleUW(x, y, z, v, t);
+    return [v[0], v[1], v[2]];
   }
 
   vorticity(x: number, y: number, z: number, t = 0): Vec3 {
-    this.sampleUW(x, y, z, _t6, t);
-    return [_t6[3], _t6[4], _t6[5]];
+    const v = this._t6;
+    this.sampleUW(x, y, z, v, t);
+    return [v[3], v[4], v[5]];
   }
 
   helicityDensity(x: number, y: number, z: number, t = 0): number {
-    this.sampleUW(x, y, z, _t6, t);
-    return _t6[0] * _t6[3] + _t6[1] * _t6[4] + _t6[2] * _t6[5];
+    const v = this._t6;
+    this.sampleUW(x, y, z, v, t);
+    return v[0] * v[3] + v[1] * v[4] + v[2] * v[5];
   }
 
   potential(x: number, y: number, z: number, t = 0): Vec3 {
-    this.sampleUA(x, y, z, _t6, t);
-    return [_t6[3], _t6[4], _t6[5]];
+    const v = this._t6;
+    this.sampleUA(x, y, z, v, t);
+    return [v[3], v[4], v[5]];
   }
 
   withBoundary(sdf: Sdf, opts?: BoundaryOptions): BoundedField {
@@ -155,11 +171,12 @@ abstract class BaseFlow implements FlowField {
 
   bake3D(n: number, t = 0): Bake3DResult {
     const data = new Float32Array(n * n * n * 4);
+    const v = this._t6;
     let p = 0;
     for (let z = 0; z < n; z++) for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
-      this.sampleUW((x / n) * TAU, (y / n) * TAU, (z / n) * TAU, _t6, t);
-      data[p] = _t6[0]; data[p + 1] = _t6[1]; data[p + 2] = _t6[2];
-      data[p + 3] = _t6[0] * _t6[3] + _t6[1] * _t6[4] + _t6[2] * _t6[5];
+      this.sampleUW((x / n) * TAU, (y / n) * TAU, (z / n) * TAU, v, t);
+      data[p] = v[0]; data[p + 1] = v[1]; data[p + 2] = v[2];
+      data[p + 3] = v[0] * v[3] + v[1] * v[4] + v[2] * v[5];
       p += 4;
     }
     return { data, size: n, channels: 4 };
@@ -167,13 +184,14 @@ abstract class BaseFlow implements FlowField {
 
   bakePotential3D(n: number, t = 0): Bake3DResult {
     const data = new Float32Array(n * n * n * 4);
+    const v = this._t6;
     let p = 0;
     for (let z = 0; z < n; z++) for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
       const px = (x / n) * TAU, py = (y / n) * TAU, pz = (z / n) * TAU;
-      this.sampleUA(px, py, pz, _t6, t);
-      data[p] = _t6[3]; data[p + 1] = _t6[4]; data[p + 2] = _t6[5];
-      this.sampleUW(px, py, pz, _t6, t);
-      data[p + 3] = _t6[0] * _t6[3] + _t6[1] * _t6[4] + _t6[2] * _t6[5];
+      this.sampleUA(px, py, pz, v, t);
+      data[p] = v[3]; data[p + 1] = v[4]; data[p + 2] = v[5];
+      this.sampleUW(px, py, pz, v, t);
+      data[p + 3] = v[0] * v[3] + v[1] * v[4] + v[2] * v[5];
       p += 4;
     }
     return { data, size: n, channels: 4 };
@@ -181,11 +199,12 @@ abstract class BaseFlow implements FlowField {
 
   bake2D(nx: number, ny: number, z = 0, t = 0): Bake2DResult {
     const data = new Float32Array(nx * ny * 4);
+    const v = this._t6;
     let p = 0;
     for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
-      this.sampleUW((i / nx) * TAU, (j / ny) * TAU, z, _t6, t);
-      data[p] = _t6[0]; data[p + 1] = _t6[1]; data[p + 2] = _t6[2];
-      data[p + 3] = _t6[0] * _t6[3] + _t6[1] * _t6[4] + _t6[2] * _t6[5];
+      this.sampleUW((i / nx) * TAU, (j / ny) * TAU, z, v, t);
+      data[p] = v[0]; data[p + 1] = v[1]; data[p + 2] = v[2];
+      data[p + 3] = v[0] * v[3] + v[1] * v[4] + v[2] * v[5];
       p += 4;
     }
     return { data, width: nx, height: ny, channels: 4 };
@@ -310,16 +329,28 @@ class RingField extends BaseFlow {
 
 /** @internal */
 class ComposedField extends BaseFlow {
+  /**
+   * Per-instance, and load-bearing. A part may itself be a `ComposedField` — `collidingRings` and
+   * `counterSwirlColumns` both are — and with a shared buffer the inner call would be handed the
+   * same array as both its output and its scratch, turning `out[i] += p[i]` into `x += x`. The
+   * effect is silent: `compose(compose(A), B)` returns `2A + B`, and `compose(compose(A, B))`
+   * returns `2B` with `A` dropped entirely. Distinct instances suffice because a field cannot
+   * contain itself, so no instance is ever re-entered while its own buffer is live.
+   */
+  private readonly _p6: number[] = [0, 0, 0, 0, 0, 0];
+  private readonly _p9: number[] = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+
   constructor(private readonly parts: FlowField[]) {
     super();
   }
 
   private _sum<T extends Out6>(pick: "uw" | "ua", x: number, y: number, z: number, out6: T, t: number): T {
+    const p = this._p6;
     for (let i = 0; i < 6; i++) out6[i] = 0;
     for (const f of this.parts) {
-      if (pick === "uw") f.sampleUW(x, y, z, _s6, t);
-      else f.sampleUA(x, y, z, _s6, t);
-      for (let i = 0; i < 6; i++) out6[i] += _s6[i];
+      if (pick === "uw") f.sampleUW(x, y, z, p, t);
+      else f.sampleUA(x, y, z, p, t);
+      for (let i = 0; i < 6; i++) out6[i] += p[i];
     }
     return out6;
   }
@@ -335,16 +366,15 @@ class ComposedField extends BaseFlow {
   /** The gradient of a sum is the sum of the gradients — so a composed field stays analytic. */
   sampleGrad<T extends Out6>(x: number, y: number, z: number, out9: T, t = 0): T {
     if (out9.length < 9) throw new Error("helix-noise: sampleGrad needs 9 floats");
+    const p = this._p9;
     for (let i = 0; i < 9; i++) out9[i] = 0;
     for (const f of this.parts) {
-      f.sampleGrad(x, y, z, _c9, t);
-      for (let i = 0; i < 9; i++) out9[i] += _c9[i];
+      f.sampleGrad(x, y, z, p, t);
+      for (let i = 0; i < 9; i++) out9[i] += p[i];
     }
     return out9;
   }
 }
-
-const _c9: number[] = [0, 0, 0, 0, 0, 0, 0, 0, 0];
 
 // ---------------------------------------------------------------------------
 // Axisymmetric chassis and the columns it unlocks (design doc 14)
@@ -510,10 +540,15 @@ abstract class AxisBase extends BaseFlow {
     let rx = dx - zc * this.nx, ry = dy - zc * this.ny, rz = dz - zc * this.nz;
     const r = Math.hypot(rx, ry, rz);
     if (r > 1e-12) { rx /= r; ry /= r; rz /= r; }
-    else { // on the axis any transverse direction will do; the field vanishes there anyway
-      rx = Math.abs(this.nz) < 0.9 ? -this.ny : 0;
-      ry = Math.abs(this.nz) < 0.9 ? this.nx : 1;
-      rz = 0;
+    else {
+      // On the axis any transverse direction will do — but it must genuinely be transverse. The
+      // frame rows go on to `axisymGrad` as the `E` of `Eᵀ L E`, which is a similarity transform
+      // only for an orthonormal `E`; a raw ŷ leaks `e_ρ·n̂ = n_y` into the gradient and shows up as
+      // a non-zero trace (i.e. a divergence) on the axis of any tilted field. Both branches are
+      // therefore cross products with n̂ — exactly orthogonal — picked so the one being normalized
+      // is never short: |ẑ×n̂| ≥ 0.43 when |n_z| < 0.9, and |ŷ×n̂| ≥ 0.9 when it is not.
+      if (Math.abs(this.nz) < 0.9) { rx = -this.ny; ry = this.nx; rz = 0; }   // ẑ × n̂
+      else { rx = this.nz; ry = 0; rz = -this.nx; }                           // ŷ × n̂
       const n = Math.hypot(rx, ry, rz) || 1;
       rx /= n; ry /= n; rz /= n;
     }
@@ -533,6 +568,8 @@ abstract class AxisBase extends BaseFlow {
 
   private _c = [0, 0, 0, 0, 0, 0];
   private _fr = [0, 0, 0, 0, 0];
+  /** Per-instance: `dcyl` is virtual and may run a user `AxiProfile` — see the note above `_e9`. */
+  private readonly _d6: number[] = [0, 0, 0, 0, 0, 0];
 
   // These fields are stationary, so `t` is accepted for interface compatibility and unused.
   sampleUW<T extends Out6>(x: number, y: number, z: number, out6: T, _t = 0): T {
@@ -594,13 +631,14 @@ abstract class AxisBase extends BaseFlow {
     const rx = this._fr[2], ry = this._fr[3], rz = this._fr[4];
     this._c.fill(0);
     this.cyl(r, zc, this._c);
-    this.dcyl(r, zc, _d6);
+    const d6 = this._d6;
+    this.dcyl(r, zc, d6);
     _e9[0] = rx; _e9[1] = ry; _e9[2] = rz;
     _e9[3] = this.ny * rz - this.nz * ry;
     _e9[4] = this.nz * rx - this.nx * rz;
     _e9[5] = this.nx * ry - this.ny * rx;
     _e9[6] = this.nx; _e9[7] = this.ny; _e9[8] = this.nz;
-    return axisymGrad(this._c[0], this._c[1], r, _d6[0], _d6[1], _d6[2], _d6[3], _d6[4], _d6[5], _e9, out9);
+    return axisymGrad(this._c[0], this._c[1], r, d6[0], d6[1], d6[2], d6[3], d6[4], d6[5], _e9, out9);
   }
 
   /** (A_θ, A_z) of the vector potential in cylindrical components. */

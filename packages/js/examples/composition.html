@@ -1,0 +1,528 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Helix Noise — composition bench: layers that stack</title>
+<style>
+  html,body{margin:0;background:#070a0e;color:#cdd6dd;font-family:system-ui,sans-serif}
+  .wrap{max-width:980px;margin:0 auto;padding:22px 16px}
+  h1{font-size:19px;font-weight:600;margin:0 0 6px}
+  h1 code{color:#f4a13c}
+  p{color:#8a97a2;font-size:13.5px;line-height:1.6;margin:0 0 14px}
+  p b{color:#cdd6dd;font-weight:500}
+  code{font-family:ui-monospace,Menlo,monospace;color:#f4a13c;font-size:12.5px}
+  #stage{position:relative;width:100%;aspect-ratio:16/10;border:1px solid rgba(150,180,200,.15);border-radius:10px;overflow:hidden;background:#070a0e}
+  #img,#vec{position:absolute;inset:0;width:100%;height:100%;display:block}
+  #img{image-rendering:auto}
+  .badge{position:absolute;top:10px;left:12px;font-family:ui-monospace,monospace;font-size:10.5px;
+    letter-spacing:.12em;text-transform:uppercase;color:#93a3b0;background:rgba(7,10,14,.55);
+    border:1px solid rgba(150,180,200,.14);border-radius:6px;padding:4px 8px;pointer-events:none}
+  .ro{position:absolute;top:10px;right:12px;font-family:ui-monospace,monospace;font-size:10.5px;color:#93a3b0;
+    background:rgba(6,9,12,.86);border:1px solid rgba(150,180,200,.16);border-radius:6px;padding:7px 10px;
+    line-height:1.55;white-space:pre;pointer-events:none}
+  .ro b{font-weight:400;color:#2fd6bf}
+  .ro b.bad{color:#f4a13c}
+  .ro i{font-style:normal;color:#5d6b77}
+  .ro u{text-decoration:none;color:#cdd6dd}
+  .row{display:flex;flex-wrap:wrap;gap:14px;align-items:center;margin-top:12px;font-family:ui-monospace,monospace;font-size:12px;color:#93a3b0}
+  .row label{display:flex;align-items:center;gap:8px}
+  .row span.lead{color:#5d6b77}
+  input[type=range]{width:120px}
+  button{font-family:ui-monospace,monospace;font-size:11.5px;color:#cdd6dd;background:#0c1016;
+    border:1px solid rgba(150,180,200,.22);border-radius:7px;padding:6px 11px;cursor:pointer}
+  button:hover{border-color:#38d9d1}
+  button.on{border-color:#38d9d1;color:#fff}
+  button.bad{border-color:rgba(244,161,60,.35)}
+  button.bad:hover{border-color:#f4a13c}
+  button.bad.on{border-color:#f4a13c;color:#f8d8ac}
+  .note{margin-top:12px;font-size:12px;color:#5d6b77;font-family:ui-monospace,monospace;line-height:1.6}
+  .key{display:inline-flex;align-items:center;gap:6px;margin-right:14px}
+  .sw{width:10px;height:10px;border-radius:2px;display:inline-block}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Composition bench — <code>compose</code>, <code>collapse</code>, <code>dssCollapse</code></h1>
+  <p>Fields <b>stack</b>. <code>compose</code> sums flows, and the sum of divergence-free fields is
+    divergence-free with the sum of their potentials — so a vortex ring, a strained column and a
+    broadband mode sum can be added in any combination and everything downstream (obstacles,
+    potential bakes, the gradient diagnostics) still holds exactly. Wrapping the result in
+    <code>collapse</code> or <code>dssCollapse</code> multiplies velocity by <code>A(t)</code> and
+    lengths by <code>L(t)</code>, which by the chain rule scales the divergence by <code>A/L</code>
+    and therefore leaves <b>zero at zero</b>. Toggle the layers and watch the number.</p>
+  <p><b>A zero on its own proves nothing</b>, so the readout is a two-column table: the stack you
+    switched on, and beside it a <b>control</b> — the field <code>u = c·x</code>, which has
+    divergence <code>3c</code> everywhere and no vector potential at all, measured by the identical
+    probe every frame. Press <b>source ✗</b> to fold that control into the stack and the left column
+    jumps to meet the right. The <b>separation</b> line is the ratio of the two: between
+    <code>8·10¹⁴</code> and <code>4·10¹⁵</code> for every solenoidal combination of the other three
+    layers under every warp, and of order <code>×1</code> the moment the source layer is in.</p>
+  <div id="stage">
+    <canvas id="img"></canvas>
+    <canvas id="vec"></canvas>
+    <div class="badge">helix-noise · compose + warp</div>
+    <div class="ro" id="ro">—</div>
+  </div>
+  <div class="row">
+    <span class="lead">layers</span>
+    <button id="L-ring" class="on">ring</button>
+    <button id="L-column" class="on">column</button>
+    <button id="L-modes">modes</button>
+    <button id="L-source" class="bad">source ✗</button>
+    <span class="lead">warp</span>
+    <button id="W-none" class="on">none</button>
+    <button id="W-col">collapse</button>
+    <button id="W-dss">dssCollapse</button>
+  </div>
+  <div class="row">
+    <label>probe step h <input id="hstep" type="range" min="0" max="3" step="1" value="2"><span id="v-h">1e−4</span></label>
+    <label>warp speed <input id="sp" type="range" min="0.05" max="1.2" step="0.05" value="0.35"><span id="v-sp">0.35</span></label>
+  </div>
+  <p><b>Two probes, not one.</b> <code>∇·u analytic</code> is the trace of <code>sampleGrad</code>,
+    which every layer answers in closed form; <code>∇·u FD</code> is a central difference on the
+    sampled velocity and trusts no gradient code at all. Both are reported as a worst-case ratio
+    <code>|∇·u| / (|∂ₓuₓ| + |∂ᵧu_y| + |∂_zu_z|)</code>, so they are dimensionless and survive the
+    warp multiplying everything by <code>A/L</code>. The <b>probe step</b> slider is the second thing
+    you can break. On the full solenoidal stack the finite-difference number reads
+    <code>8.8e-1</code>, <code>3.4e-3</code>, <code>1.2e-6</code>, <code>1.2e-8</code> at
+    <code>h = 10⁻²…10⁻⁵</code> — the last decade is exactly the <code>O(h²)</code> two-decades-per-
+    decade of truncation, and the steeper fall above it is the ring's window, which is only
+    <code>C²</code> at the edge of its support, so a wide stencil straddling that seam reads an
+    error the field does not have. The control's <code>1.0</code> does not move at any <code>h</code>,
+    because that one is not an error, it is the divergence. At <code>h = 10⁻²</code> the truncation
+    is large enough that the probe genuinely cannot separate the two, and the row turns amber to
+    say so: a limitation of the probe, printed rather than hidden.</p>
+  <p><b>Composition creates helicity.</b> A lone ring has <code>u·ω ≡ 0</code> — its velocity is
+    poloidal, its vorticity azimuthal, orthogonal by construction — so it renders grey here, exactly
+    as in <code>rings.html</code>. The <code>u·ω rms</code> block splits the composed helicity into
+    the part the layers brought with them (<code>Σ parts</code>) and the part that exists only
+    because they were added together (<code>cross</code>). With one layer on, <code>cross</code> is
+    identically <code>0</code>. Switch on ring <i>and</i> column and it reads <code>1.6e+01</code>
+    against a <code>Σ parts</code> of <code>3.3e-01</code> — a factor of fifty. Essentially all of
+    the helicity in the sum is in the cross term <code>u₁·ω₂ + u₂·ω₁</code>, and here it is almost
+    entirely <code>u_column·ω_ring</code>: the column's swirl is azimuthal and so is the ring's
+    vorticity, so the two line up exactly where the ring's velocity could not. That is a property of
+    the sum, not of the parts, and it is measured here rather than asserted — it is also what puts
+    colour on the ring cores in the picture, which are grey when the ring is alone.</p>
+  <div class="note">
+    <span class="key"><span class="sw" style="background:#2fd6bf"></span>u·ω &gt; 0</span>
+    <span class="key"><span class="sw" style="background:#f4a13c"></span>u·ω &lt; 0</span>
+    <span class="key"><span class="sw" style="background:#59636f"></span>zero to roundoff — a ring alone</span>
+    <span class="key"><span class="sw" style="background:#2c4a52"></span>core guides</span>
+  </div>
+  <div class="note" id="note">—</div>
+</div>
+
+<script src="../dist/helix-noise.global.js"></script>
+<script>
+(() => {
+  // ---- geometry of the bench --------------------------------------------
+  const HX = 3.6, HZ = 2.25;             // the x–z slice we render, at y = 0
+  const RING_R = 1.5, RING_C = 0.42, RING_G = 1.6;
+  const STRAIN = 0.35, NU = 0.05, EPS = 1.0;
+  const SRC_C = 0.25;                    // the bad layer's coefficient: ∇·u = 3c = 0.75 exactly
+  const T = 1, Q = 0.6, LAM = 2, BB = 0.6, AA = 0.8;   // warp exponents
+  const TAU_LO = 0.2;                    // restart the collapse here — see the closing note
+
+  /**
+   * The deliberately non-solenoidal layer: `u = c·x`. Curl-free, so its vorticity is genuinely
+   * zero, but `∇·u = 3c` everywhere. It reports `A = 0` for its potential because it *has* none —
+   * a field with non-zero divergence is not the curl of anything. Duck-typed: `compose` only ever
+   * asks a layer for `sampleUW`, `sampleUA` and `sampleGrad`.
+   */
+  function sourceLayer(c) {
+    return {
+      sampleUW(x, y, z, o) { o[0] = c * x; o[1] = c * y; o[2] = c * z; o[3] = 0; o[4] = 0; o[5] = 0; return o; },
+      sampleUA(x, y, z, o) { o[0] = c * x; o[1] = c * y; o[2] = c * z; o[3] = 0; o[4] = 0; o[5] = 0; return o; },
+      sampleGrad(x, y, z, o) { for (let i = 0; i < 9; i++) o[i] = 0; o[0] = c; o[4] = c; o[8] = c; return o; },
+    };
+  }
+  /** An empty stack still has to answer, so that "no layers" reads as a state rather than a crash. */
+  const ZERO = {
+    sampleUW(x, y, z, o) { for (let i = 0; i < 6; i++) o[i] = 0; return o; },
+    sampleUA(x, y, z, o) { for (let i = 0; i < 6; i++) o[i] = 0; return o; },
+    sampleGrad(x, y, z, o) { for (let i = 0; i < 9; i++) o[i] = 0; return o; },
+  };
+
+  const MAKE = {
+    ring: () => HelixNoise.createRing({ radius: RING_R, core: RING_C, circulation: RING_G, axis: [0, 0, 1] }),
+    column: () => HelixNoise.strainedColumn({ strain: STRAIN, viscosity: NU, circulation: EPS, axis: [0, 0, 1] }),
+    modes: () => HelixNoise.create({ modes: 20, seed: 7, slope: 1.8, coherence: 0.35, amplitude: 0.45, tileable: true }),
+    source: () => sourceLayer(SRC_C),
+  };
+  const ORDER = ["ring", "column", "modes", "source"];
+  const params = { ring: true, column: true, modes: false, source: false, warp: "none", h: 1e-4, speed: 0.35 };
+
+  let parts = [], stack = ZERO, field = ZERO, control = ZERO;
+
+  const wrapWarp = (f) =>
+    params.warp === "col" ? HelixNoise.collapse(f, { T, q: Q })
+      : params.warp === "dss" ? HelixNoise.dssCollapse(f, { T, lambda: LAM, b: BB, a: AA })
+        : f;
+
+  function build() {
+    parts = ORDER.filter((k) => params[k]).map((k) => MAKE[k]());
+    stack = parts.length === 0 ? ZERO : parts.length === 1 ? parts[0] : HelixNoise.compose(...parts);
+    field = wrapWarp(stack);
+    // The control gets the *same* warp, so the two columns of the readout differ in one thing only.
+    control = wrapWarp(sourceLayer(SRC_C));
+  }
+  build();
+
+  /** The warp's own length scale, reproduced here only to place probes where the field lives. */
+  function scaleL(t) {
+    if (params.warp === "none") return 1;
+    const tau = Math.max(T - t, 1e-4);
+    if (params.warp === "col") return Math.pow(tau, Q);
+    const phase = ((-Math.log(tau) / Math.log(LAM)) % 1 + 1) % 1;
+    return Math.pow(tau, BB) * (1 + 0.25 * Math.cos(2 * Math.PI * phase));
+  }
+  // ---- probes ------------------------------------------------------------
+  // Two fifths inside the ring's core, because outside it the ring is *exactly* zero and would
+  // contribute nothing to test; the rest uniform in the box, where the column and modes live.
+  const NP = 240;
+  const PX = new Float64Array(NP), PY = new Float64Array(NP), PZ = new Float64Array(NP);
+  {
+    let s = 20260726;
+    const rnd = () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296);
+    for (let i = 0; i < NP; i++) {
+      if (i % 5 < 2) {
+        const th = rnd() * 2 * Math.PI, ph = rnd() * 2 * Math.PI, q = RING_C * Math.sqrt(rnd());
+        const rr = RING_R + q * Math.cos(ph);
+        PX[i] = rr * Math.cos(th); PY[i] = rr * Math.sin(th); PZ[i] = q * Math.sin(ph);
+      } else {
+        PX[i] = (rnd() - 0.5) * 2 * HX; PY[i] = (rnd() - 0.5) * 2 * HX; PZ[i] = (rnd() - 0.5) * 2 * HZ;
+      }
+    }
+  }
+
+  const g9 = new Float64Array(9), s6 = new Float64Array(6), t6 = new Float64Array(6);
+
+  /**
+   * Worst-case relative divergence from the analytic gradient. Dividing by the sum of the
+   * diagonal's own magnitudes is what makes this survive the warp: `A/L` multiplies numerator and
+   * denominator alike, so a collapse that speeds the flow up by 10⁴ does not flatter the number.
+   */
+  function divAnalytic(f, t, sc) {
+    let rel = 0, live = false;
+    for (let i = 0; i < NP; i++) {
+      f.sampleGrad(PX[i] * sc, PY[i] * sc, PZ[i] * sc, g9, t);
+      const d = g9[0] + g9[4] + g9[8];
+      const s = Math.abs(g9[0]) + Math.abs(g9[4]) + Math.abs(g9[8]);
+      if (s > 1e-300) { live = true; if (Math.abs(d) / s > rel) rel = Math.abs(d) / s; }
+    }
+    return { rel, live };
+  }
+
+  /** The same quantity by central differences on the velocity — an independent route to it. */
+  function divFD(f, t, sc, h) {
+    let rel = 0, live = false;
+    for (let i = 0; i < NP; i++) {
+      const x = PX[i] * sc, y = PY[i] * sc, z = PZ[i] * sc;
+      let d = 0, s = 0;
+      f.sampleUW(x + h, y, z, s6, t); f.sampleUW(x - h, y, z, t6, t);
+      let g = (s6[0] - t6[0]) / (2 * h); d += g; s += Math.abs(g);
+      f.sampleUW(x, y + h, z, s6, t); f.sampleUW(x, y - h, z, t6, t);
+      g = (s6[1] - t6[1]) / (2 * h); d += g; s += Math.abs(g);
+      f.sampleUW(x, y, z + h, s6, t); f.sampleUW(x, y, z - h, t6, t);
+      g = (s6[2] - t6[2]) / (2 * h); d += g; s += Math.abs(g);
+      if (s > 1e-300) { live = true; if (Math.abs(d) / s > rel) rel = Math.abs(d) / s; }
+    }
+    return { rel, live };
+  }
+
+  /**
+   * Helicity is quadratic in the field, so it is *not* additive under `compose`. Splitting the
+   * composed density into `Σ u_i·ω_i` and the remainder isolates the cross terms — the helicity
+   * that only exists because the layers were summed.
+   */
+  function helicityLedger(t, sc) {
+    let sp = 0, sw = 0, sc2 = 0, umax = 0;
+    for (let i = 0; i < NP; i++) {
+      const x = PX[i] * sc, y = PY[i] * sc, z = PZ[i] * sc;
+      let hp = 0;
+      for (const f of parts) {
+        // measure each part through the same warp, so `Σ parts` and `composed` are comparable
+        (params.warp === "none" ? f : wrapPart(f)).sampleUW(x, y, z, s6, t);
+        hp += s6[0] * s6[3] + s6[1] * s6[4] + s6[2] * s6[5];
+      }
+      field.sampleUW(x, y, z, t6, t);
+      const hw = t6[0] * t6[3] + t6[1] * t6[4] + t6[2] * t6[5];
+      const u = Math.hypot(t6[0], t6[1], t6[2]);
+      if (u > umax) umax = u;
+      sp += hp * hp; sw += hw * hw; sc2 += (hw - hp) * (hw - hp);
+    }
+    return {
+      parts: Math.sqrt(sp / NP), whole: Math.sqrt(sw / NP), cross: Math.sqrt(sc2 / NP), umax,
+    };
+  }
+  // Warping is linear, so wrapping each part separately and summing gives the same field as
+  // wrapping the sum — which is why the ledger above is allowed to compare the two.
+  let warpedParts = [];
+  function rebuildWarpedParts() { warpedParts = parts.map((f) => wrapWarp(f)); }
+  function wrapPart(f) { return warpedParts[parts.indexOf(f)] || f; }
+  rebuildWarpedParts();
+
+  // ---- rendering ---------------------------------------------------------
+  const RW = 176, RH = 110;
+  const img = document.getElementById("img"), vec = document.getElementById("vec");
+  const ictx = img.getContext("2d", { alpha: false });
+  img.width = RW; img.height = RH;
+  const bmp = ictx.createImageData(RW, RH);
+  const vctx = vec.getContext("2d");
+
+  const TEAL = [47, 214, 191], AMBER = [244, 161, 60], GREY = [92, 103, 114];
+  const DEAD = 1e-9;         // below this |cos| the sign is the sign of roundoff — go grey
+  let peak = 1;
+
+  /**
+   * Slice at y = 0. Brightness is `|ω|`, hue is the normalised helicity `u·ω/(|u||ω|)`.
+   *
+   * Brightness is deliberately *not* `|u|`: the strained column's velocity grows like `a·r` and
+   * `2a·z` forever, so a speed image is a wash of far field with the structures lost inside it.
+   * Vorticity is where each layer actually lives — compact in the ring's core, Gaussian across the
+   * column, broadband for the mode sum — so it is the channel that shows composition happening.
+   * The price is that the source layer is curl-free and contributes nothing here; that is why
+   * `|ω| max` is printed as a number, so a black frame is a measurement and not an absence.
+   */
+  const buf = new Float64Array(RW * RH * 2);
+  let wmaxSlice = 0;
+  function renderSlice(t) {
+    let pk = 1e-12;
+    for (let j = 0; j < RH; j++) {
+      const z = (0.5 - (j + 0.5) / RH) * 2 * HZ;
+      for (let i = 0; i < RW; i++) {
+        const x = ((i + 0.5) / RW - 0.5) * 2 * HX;
+        field.sampleUW(x, 0, z, s6, t);
+        const u = Math.hypot(s6[0], s6[1], s6[2]);
+        const w = Math.hypot(s6[3], s6[4], s6[5]);
+        const hd = s6[0] * s6[3] + s6[1] * s6[4] + s6[2] * s6[5];
+        buf[2 * (j * RW + i)] = w;
+        buf[2 * (j * RW + i) + 1] = u > 1e-300 && w > 1e-300 ? hd / (u * w) : 0;
+        if (w > pk) pk = w;
+      }
+    }
+    wmaxSlice = pk <= 1e-12 ? 0 : pk;
+    // Slew the normalisation rather than snapping it: under a collapse the raw magnitude sweeps
+    // decades, and a per-frame rescale would read as flicker rather than as acceleration.
+    peak = peak * 0.82 + pk * 0.18;
+    const k = 1 / Math.max(peak, 1e-12);
+    const d = bmp.data;
+    let p = 0;
+    for (let n = 0; n < RW * RH; n++) {
+      const g = Math.pow(Math.min(1, buf[2 * n] * k), 0.45);
+      const c = buf[2 * n + 1];
+      const mix = Math.abs(c) < DEAD ? 0 : Math.min(1, Math.abs(c) * 1.25);
+      const tgt = c > 0 ? TEAL : AMBER;
+      d[p++] = 7 + (GREY[0] + (tgt[0] - GREY[0]) * mix) * g;
+      d[p++] = 10 + (GREY[1] + (tgt[1] - GREY[1]) * mix) * g;
+      d[p++] = 14 + (GREY[2] + (tgt[2] - GREY[2]) * mix) * g;
+      d[p++] = 255;
+    }
+    ictx.putImageData(bmp, 0, 0);
+  }
+
+  // ---- tracers -----------------------------------------------------------
+  // Advected in full 3-D by `field.sampleUW` and *drawn in projection* onto the x–z plane, faded
+  // by |y| so the ones far from the rendered slice do not pretend to belong to it.
+  const NT = 340, TRAIL = 6;
+  const trX = new Float64Array(NT), trY = new Float64Array(NT), trZ = new Float64Array(NT);
+  const hist = new Float64Array(NT * TRAIL * 2), life = new Int32Array(NT);
+  let rs = 7717;
+  const rnd = () => ((rs = (rs * 1664525 + 1013904223) >>> 0) / 4294967296);
+  function seedTracer(i, L) {
+    trX[i] = (rnd() - 0.5) * 2 * HX * L;
+    trY[i] = (rnd() - 0.5) * 1.8 * L;          // keep them near the drawn plane
+    trZ[i] = (rnd() - 0.5) * 2 * HZ * L;
+    for (let k = 0; k < TRAIL; k++) { hist[(i * TRAIL + k) * 2] = trX[i]; hist[(i * TRAIL + k) * 2 + 1] = trZ[i]; }
+    life[i] = 40 + ((rnd() * 110) | 0);
+  }
+  for (let i = 0; i < NT; i++) seedTracer(i, 1);
+
+  let lastUmax = 1;
+  function stepTracers(t, L) {
+    // One step is a fixed fraction of the frame, not a fixed time: a collapse multiplies |u| by
+    // A(t), and a constant dt would turn the tracers into noise exactly when the picture gets
+    // interesting. This is a display choice; it does not touch the receipt.
+    const dt = (0.03 * HX * L) / Math.max(lastUmax, 1e-6);
+    for (let i = 0; i < NT; i++) {
+      field.sampleUW(trX[i], trY[i], trZ[i], s6, t);
+      trX[i] += s6[0] * dt; trY[i] += s6[1] * dt; trZ[i] += s6[2] * dt;
+      for (let k = TRAIL - 1; k > 0; k--) {
+        hist[(i * TRAIL + k) * 2] = hist[(i * TRAIL + k - 1) * 2];
+        hist[(i * TRAIL + k) * 2 + 1] = hist[(i * TRAIL + k - 1) * 2 + 1];
+      }
+      hist[i * TRAIL * 2] = trX[i]; hist[i * TRAIL * 2 + 1] = trZ[i];
+      if (--life[i] <= 0 || Math.abs(trX[i]) > HX * L * 1.3 || Math.abs(trZ[i]) > HZ * L * 1.3) seedTracer(i, L);
+    }
+  }
+
+  function renderOverlay(L) {
+    const W = vec.width, H = vec.height;
+    vctx.clearRect(0, 0, W, H);
+    const sx = (x) => (x / (2 * HX) + 0.5) * W;
+    const sy = (z) => (0.5 - z / (2 * HZ)) * H;
+
+    // core guides, so "where the structures are" is a fact on screen rather than an inference
+    vctx.strokeStyle = "rgba(44,74,82,.9)";
+    vctx.lineWidth = 1;
+    if (params.ring) {
+      for (const s of [-1, 1]) {
+        vctx.beginPath();
+        vctx.ellipse(sx(s * RING_R * L), sy(0), (RING_C * L / (2 * HX)) * W, (RING_C * L / (2 * HZ)) * H, 0, 0, 6.284);
+        vctx.stroke();
+      }
+    }
+    if (params.column) {
+      const rc = HelixNoise.columnCore(STRAIN, NU) * L;
+      for (const s of [-1, 1]) {
+        vctx.beginPath(); vctx.moveTo(sx(s * rc), 0); vctx.lineTo(sx(s * rc), H); vctx.stroke();
+      }
+    }
+
+    vctx.lineWidth = 1.1;
+    for (let i = 0; i < NT; i++) {
+      const near = Math.exp(-Math.abs(trY[i]) / (0.55 * L));   // fade with distance from y = 0
+      if (near < 0.05) continue;
+      vctx.beginPath();
+      vctx.moveTo(sx(hist[i * TRAIL * 2]), sy(hist[i * TRAIL * 2 + 1]));
+      let ok = false;
+      for (let k = 1; k < TRAIL; k++) {
+        const px = hist[(i * TRAIL + k) * 2], pz = hist[(i * TRAIL + k) * 2 + 1];
+        if (Math.abs(px - trX[i]) > HX || Math.abs(pz - trZ[i]) > HZ) break;  // skip the reseed jump
+        vctx.lineTo(sx(px), sy(pz)); ok = true;
+      }
+      if (ok) { vctx.strokeStyle = `rgba(203,222,233,${(0.46 * near).toFixed(3)})`; vctx.stroke(); }
+    }
+  }
+
+  function resize() {
+    const st = document.getElementById("stage");
+    vec.width = st.clientWidth; vec.height = st.clientHeight;
+  }
+  addEventListener("resize", resize); resize();
+
+  // ---- readout -----------------------------------------------------------
+  const ro = document.getElementById("ro");
+  /** Fixed-width exponent, so the two columns line up and neither tail lies about its precision. */
+  function ex(v) {
+    if (!isFinite(v)) return "   n/a ";
+    if (v === 0) return "0.0e+00";
+    const m = v.toExponential(1).match(/^(-?\d\.\d)e([+-])(\d+)$/);
+    return m[1] + "e" + m[2] + m[3].padStart(2, "0");
+  }
+  const pass = (v, ok) => `<b class="${ok ? "" : "bad"}">${v}</b>`;
+  let frames = 0;
+
+  function readout(t, sc) {
+    const A = divAnalytic(field, t, sc), F = divFD(field, t, sc, params.h);
+    const cA = divAnalytic(control, t, sc), cF = divFD(control, t, sc, params.h);
+    const hel = helicityLedger(t, sc);
+    lastUmax = hel.umax || 1;                 // the tracers' step size rides on the measured speed
+    const on = ORDER.filter((k) => params[k]);
+    const names = on.length ? on.join(" · ") : "— empty —";
+    // An empty stack has zero divergence *trivially*. Saying "pass" there would be the same mistake
+    // as a black difference panel that was never drawn, so it gets its own state.
+    const live = A.live;
+    const sep = live && A.rel > 0 ? cA.rel / A.rel : NaN;
+    const okA = live && A.rel < 1e-9, okF = live && F.rel < 1e-2;
+
+    // Every label column is 13 wide and every number 7, so the two columns line up and the panel
+    // keeps a fixed width whatever the numbers do.
+    const hLabel = params.h.toExponential(0).padEnd(5);   // "1e-4 " — always five columns
+    const gap = "<i>   —   </i>";                          // seven columns, so nothing shifts
+    let s = `<u>layers</u> ${names}\n`;
+    s += `<u>warp</u>   ${params.warp === "none" ? "none" : params.warp === "col" ? "collapse" : "dssCollapse"}`;
+    s += params.warp === "none" ? "\n" : `  τ ${ex(T - t)}\n`;
+    s += `\n`;
+    s += `<i>               stack  control</i>\n`;
+    s += `∇·u analytic ${live ? pass(ex(A.rel), okA) : gap}  <b class="bad">${ex(cA.rel)}</b>\n`;
+    s += `∇·u FD ${hLabel} ${live ? pass(ex(F.rel), okF) : gap}  <b class="bad">${ex(cF.rel)}</b>\n`;
+    s += `separation   ${live ? pass("×" + ex(sep), sep > 1e6) : gap}\n`;
+    s += live
+      ? (okA ? `             <i>✓ divergence-free</i>\n`
+             : `             <b class="bad">✗ has divergence</b>\n`)
+      : `             <i>no layers — this\n             zero means nothing</i>\n`;
+    s += `\n`;
+    s += `|u| max      <b>${ex(hel.umax)}</b>\n`;
+    // The image's own brightness channel, as a number: a black slice then reads as "ω is zero
+    // here", which is a measurement, rather than as "the renderer did not run".
+    s += `|ω| max      <b>${ex(wmaxSlice)}</b>${wmaxSlice === 0 ? `\n             <i>black by measurement</i>` : ""}\n`;
+    s += `u·ω rms  Σparts   <b>${ex(hel.parts)}</b>\n`;
+    s += `         composed <b>${ex(hel.whole)}</b>\n`;
+    s += `         cross    <b>${ex(hel.cross)}</b>\n`;
+    if (parts.length === 1) s += `         <i>(one layer: cross ≡ 0)</i>\n`;
+    s += `\n<i>${NP} probes · frame ${frames}</i>`;
+    ro.innerHTML = s;
+  }
+
+  // ---- loop --------------------------------------------------------------
+  let t = 0, last = performance.now(), sliceDirty = true;
+  function frame(now) {
+    const dt = Math.min(0.05, (now - last) / 1000); last = now;
+    if (params.warp === "none") t = 0;
+    else {
+      // uniform on the log clock, so the collapse never "arrives" — it folds at a constant rate
+      const s = -Math.log(Math.max(T - t, 1e-9)) + dt * params.speed;
+      t = T - Math.exp(-s);
+      if (T - t < TAU_LO) t = 0;
+    }
+    const L = scaleL(t);
+    // With no warp the layers are all time-independent, so the slice is the same picture every
+    // frame; redrawing it would buy nothing. The tracers and the receipt still run every frame,
+    // which is what keeps a still image distinguishable from a stalled one.
+    if (params.warp !== "none" || sliceDirty) { renderSlice(t); sliceDirty = false; }
+    stepTracers(t, L);
+    renderOverlay(L);
+    frames++;
+    readout(t, L);
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  // ---- controls ----------------------------------------------------------
+  const $ = (id) => document.getElementById(id);
+  function reset() {
+    build(); rebuildWarpedParts();
+    peak = 1; lastUmax = 1; sliceDirty = true;
+    for (let i = 0; i < NT; i++) seedTracer(i, scaleL(t));
+  }
+  for (const k of ORDER) {
+    $("L-" + k).onclick = () => {
+      params[k] = !params[k];
+      $("L-" + k).classList.toggle("on", params[k]);
+      reset();
+    };
+  }
+  for (const [id, w] of [["W-none", "none"], ["W-col", "col"], ["W-dss", "dss"]]) {
+    $(id).onclick = () => {
+      params.warp = w; t = 0;
+      for (const o of ["W-none", "W-col", "W-dss"]) $(o).classList.toggle("on", o === id);
+      reset();
+    };
+  }
+  $("hstep").oninput = (e) => {
+    const d = 2 + +e.target.value;
+    params.h = Math.pow(10, -d);
+    $("v-h").textContent = "1e−" + d;
+  };
+  $("sp").oninput = (e) => { params.speed = +e.target.value; $("v-sp").textContent = params.speed.toFixed(2); };
+
+  $("note").innerHTML =
+    "background: slice of the composed field at <b>y = 0</b>, x ∈ [−3.6, 3.6] × z ∈ [−2.25, 2.25]; " +
+    "brightness is <b>|ω|</b> (slewed normalisation, so a collapse reads as acceleration rather " +
+    "than flicker) and hue is u·ω/(|u||ω|) — vorticity rather than speed, because the column's " +
+    "strain field grows without bound and a speed image is all far field · overlay: " + NT +
+    " tracers advected in <b>full 3-D</b> by " +
+    "<code>field.sampleUW</code> and drawn in projection, faded by |y| — a bright streak is near " +
+    "the slice, a dim one is not, and none of them are confined to it · circles and vertical lines " +
+    "mark the ring core (0.42 at R = 1.5) and the column core √(2ν/a) = 0.53, both scaled by the " +
+    "warp's L(t) · with <b>warp: none</b> every layer is time-independent, so the slice is drawn " +
+    "once and only the tracers and the numbers move — the frame counter is there so a still " +
+    "picture cannot be mistaken for a stalled one · a collapse in a fixed frame cannot loop, so τ " +
+    "restarts at " + TAU_LO + "; the version that closes exactly is in collapse.html";
+})();
+</script>
+</body>
+</html>

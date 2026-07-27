@@ -1,0 +1,733 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Helix Noise — loop kit (backgrounds that close)</title>
+<style>
+  html,body{margin:0;background:#070a0e;color:#cdd6dd;font-family:system-ui,sans-serif}
+  .wrap{max-width:1040px;margin:0 auto;padding:22px 16px 40px}
+  h1{font-size:19px;font-weight:600;margin:0 0 6px}
+  h1 code{color:#f4a13c}
+  p{color:#8a97a2;font-size:13.5px;line-height:1.6;margin:0 0 14px}
+  p b{color:#cdd6dd;font-weight:500}
+  code{font-family:ui-monospace,Menlo,monospace;color:#f4a13c;font-size:12.5px}
+  #stage{position:relative;width:100%;aspect-ratio:16/9;border:1px solid rgba(150,180,200,.15);
+    border-radius:10px;overflow:hidden;background:#070a0e}
+  #stage canvas{display:block;width:100%;height:100%}
+  .badge{position:absolute;top:10px;left:12px;font-family:ui-monospace,monospace;font-size:10.5px;
+    letter-spacing:.12em;text-transform:uppercase;color:#93a3b0;background:rgba(7,10,14,.55);
+    border:1px solid rgba(150,180,200,.14);border-radius:6px;padding:4px 8px;pointer-events:none}
+  .ro{position:absolute;top:10px;right:12px;font-family:ui-monospace,monospace;font-size:11px;color:#93a3b0;
+    background:rgba(7,10,14,.62);border:1px solid rgba(150,180,200,.14);border-radius:6px;padding:5px 9px;
+    text-align:right;line-height:1.55;pointer-events:none}
+  .ro b{font-weight:400;color:#2fd6bf}
+  .ro b.bad{color:#f4a13c}
+  .ro i{font-style:normal;color:#5d6b77}
+  .track{position:absolute;left:0;right:0;bottom:0;height:3px;background:rgba(150,180,200,.14)}
+  .fill{position:absolute;left:0;top:0;bottom:0;width:0;background:#2fd6bf}
+  .fill.slow{background:#f4a13c}
+  .flash{position:absolute;left:50%;bottom:22px;transform:translateX(-50%);font-family:ui-monospace,monospace;
+    font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:#0b1013;background:#2fd6bf;
+    border-radius:5px;padding:4px 10px;opacity:0;transition:opacity .18s;pointer-events:none}
+  .flash.on{opacity:.92}
+  .row{display:flex;flex-wrap:wrap;gap:14px;align-items:center;margin-top:12px;
+    font-family:ui-monospace,monospace;font-size:12px;color:#93a3b0}
+  .row label{display:flex;align-items:center;gap:8px}
+  .row.dim{opacity:.45}
+  input[type=range]{width:112px}
+  button{font-family:ui-monospace,monospace;font-size:11.5px;color:#cdd6dd;background:#0c1016;
+    border:1px solid rgba(150,180,200,.22);border-radius:7px;padding:6px 11px;cursor:pointer}
+  button:hover{border-color:#38d9d1}
+  button.on{border-color:#38d9d1;color:#fff}
+  button.warn.on{border-color:#f4a13c;color:#f4a13c}
+  pre.snip{background:#0b0f14;border:1px solid rgba(150,180,200,.15);border-radius:9px;padding:12px 14px;
+    overflow-x:auto;font-family:ui-monospace,Menlo,monospace;font-size:11.5px;line-height:1.55;
+    color:#9fb0bd;margin:12px 0 0}
+  pre.snip .k{color:#2fd6bf}
+  pre.snip .c{color:#5d6b77}
+  .note{margin-top:12px;font-size:12px;color:#5d6b77;font-family:ui-monospace,monospace;line-height:1.6}
+  h2{font-size:14px;font-weight:600;margin:26px 0 8px;color:#cdd6dd}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Loop kit — backgrounds that close, on <code>tileable</code> and <code>dssCollapse</code></h1>
+  <p>Five drop-in animated backgrounds. Every one of them repeats <b>exactly</b>: the last frame of the
+    period is the first frame of the next, to floating-point roundoff, with no cross-fade hiding the
+    join. That is not a rendering trick, it is a property of the field. <code>tileable: true</code>
+    snaps every wavevector to the integer lattice, so <code>u(x + 2πn) ≡ u(x)</code> for any integer
+    vector <b>n</b> — walk the sampling point along <b>n</b> over the loop and you land back on the same
+    field, exactly. <code>dssCollapse</code> is the other half: it repeats every <code>log λ</code> of
+    renormalisation time, so one rendered period tiles an endless zoom.</p>
+  <p>The motion in the first four looks is <b>us moving through the field</b>, not the field evolving.
+    That distinction is the whole design: the library's own clock (<code>churn</code>) advances each
+    mode's phase at <code>ω(k) = χ·kmin<sup>⅓</sup>·k<sup>⅔</sup></code>, and those rates are
+    incommensurate reals — there is no finite period. So the kit sets <code>churn: 0</code> and animates
+    the sample point instead. Because the field is fully three-dimensional, sliding the rendered plane
+    along <b>z</b> makes the picture genuinely change shape rather than slide, and that motion still
+    wraps at <code>2π</code>. Drift depth is the <code>through</code> control.</p>
+
+  <div id="stage">
+    <canvas id="c"></canvas>
+    <div class="badge" id="badge">helix-noise · field.glsl() · webgl2</div>
+    <div class="ro" id="ro">compiling…</div>
+    <div class="track"><div class="fill" id="fill"></div></div>
+    <div class="flash" id="flash">wrapped · phase 1 → 0</div>
+  </div>
+
+  <div class="row" id="lookRow"></div>
+
+  <div class="row" id="driftRow">
+    <label>loop <input id="loop" type="range" min="3" max="24" step="0.5" value="8"><span id="v-loop">8.0 s</span></label>
+    <label>slide <input id="slide" type="range" min="0" max="4" step="1" value="1"><span id="v-slide">1</span></label>
+    <label>through <input id="through" type="range" min="0" max="4" step="1" value="2"><span id="v-through">2</span></label>
+    <label>zoom <input id="zoom" type="range" min="0.6" max="3" step="0.1" value="1.4"><span id="v-zoom">1.4</span></label>
+  </div>
+
+  <div class="row" id="tunRow" style="display:none">
+    <label>loop <input id="loop2" type="range" min="3" max="24" step="0.5" value="8"><span id="v-loop2">8.0 s</span></label>
+    <label>λ <input id="lam" type="range" min="1.4" max="3" step="0.05" value="2"><span id="v-lam">2.00</span></label>
+    <label>b <input id="bex" type="range" min="0.4" max="0.9" step="0.02" value="0.6"><span id="v-bex">0.60</span></label>
+    <label>zoom <input id="zoom2" type="range" min="0.8" max="4" step="0.1" value="2.2"><span id="v-zoom2">2.2</span></label>
+    <button id="freeze" class="on">freezeProfile ✓</button>
+  </div>
+
+  <div class="row">
+    <button id="detune" class="warn">detune the loop</button>
+    <span id="detuneWhat">→ tileable: false</span>
+    <button id="seam">⇥ show the seam</button>
+    <label>quality <input id="qual" type="range" min="0.5" max="1" step="0.05" value="0.75"><span id="v-qual">0.75×</span></label>
+    <button id="pause">pause</button>
+  </div>
+
+  <h2>The receipt</h2>
+  <p><b>wrap Δu</b> is the measured difference between the two ends of one period: the library's velocity
+    is sampled on a 20×13 lattice across the visible window at loop phase 0 and again at loop phase 1, and
+    the readout prints <code>rms|u₁ − u₀| / rms|u₀|</code>. It sits at <b>~1e-15</b> — that residual is
+    pure floating-point, because <code>2π</code> is not a representable number, not because the wrap is
+    approximate. <b>pixels ≠</b> is the same test one level down: this shader is re-rendered to a 160×100
+    offscreen buffer at both ends of the period and the two 8-bit frames are differenced, so the count is
+    over the picture rather than the field. It reads <b>0</b> while the loop is exact — eight bits cannot
+    resolve 1e-15 — and lights up across the frame when it is not.</p>
+  <p>Press <b>detune the loop</b> to make both move. For the drift looks the field is rebuilt with
+    <code>tileable: false</code>: same seed, same spectrum, same picture to the eye, wavevectors just off the
+    integer lattice. Measured here, <code>wrap Δu</code> goes aurora <b>1.9e-15 → 1.2e+0</b>, ink drift
+    <b>8.1e-16 → 1.9e+0</b>, embers <b>2.3e-15 → 1.5e+0</b>, deep current <b>2.0e-15 → 1.7e+0</b>. On the
+    tunnel the same button instead advances playback <b>12%</b> faster than <code>log λ</code> — the
+    real-world version of exporting a 6.00 s file for a 6.72 s loop — which drives <code>wrap Δu</code> to
+    <b>1.6e-1</b> and puts a visible pop at the seam. Every one of those figures is reproduced by a
+    standalone node script against <code>src/index</code>, not read off this page.</p>
+  <p><b>What the tunnel's <code>wrap Δu</code> does not prove, and the number that fixes it.</b> The Droste
+    stack blends six copies of the field at scales spaced by <code>λ<sup>b</sup></code> and advances one
+    layer index per period, under a Hann window that is identically zero at both ends. So its frames repeat
+    <i>by bookkeeping</i>, and its <code>wrap Δu</code> reads a flat <b>0</b> — not 1e-15, zero, because the
+    two ends are the same floating-point numbers in a different order. A panel that only ever prints 0 is
+    worth nothing, so the tunnel prints a second line. <b>λ-identity</b> measures the thing
+    <code>dssCollapse</code> actually guarantees and the stack silently assumes: that consecutive layers are
+    consecutive frames of <i>one collapse</i>,
+    <code>u(x,t₂) = λ<sup>a</sup>·u(λ<sup>b</sup>x, t₁)</code> when <code>(T−t₂) = (T−t₁)/λ</code>. It reads
+    ~3e-16 and it is <i>independent</i> of the stack. Press <b>freezeProfile ✗</b> and watch the honest
+    split: λ-identity jumps to ~3e-1 while wrap Δu stays 0 — the picture still loops perfectly, it has just
+    stopped being a collapse. That is the receipt this page would have shipped a lie without.</p>
+
+  <h2>Paste this into your project</h2>
+  <div class="row" style="margin-top:0"><button id="copy">copy</button><span id="copied"></span></div>
+  <pre class="snip" id="snip">…</pre>
+
+  <div class="note" id="note">compiling…</div>
+  <div class="note">
+    Kinematic, not simulated. There is no pressure solve, no advected density, no viscosity, no collision:
+    each pixel is a line-integral convolution of an analytic divergence-free velocity field, and the
+    animation is the sampling point moving. Nothing is conserved on screen except what the field carries.
+    The streak texture is deliberately a sum of <i>integer-frequency</i> sinusoids — a hash-lattice value
+    noise would have broken the loop even though the field did not, and that failure would have been
+    invisible until the wrap.
+  </div>
+</div>
+
+<script src="../dist/helix-noise.global.js"></script>
+<script>
+(function () {
+  "use strict";
+  var $ = function (id) { return document.getElementById(id); };
+  var TAU = Math.PI * 2;
+  var cv = $("c"), gl = cv.getContext("webgl2", { antialias: false, preserveDrawingBuffer: false });
+  if (!gl) { $("ro").textContent = "WebGL2 not available"; $("note").textContent = "This page needs WebGL2."; return; }
+
+  // ---------------------------------------------------------------- looks
+  // Each look is a field + a palette. The first four move by drifting the sample point along an
+  // integer winding; the fifth is the dssCollapse Droste tunnel.
+  var NL = 6;                       // tunnel layers
+  var LOOKS = {
+    aurora: {
+      label: "aurora", steps: 9, zoom: 1.4, z0: 0.37, plane: "x", slide: 1, through: 2,
+      opts: { modes: 26, slope: 2.0, helicity: 0.85, coherence: 0.55, kmin: 1, kmax: 5, seed: 7,
+              anisotropy: -0.55, axis: [0, 1, 0] },
+      shade:
+        "float b = pow(smoothstep(0.30, 0.93, l), 1.45);\n" +
+        "vec3 c = mix(vec3(0.022,0.052,0.074), vec3(0.09,0.70,0.58), b);\n" +
+        "c = mix(c, vec3(0.60,0.98,0.72), pow(b, 3.2));\n" +
+        "c += vec3(0.30,0.09,0.38) * pow(max(hn,0.0), 1.6) * b * 0.55;\n" +
+        "c *= mix(0.52, 1.16, smoothstep(-0.05, 0.95, uv.y));\n" +
+        "return c;"
+    },
+    ink: {
+      label: "ink drift", steps: 10, zoom: 1.2, z0: 0.11, plane: "x", slide: 1, through: 1,
+      opts: { modes: 24, slope: 2.5, helicity: 0.0, coherence: 0.7, kmin: 1, kmax: 4, seed: 12 },
+      shade:
+        "float ink = smoothstep(0.34, 0.70, l);\n" +
+        "vec3 c = mix(vec3(0.026,0.036,0.050), vec3(0.42,0.53,0.62), ink);\n" +
+        "c = mix(c, vec3(0.88,0.93,0.96), pow(ink, 4.5));\n" +
+        "c += vec3(0.10,0.055,0.012) * smoothstep(0.85, 1.9, sp);\n" +
+        "return c;"
+    },
+    embers: {
+      label: "embers", steps: 8, zoom: 1.8, z0: 0.53, plane: "y", slide: 1, through: 2,
+      opts: { modes: 30, slope: 1.25, helicity: 0.4, coherence: 0.25, kmin: 1, kmax: 7, seed: 21 },
+      shade:
+        "float heat = pow(smoothstep(0.47, 0.99, l), 2.1);\n" +
+        "float spark = pow(smoothstep(1.05, 2.20, sp), 3.0);\n" +
+        "vec3 c = vec3(0.026,0.031,0.040);\n" +
+        "c += vec3(0.50,0.13,0.030) * pow(heat, 0.75) * 0.95;\n" +
+        "c += vec3(0.96,0.63,0.24) * heat * 1.05;\n" +
+        "c += vec3(1.00,0.93,0.80) * spark * heat;\n" +
+        "return c;"
+    },
+    current: {
+      label: "deep current", steps: 10, zoom: 1.0, z0: 0.29, plane: "x", slide: 1, through: 3,
+      opts: { modes: 22, slope: 2.3, helicity: -0.7, coherence: 0.8, kmin: 1, kmax: 4, seed: 33 },
+      shade:
+        "float band = smoothstep(0.26, 0.88, l);\n" +
+        "vec3 c = mix(vec3(0.016,0.043,0.060), vec3(0.08,0.38,0.51), band);\n" +
+        "c = mix(c, vec3(0.27,0.82,0.78), pow(band, 2.7));\n" +
+        "c *= 0.82 + 0.30 * smoothstep(-0.5, 0.7, hn);\n" +
+        "return c;"
+    },
+    silk: {
+      label: "silk (dss tunnel)", tunnel: true, zoom: 2.2, z0: 0.21,
+      opts: { modes: 22, slope: 2.0, helicity: 0.6, coherence: 0.45, kmin: 1, kmax: 5, seed: 5, churn: 0.6 },
+      shade:
+        "float f = smoothstep(0.28, 0.82, l);\n" +
+        "vec3 c = mix(vec3(0.028,0.038,0.050), vec3(0.14,0.52,0.58), f);\n" +
+        "c = mix(c, vec3(0.82,0.93,0.95), pow(f, 4.0));\n" +
+        "c *= 1.22 - 0.42 * smoothstep(0.05, 1.05, length(uv - 0.5) * 2.0);\n" +
+        "return c;"
+    }
+  };
+  var ORDER = ["aurora", "ink", "embers", "current", "silk"];
+
+  // ------------------------------------------------------------- state
+  var S = {
+    look: "aurora", detuned: false, paused: false, freeze: true,
+    loop: 8, slide: 1, through: 2, zoom: 1.4, qual: 0.75,
+    lambda: 2, b: 0.6, a: 0.8, T: 1
+  };
+  var phase = 0, rate = 1, slowUntil = 0;
+
+  // ---------------------------------------------------- field + program cache
+  // The generated GLSL depends only on the field, and the tunnel's field does not depend on
+  // lambda/b — only its warp does — so a lambda tweak re-wraps rather than recompiling.
+  var cache = {};              // key -> { field, warp, prog, u }
+  function key() { return S.look + (LOOKS[S.look].tunnel || !S.detuned ? "" : "|d"); }
+
+  function buildField(name, detuned) {
+    var L = LOOKS[name];
+    var o = {};
+    for (var k in L.opts) o[k] = L.opts[k];
+    if (L.tunnel) { o.tileable = true; }                       // deep zooms want the lattice
+    else { o.tileable = !detuned; o.churn = 0; }               // detune = wavevectors off the lattice
+    return HelixNoise.create(o);
+  }
+
+  var VERT = "#version 300 es\nvoid main(){ vec2 p=vec2(float((gl_VertexID<<1)&2),float(gl_VertexID&2)); gl_Position=vec4(p*2.0-1.0,0.0,1.0); }";
+
+  // A 2*PI-periodic, smooth seed texture. Periodic so the drift wrap is exact for the *picture*,
+  // not just the field; smooth so a 1e-7 float32 nudge cannot flip a hash cell and speckle the diff.
+  var SEED_TEX =
+    "float seedTex(vec3 p){\n" +
+    "  float a = sin(3.0*p.x + 1.7) * cos(5.0*p.y - 0.4) * sin(4.0*p.z + 2.1);\n" +
+    "  float b = sin(7.0*p.y + 0.9) * cos(6.0*p.z + 1.3) * sin(5.0*p.x - 0.6);\n" +
+    "  float c = sin(2.0*p.z - 0.3) * cos(3.0*p.x + 2.6) * sin(6.0*p.y + 0.2);\n" +
+    "  return clamp(0.5 + 0.5*(a + 0.7*b + 0.5*c)/1.9, 0.0, 1.0);\n" +
+    "}\n";
+
+  function fragFor(name, glslField) {
+    var L = LOOKS[name];
+    var head =
+      "#version 300 es\nprecision highp float;\n" +
+      "uniform vec2 uRes; uniform vec3 uSpan; uniform vec3 uDrift;\n" +
+      (L.tunnel ? "uniform float uInvL[" + NL + "]; uniform float uTm[" + NL + "]; uniform float uWt[" + NL + "];\n" : "") +
+      "out vec4 outColor;\n" + glslField + "\n" + SEED_TEX +
+      "vec3 shade(float l, float sp, float hn, vec2 uv){\n" + L.shade + "\n}\n";
+    if (L.tunnel) {
+      return head +
+        "void main(){\n" +
+        "  vec2 uv = gl_FragCoord.xy / uRes;\n" +
+        "  vec3 x = vec3((uv.x-0.5)*uSpan.x, (uv.y-0.5)*uSpan.y, uSpan.z);\n" +
+        "  vec3 acc = vec3(0.0); float wsum = 0.0;\n" +
+        "  for (int m = 0; m < " + NL + "; m++){\n" +
+        "    float wt = uWt[m]; if (wt <= 0.0) continue;\n" +
+        "    vec3 p = x * uInvL[m];\n" +
+        // Radial mask: finer layers are confined to the middle, which is what turns a flat blend of
+        // scales into a tunnel. It depends only on (m + phase) — through uInvL — and on the fixed
+        // screen point, so it shifts with the stack and leaves the period exact.
+        "    wt *= 1.0 - smoothstep(2.2, 6.5, length(p.xy));\n" +
+        "    if (wt <= 0.0) continue;\n" +
+        "    vec3 v = hfield(p, uTm[m]);\n" +
+        "    float l = 0.55*seedTex(p + v*0.60) + 0.45*seedTex(p*1.7 - v*0.30);\n" +
+        "    acc += wt * shade(l, length(v), 0.0, uv); wsum += wt;\n" +
+        "  }\n" +
+        "  outColor = vec4(acc / max(wsum, 1e-5), 1.0);\n" +
+        "}\n";
+    }
+    var N = L.steps;
+    return head +
+      "void main(){\n" +
+      "  vec2 uv = gl_FragCoord.xy / uRes;\n" +
+      "  vec3 P = vec3(uv.x*uSpan.x, uv.y*uSpan.y, uSpan.z) + uDrift;\n" +
+      "  float h = uSpan.x * 0.0105;\n" +
+      "  float acc = 0.0, wsum = 0.0; vec3 q = P;\n" +
+      "  for (int i = 0; i < " + N + "; i++){\n" +
+      "    vec3 v = hfield(q); q += v * (h / (length(v) + 1e-4));\n" +
+      "    float w = 1.0 - float(i)/" + N + ".0; acc += w*seedTex(q); wsum += w;\n" +
+      "  }\n" +
+      "  q = P;\n" +
+      "  for (int i = 0; i < " + N + "; i++){\n" +
+      "    vec3 v = hfield(q); q -= v * (h / (length(v) + 1e-4));\n" +
+      "    float w = 1.0 - float(i)/" + N + ".0; acc += w*seedTex(q); wsum += w;\n" +
+      "  }\n" +
+      "  float l = acc / wsum;\n" +
+      "  vec3 v = hfield(P), w = hfieldCurl(P);\n" +
+      "  float sp = length(v);\n" +
+      "  float hn = dot(v,w) / (sp*length(w) + 1e-5);\n" +
+      "  outColor = vec4(shade(l, sp, hn, uv), 1.0);\n" +
+      "}\n";
+  }
+
+  function compile(type, src) {
+    var s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+    return s;
+  }
+  var vao = gl.createVertexArray(); gl.bindVertexArray(vao);
+
+  function entry() {
+    var k = key();
+    if (cache[k]) {
+      var c = cache[k];
+      if (c.warp && (c.lam !== S.lambda || c.bex !== S.b || c.frz !== S.freeze)) {
+        c.warp = HelixNoise.dssCollapse(c.field, { T: S.T, lambda: S.lambda, b: S.b, a: S.a, freezeProfile: S.freeze });
+        c.lam = S.lambda; c.bex = S.b; c.frz = S.freeze;
+      }
+      return c;
+    }
+    var name = S.look, L = LOOKS[name];
+    var field = buildField(name, S.detuned);
+    var src = field.glsl({ name: "hfield", curl: !L.tunnel });
+    var p = gl.createProgram();
+    gl.attachShader(p, compile(gl.VERTEX_SHADER, VERT));
+    gl.attachShader(p, compile(gl.FRAGMENT_SHADER, fragFor(name, src)));
+    gl.linkProgram(p);
+    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+    var e = {
+      field: field, prog: p, glslBytes: src.length,
+      warp: L.tunnel ? HelixNoise.dssCollapse(field, { T: S.T, lambda: S.lambda, b: S.b, a: S.a, freezeProfile: S.freeze }) : null,
+      lam: S.lambda, bex: S.b, frz: S.freeze,
+      u: {
+        res: gl.getUniformLocation(p, "uRes"), span: gl.getUniformLocation(p, "uSpan"),
+        drift: gl.getUniformLocation(p, "uDrift"),
+        invL: gl.getUniformLocation(p, "uInvL[0]"), tm: gl.getUniformLocation(p, "uTm[0]"),
+        wt: gl.getUniformLocation(p, "uWt[0]")
+      }
+    };
+    cache[k] = e;
+    return e;
+  }
+  // ------------------------------------------------------------- geometry
+  function spans(w, h) {
+    var L = LOOKS[S.look];
+    var sx = L.tunnel ? S.zoom : S.zoom * TAU;   // drift looks: whole periods across the width
+    return [sx, sx * h / w, L.z0];
+  }
+  function windVec() {
+    var L = LOOKS[S.look], n = [0, 0, 0];
+    if (L.plane === "x") n[0] = S.slide; else n[1] = S.slide;
+    n[2] = S.through;
+    return n;
+  }
+
+  // --------------------------------------------------- dssCollapse layers
+  // Hann window over layer index, identically zero at both ends: that is what makes the stack
+  // shift by exactly one index per period instead of fading anything in or out across the wrap.
+  function hann(u) { return (u <= 1 || u >= NL - 1) ? 0 : 0.5 - 0.5 * Math.cos(TAU * (u - 1) / (NL - 2)); }
+
+  var _o6 = [0, 0, 0, 0, 0, 0], _b6 = [0, 0, 0, 0, 0, 0];
+  var _u0 = [0, 0, 0], _u1 = [0, 0, 0];
+  /**
+   * Read L(t) and A(t) back out of the library's own warped field instead of re-deriving them:
+   * u_warp(c,t) = A·U(c) and ω_warp(c,t) = (A/L)·Ω(c), so one sample of each gives both. It also
+   * checks the warp's vorticity scaling every frame — get that wrong and the tunnel falls apart.
+   */
+  function scaleAt(e, t) {
+    e.field.sampleUW(0, 0, 0, _b6, S.freeze ? 0 : t);
+    var iu = 0, iw = 0, m;
+    for (m = 1; m < 3; m++) if (Math.abs(_b6[m]) > Math.abs(_b6[iu])) iu = m;
+    for (m = 1; m < 3; m++) if (Math.abs(_b6[3 + m]) > Math.abs(_b6[3 + iw])) iw = m;
+    e.warp.sampleUW(0, 0, 0, _o6, t);
+    var A = _o6[iu] / _b6[iu];
+    var AoL = _o6[3 + iw] / _b6[3 + iw];
+    return [A / AoL, A];
+  }
+  var DETUNE_LAMBDA = 1.12;   // playback advances log(lambda) 12% faster than the field repeats
+  function tunnelLayers(e, p) {
+    var logL = Math.log(S.lambda);
+    var s = p * logL * (S.detuned ? DETUNE_LAMBDA : 1);
+    var wt = new Float32Array(NL), invL = new Float32Array(NL), tm = new Float32Array(NL);
+    var tr = new Float64Array(NL), am = new Float64Array(NL);
+    for (var m = 0; m < NL; m++) {
+      var w = hann(m + p); wt[m] = w; invL[m] = 1; tm[m] = 0; tr[m] = 0; am[m] = 1;
+      if (w <= 0) continue;
+      var t = S.T - Math.exp(-(s + m * logL));
+      var LA = scaleAt(e, t);
+      invL[m] = 1 / LA[0]; tr[m] = t; am[m] = LA[1];
+      // freezeProfile: true reads the wrapped field at t = 0 always; false lets it churn.
+      tm[m] = S.freeze ? 0 : t;
+    }
+    return { wt: wt, invL: invL, tm: tm, t: tr, A: am };
+  }
+  /**
+   * The identity dssCollapse actually guarantees, and the only thing that makes the tunnel's
+   * layers consecutive frames of ONE collapse rather than unrelated scales:
+   *     u(x, t2) == lambda^a · u(c + lambda^b·(x−c), t1)   for  (T−t2) = (T−t1)/lambda.
+   * Independent of the Droste bookkeeping, so this is the number `freezeProfile` moves.
+   */
+  function dssIdentity(e) {
+    var lb = Math.pow(S.lambda, S.b), la = Math.pow(S.lambda, S.a);
+    var t1 = S.T - 1, t2 = S.T - 1 / S.lambda;
+    var sp = spans(cv.width, cv.height), num = 0, den = 0, i, j, c;
+    for (j = 0; j < NY; j++) for (i = 0; i < NX; i++) {
+      var x = ((i + 0.5) / NX - 0.5) * 4, y = ((j + 0.5) / NY - 0.5) * 4 * (sp[1] / sp[0]), z = sp[2];
+      e.warp.sampleUW(x, y, z, _o6, t2);
+      e.warp.sampleUW(lb * x, lb * y, lb * z, _b6, t1);
+      for (c = 0; c < 3; c++) { var d = _o6[c] - la * _b6[c]; num += d * d; den += la * _b6[c] * la * _b6[c]; }
+    }
+    return den > 0 ? Math.sqrt(num / den) : 0;
+  }
+  function stackU(e, LY, x, y, z, out) {
+    out[0] = 0; out[1] = 0; out[2] = 0;
+    var ws = 0;
+    for (var m = 0; m < NL; m++) {
+      var w = LY.wt[m]; if (w <= 0) continue;
+      e.warp.sampleUW(x, y, z, _o6, LY.t[m]);          // = A_m · U(x / L_m)
+      var g = w / LY.A[m];                              // amplitude-normalise so layers compare
+      out[0] += g * _o6[0]; out[1] += g * _o6[1]; out[2] += g * _o6[2];
+      ws += w;
+    }
+    if (ws > 0) { out[0] /= ws; out[1] /= ws; out[2] /= ws; }
+  }
+
+  // ------------------------------------------------------------- receipts
+  var NX = 20, NY = 13;
+  /** rel-rms | u(phase 1) − u(phase 0) | over the visible window. ~1e-15 = roundoff on 2π. */
+  function fieldReceipt(e) {
+    var L = LOOKS[S.look], sp = spans(cv.width, cv.height);
+    var num = 0, den = 0, i, j, c, d;
+    if (L.tunnel) {
+      var A0 = tunnelLayers(e, 0), A1 = tunnelLayers(e, 1);
+      for (j = 0; j < NY; j++) for (i = 0; i < NX; i++) {
+        var tx = ((i + 0.5) / NX - 0.5) * sp[0], ty = ((j + 0.5) / NY - 0.5) * sp[1];
+        stackU(e, A0, tx, ty, sp[2], _u0);
+        stackU(e, A1, tx, ty, sp[2], _u1);
+        for (c = 0; c < 3; c++) { d = _u1[c] - _u0[c]; num += d * d; den += _u0[c] * _u0[c]; }
+      }
+    } else {
+      var n = windVec();
+      for (j = 0; j < NY; j++) for (i = 0; i < NX; i++) {
+        var x = ((i + 0.5) / NX) * sp[0], y = ((j + 0.5) / NY) * sp[1], z = sp[2];
+        e.field.sampleUW(x, y, z, _o6, 0);
+        e.field.sampleUW(x + TAU * n[0], y + TAU * n[1], z + TAU * n[2], _b6, 0);
+        for (c = 0; c < 3; c++) { d = _b6[c] - _o6[c]; num += d * d; den += _o6[c] * _o6[c]; }
+      }
+    }
+    return den > 0 ? Math.sqrt(num / den) : 0;
+  }
+
+  var DW = 160, DH = 100, fbo = null, ftex = null;
+  var bufA = new Uint8Array(DW * DH * 4), bufB = new Uint8Array(DW * DH * 4);
+  function ensureFbo() {
+    if (fbo) return;
+    ftex = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, ftex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, DW, DH, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    fbo = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, ftex, 0);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  }
+  /** The same test one level down: render the real shader at both ends, diff the 8-bit frames. */
+  function pixelReceipt(e) {
+    ensureFbo();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+    gl.useProgram(e.prog);
+    drawAt(e, 0, DW, DH); gl.readPixels(0, 0, DW, DH, gl.RGBA, gl.UNSIGNED_BYTE, bufA);
+    drawAt(e, 1, DW, DH); gl.readPixels(0, 0, DW, DH, gl.RGBA, gl.UNSIGNED_BYTE, bufB);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    var n = 0, mx = 0;
+    for (var i = 0; i < DW * DH; i++) {
+      var o = 4 * i;
+      var d = Math.abs(bufA[o] - bufB[o]);
+      var d1 = Math.abs(bufA[o + 1] - bufB[o + 1]); if (d1 > d) d = d1;
+      var d2 = Math.abs(bufA[o + 2] - bufB[o + 2]); if (d2 > d) d = d2;
+      if (d > 0) { n++; if (d > mx) mx = d; }
+    }
+    return { n: n, max: mx, total: DW * DH };
+  }
+
+  // ------------------------------------------------------------- drawing
+  function drawAt(e, p, w, h) {
+    var L = LOOKS[S.look], sp = spans(w, h);
+    gl.viewport(0, 0, w, h);
+    gl.uniform2f(e.u.res, w, h);
+    gl.uniform3f(e.u.span, sp[0], sp[1], sp[2]);
+    if (L.tunnel) {
+      var LY = tunnelLayers(e, p);
+      gl.uniform3f(e.u.drift, 0, 0, 0);
+      gl.uniform1fv(e.u.invL, LY.invL);
+      gl.uniform1fv(e.u.tm, LY.tm);
+      gl.uniform1fv(e.u.wt, LY.wt);
+    } else {
+      var n = windVec();
+      gl.uniform3f(e.u.drift, TAU * n[0] * p, TAU * n[1] * p, TAU * n[2] * p);
+    }
+    gl.bindVertexArray(vao);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+  }
+
+  function resize() {
+    var w = Math.max(64, Math.min(1400, Math.round(cv.clientWidth * S.qual)));
+    var h = Math.max(40, Math.round(cv.clientHeight * S.qual));
+    if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+  }
+  window.addEventListener("resize", resize);
+
+  // ------------------------------------------------------------- readout
+  var mag = function (v) { return v === 0 ? "0" : v.toExponential(1); };
+  var recF = 0, recI = 0, recP = { n: 0, max: 0, total: DW * DH }, fps = 0;
+  function readout(e) {
+    var L = LOOKS[S.look];
+    var bad = recF > 1e-9 ? " class=\"bad\"" : "";
+    var badI = recI > 1e-9 ? " class=\"bad\"" : "";
+    var badP = recP.n > DW * DH * 0.02 ? " class=\"bad\"" : "";
+    $("ro").innerHTML =
+      L.label + " · loop <b>" + S.loop.toFixed(1) + " s</b> · φ <b>" + phase.toFixed(3) + "</b><br>" +
+      "wrap Δu <b" + bad + ">" + mag(recF) + "</b> rel" +
+      (L.tunnel && recF === 0 ? " <i>index shift</i>" : "") + "<br>" +
+      (L.tunnel ? "λ-identity <b" + badI + ">" + mag(recI) + "</b> rel<br>" : "") +
+      "pixels ≠ <b" + badP + ">" + recP.n + "</b>/" + recP.total + " · max <b" + badP + ">" + recP.max + "</b>/255<br>" +
+      "<i>" + e.field.params.modes + " modes · " + cv.width + "×" + cv.height + " · " + fps.toFixed(0) + " fps</i>";
+    $("fill").style.width = (phase * 100).toFixed(2) + "%";
+  }
+
+  // ------------------------------------------------------------- snippet
+  function fmtOpts(o) {
+    var out = [];
+    for (var k in o) out.push(k + ": " + JSON.stringify(o[k]));
+    return out;
+  }
+  function snippet() {
+    var L = LOOKS[S.look], lines;
+    // The snippet always prints the *working* configuration — "detune the loop" is a demo control
+    // for breaking the receipt on screen, not something you would ever paste.
+    var det = S.detuned
+      ? ["<span class='c'>// (the detune button is on: the config below is still the exact one —</span>",
+         "<span class='c'>//  the page is breaking it at playback time so the readout can move)</span>"]
+      : [];
+    if (L.tunnel) {
+      lines = [
+        "<span class='c'>// helix-noise — " + L.label + ", exact every log(λ) of renormalisation time</span>",
+        "<span class='k'>const</span> base = HelixNoise.create({",
+        "  " + fmtOpts(L.opts).join(", ") + ",",
+        "  tileable: true,   <span class='c'>// deep zooms stay structured instead of dissolving</span>",
+        "});",
+        "<span class='k'>const</span> warp = HelixNoise.dssCollapse(base, { T: 1, lambda: " + S.lambda.toFixed(2) +
+          ", b: " + S.b.toFixed(2) + ", a: " + S.a.toFixed(2) + (S.freeze ? "" : ", freezeProfile: false") + " });",
+        "<span class='c'>// freezeProfile defaults to true — that is what makes u(t+Δ) an exact rescale of u(t)</span>",
+        "",
+        "<span class='k'>const</span> LOOP = " + S.loop.toFixed(1) + ", LOGL = Math.log(" + S.lambda.toFixed(2) + "), NL = " + NL + ";",
+        "<span class='c'>// per frame — wrap the phase, never the clock</span>",
+        "<span class='k'>const</span> p = (t / LOOP) % 1, s = p * LOGL;",
+        "<span class='k'>for</span> (<span class='k'>let</span> m = 0; m &lt; NL; m++) {        <span class='c'>// Droste stack: one period tiles the zoom</span>",
+        "  <span class='k'>const</span> w = hann(m + p); <span class='k'>if</span> (!w) <span class='k'>continue</span>;",
+        "  warp.sampleUW(x, y, z, out, 1 - Math.exp(-(s + m * LOGL)));",
+        "}"
+      ];
+    } else {
+      var n = windVec(), o = {}, k;
+      for (k in L.opts) o[k] = L.opts[k];
+      lines = [
+        "<span class='c'>// helix-noise — " + L.label + ", exact " + S.loop.toFixed(1) + " s loop</span>",
+        "<span class='k'>const</span> field = HelixNoise.create({",
+        "  " + fmtOpts(o).join(", ") + ",",
+        "  tileable: <span class='k'>true</span>,   <span class='c'>// integer wavenumbers → u(x + 2π·n) ≡ u(x)</span>",
+        "  churn: 0,         <span class='c'>// the field's own clock is OFF — its rates never repeat</span>",
+        "});",
+        "",
+        "<span class='k'>const</span> LOOP = " + S.loop.toFixed(1) + ";                 <span class='c'>// seconds</span>",
+        "<span class='k'>const</span> WIND = [" + n.join(", ") + "];            <span class='c'>// integer windings per loop</span>",
+        "<span class='k'>const</span> SPAN = [" + (S.zoom * TAU).toFixed(3) + ", …];     <span class='c'>// world window across the canvas</span>",
+        "",
+        "<span class='c'>// per frame — wrap the phase, never the clock</span>",
+        "<span class='k'>const</span> p = (t / LOOP) % 1;",
+        "field.sampleUW(x + 2*Math.PI*WIND[0]*p,",
+        "               y + 2*Math.PI*WIND[1]*p,",
+        "               z + 2*Math.PI*WIND[2]*p, out);"
+      ];
+    }
+    $("snip").innerHTML = det.concat(lines).join("\n");
+  }
+
+  // ------------------------------------------------------------- controls
+  var lookRow = $("lookRow");
+  ORDER.forEach(function (nm) {
+    var b = document.createElement("button");
+    b.textContent = LOOKS[nm].label;
+    b.className = nm === S.look ? "on" : "";
+    b.onclick = function () { pickLook(nm); };
+    b.id = "look-" + nm;
+    lookRow.appendChild(b);
+  });
+
+  function syncRows() {
+    var L = LOOKS[S.look];
+    $("driftRow").style.display = L.tunnel ? "none" : "flex";
+    $("tunRow").style.display = L.tunnel ? "flex" : "none";
+    $("detuneWhat").textContent = L.tunnel ? "→ playback 12% off log λ" : "→ tileable: false";
+  }
+  function pickLook(nm) {
+    S.look = nm;
+    var L = LOOKS[nm];
+    ORDER.forEach(function (o) { $("look-" + o).className = o === nm ? "on" : ""; });
+    S.zoom = L.zoom;
+    if (!L.tunnel) { S.slide = L.slide; S.through = L.through; }
+    $("slide").value = S.slide; $("v-slide").textContent = S.slide;
+    $("through").value = S.through; $("v-through").textContent = S.through;
+    $("zoom").value = L.tunnel ? 1.4 : S.zoom; $("v-zoom").textContent = (L.tunnel ? 1.4 : S.zoom).toFixed(1);
+    $("zoom2").value = L.tunnel ? S.zoom : 2.2; $("v-zoom2").textContent = (L.tunnel ? S.zoom : 2.2).toFixed(1);
+    $("loop").value = S.loop; $("v-loop").textContent = S.loop.toFixed(1) + " s";
+    $("loop2").value = S.loop; $("v-loop2").textContent = S.loop.toFixed(1) + " s";
+    syncRows(); snippet(); refresh();
+  }
+
+  function bindRange(id, key, fmt, twin) {
+    $(id).addEventListener("input", function (ev) {
+      S[key] = parseFloat(ev.target.value);
+      $("v-" + id).textContent = fmt(S[key]);
+      if (twin) { $(twin).value = S[key]; $("v-" + twin).textContent = fmt(S[key]); }
+      snippet(); refresh();
+    });
+  }
+  bindRange("loop", "loop", function (v) { return v.toFixed(1) + " s"; }, "loop2");
+  bindRange("loop2", "loop", function (v) { return v.toFixed(1) + " s"; }, "loop");
+  bindRange("zoom", "zoom", function (v) { return v.toFixed(1); });
+  bindRange("zoom2", "zoom", function (v) { return v.toFixed(1); });
+  bindRange("lam", "lambda", function (v) { return v.toFixed(2); });
+  bindRange("bex", "b", function (v) { return v.toFixed(2); });
+  $("slide").addEventListener("input", function (ev) {
+    S.slide = parseInt(ev.target.value, 10);
+    if (S.slide === 0 && S.through === 0) { S.through = 1; $("through").value = 1; $("v-through").textContent = "1"; }
+    $("v-slide").textContent = S.slide; snippet(); refresh();
+  });
+  $("through").addEventListener("input", function (ev) {
+    S.through = parseInt(ev.target.value, 10);
+    if (S.slide === 0 && S.through === 0) { S.slide = 1; $("slide").value = 1; $("v-slide").textContent = "1"; }
+    $("v-through").textContent = S.through; snippet(); refresh();
+  });
+  $("qual").addEventListener("input", function (ev) {
+    S.qual = parseFloat(ev.target.value);
+    $("v-qual").textContent = S.qual.toFixed(2) + "×"; resize(); refresh();
+  });
+  $("detune").onclick = function () {
+    S.detuned = !S.detuned;
+    $("detune").className = "warn" + (S.detuned ? " on" : "");
+    $("detune").textContent = S.detuned ? "detuned ✓" : "detune the loop";
+    snippet(); refresh();
+  };
+  $("freeze").onclick = function () {
+    S.freeze = !S.freeze;
+    $("freeze").className = S.freeze ? "on" : "";
+    $("freeze").textContent = S.freeze ? "freezeProfile ✓" : "freezeProfile ✗";
+    snippet(); refresh();
+  };
+  $("pause").onclick = function () {
+    S.paused = !S.paused;
+    $("pause").className = S.paused ? "on" : "";
+    $("pause").textContent = S.paused ? "play" : "pause";
+  };
+  $("seam").onclick = function () {
+    phase = 1 - 0.045;
+    slowUntil = performance.now() + 5200;
+    S.paused = false; $("pause").className = ""; $("pause").textContent = "pause";
+  };
+  $("copy").onclick = function () {
+    var txt = $("snip").textContent;
+    var done = function () { $("copied").textContent = "copied"; setTimeout(function () { $("copied").textContent = ""; }, 1400); };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(done, done);
+    else { var ta = document.createElement("textarea"); ta.value = txt; document.body.appendChild(ta); ta.select();
+           try { document.execCommand("copy"); } catch (err) {} document.body.removeChild(ta); done(); }
+  };
+
+  // ------------------------------------------------------------- run
+  var dirty = true, flashUntil = 0, lastTs = 0, frameNo = 0, dead = false;
+  function refresh() { dirty = true; }
+  function tick(ts) {
+    if (dead) return;
+    requestAnimationFrame(tick);
+    var dt = lastTs ? Math.min(0.05, (ts - lastTs) * 0.001) : 0.016;
+    lastTs = ts;
+    fps = fps ? fps * 0.92 + (1 / Math.max(dt, 1e-4)) * 0.08 : 1 / Math.max(dt, 1e-4);
+    resize();
+
+    var e;
+    try { e = entry(); }
+    catch (err) { dead = true; $("ro").textContent = "shader error"; $("note").textContent = "Shader error: " + err.message; return; }
+
+    rate = ts < slowUntil ? 0.16 : 1;
+    $("fill").className = "fill" + (ts < slowUntil ? " slow" : "");
+    if (!S.paused) {
+      phase += dt * rate / S.loop;
+      // Wrapping the phase (rather than letting t grow) is only allowed because the wrap is exact.
+      if (phase >= 1) { phase -= 1; flashUntil = ts + 1100; }
+    }
+    $("flash").className = "flash" + (ts < flashUntil ? " on" : "");
+
+    gl.useProgram(e.prog);
+    drawAt(e, phase, cv.width, cv.height);
+
+    if (dirty || (frameNo % 45) === 0) { recP = pixelReceipt(e); dirty = false; }
+    recF = fieldReceipt(e);
+    recI = LOOKS[S.look].tunnel ? dssIdentity(e) : 0;
+    readout(e);
+    if (frameNo === 0 || (frameNo % 30) === 0) {
+      var L = LOOKS[S.look];
+      $("note").textContent =
+        (L.tunnel
+          ? NL + " dssCollapse layers × 1 field sample per pixel"
+          : (2 * L.steps + 2) + " field samples per pixel (LIC forward + back, plus velocity and curl)") +
+        " · " + e.field.params.modes + " modes → " + (e.glslBytes / 1024).toFixed(1) + " kB of generated GLSL · " +
+        cv.width + "×" + cv.height + " internal buffer (" + (cv.width * cv.height / 1000).toFixed(0) + "k px) · " +
+        fps.toFixed(0) + " fps · one 160×100 offscreen re-render per receipt check";
+    }
+    frameNo++;
+  }
+
+  syncRows(); snippet(); resize();
+  if (window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    S.paused = true; $("pause").className = "on"; $("pause").textContent = "play";
+  }
+  requestAnimationFrame(tick);
+})();
+</script>
+</body>
+</html>

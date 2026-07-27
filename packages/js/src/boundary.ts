@@ -37,6 +37,13 @@ export class BoundedFieldImpl implements BoundedField {
   private _ua: number[] = [0, 0, 0, 0, 0, 0];
   private _fa: number[] = [0, 0, 0];
   private _fb: number[] = [0, 0, 0];
+  /**
+   * The output buffer for `vorticity`/`helicityDensity`, and it must NOT be `_ua`. `sampleUW` takes
+   * six finite-difference samples after filling slots 0..2, and every one of them refills `_ua` with
+   * the *raw base* field at a neighbouring point — so handing `_ua` in as the output leaves the
+   * velocity slots holding someone else's answer by the time they are read.
+   */
+  private _o6: number[] = [0, 0, 0, 0, 0, 0];
 
   constructor(base: FlowField, sdf: Sdf, opts?: BoundaryOptions) {
     this.base = base;
@@ -119,13 +126,13 @@ export class BoundedFieldImpl implements BoundedField {
   }
 
   vorticity(x: number, y: number, z: number, t = 0): Vec3 {
-    const o = this._ua;
+    const o = this._o6;
     this.sampleUW(x, y, z, o, t);
     return [o[3], o[4], o[5]];
   }
 
   helicityDensity(x: number, y: number, z: number, t = 0): number {
-    const o = this._ua;
+    const o = this._o6;
     this.sampleUW(x, y, z, o, t);
     return o[0] * o[3] + o[1] * o[4] + o[2] * o[5];
   }
