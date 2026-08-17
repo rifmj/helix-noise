@@ -337,8 +337,26 @@ impl Atoms {
     }
 }
 
-/// The wrapped core library version.
+/// This package's own version.
+///
+/// It used to return the wrapped crate's `VERSION`, which is a different number on a different
+/// release cycle — an `npm i helix-noise-wasm@0.6.0` that reported `0.7.0` back.
 #[wasm_bindgen]
 pub fn version() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
+}
+
+/// Revision of the JS reference the wrapped core is verified against.
+///
+/// Inherited from the crate, because the numbers these bindings return are the crate's numbers.
+#[wasm_bindgen]
+pub fn spec_version() -> String {
+    helix_noise::SPEC_VERSION.to_string()
+}
+
+/// The wrapped core crate's own version, kept reachable now that [`version`] reports this
+/// package's.
+#[wasm_bindgen]
+pub fn core_version() -> String {
     helix_noise::VERSION.to_string()
 }

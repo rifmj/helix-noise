@@ -136,7 +136,8 @@ base field beyond the influence band.
 |------|-------------|
 | `TAU` | `2π`, the periodic domain size used by the bakes and `relative_helicity`. |
 | `GA` | Golden angle (radians) — the Fibonacci-sphere azimuth increment. |
-| `VERSION` | Field-format version string shared with the reference implementation. |
+| `VERSION` | This package's own version — the same string as `__version__`. |
+| `SPEC_VERSION` | Revision of the JS reference this port is verified against (`"1.11.3"`). Pinned by the parity suite to the `$spec_version` recorded in `spec/parity_fixture.json`, so a fixture regenerated from a newer reference fails the tests until someone re-verifies. It says *which* reference the numbers match, not *which blocks* are ported — for that see the parity table in `spec/PORTING_SPEC.md`. |
 | `__version__` | The installed package version. |
 
 ## Presets

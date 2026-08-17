@@ -15,9 +15,16 @@ This directory is the **single source of truth** that keeps every port producing
 ```bash
 # from the repo root
 node packages/js/scripts/dump-fixture.mjs > spec/parity_fixture.json
-# then refresh each port's self-contained copy:
-for p in python rust shaders; do cp spec/parity_fixture.json packages/$p/tests/parity_fixture.json; done
+# then refresh each port's self-contained copy — all four, wasm included:
+for p in python rust shaders wasm; do cp spec/parity_fixture.json packages/$p/tests/parity_fixture.json; done
 ```
+
+The loop above omitted `wasm` while the CI check covered it, so following the documented procedure
+left one copy stale and failed the build.
+
+The fixture's first key is `$spec_version` — the reference version that generated it. Each port
+asserts its own `SPEC_VERSION` against that key, so regenerating from a newer reference turns every
+unverified port red instead of letting it drift (see `PORTING_SPEC.md` §1).
 
 Each package keeps its **own copy** of the fixture inside `tests/` so it stays self-contained and
 publishable to its registry. The `parity-fixture` CI job regenerates the oracle and fails the build if

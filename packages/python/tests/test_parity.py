@@ -39,12 +39,18 @@ MODE_CONFIGS = [
     "R_flutter",
 ]
 
+# Configs the fixture builds by calling a named factory instead of passing an options dict.
+FACTORY_CONFIGS = ["P_abc"]
+
 # Callable options travel in the fixture as {"$preset": name, "args": [...]} descriptors.
 PRESET_REGISTRY = {
     "shellPeak": hn.shell_peak,
     "rolloff": hn.rolloff,
     "condensate": hn.condensate,
 }
+
+# Whole-field factories travel as {"$factory": name, "args": [...]} and return a field directly.
+FACTORY_REGISTRY = {"abc": hn.abc}
 
 
 def _resolve(config):
@@ -135,11 +141,39 @@ def _check_bakesum(f, expected, label):
     )
 
 
+def test_spec_version():
+    """The fixture records which reference produced it; the port records which it was checked
+    against. Regenerating from a newer reference must fail here rather than pass quietly."""
+    recorded = _load()["$spec_version"]
+    assert hn.SPEC_VERSION == recorded, (
+        "helix_noise.SPEC_VERSION is {!r} but the fixture was generated from reference {!r} "
+        "— re-verify the port, then bump SPEC_VERSION".format(hn.SPEC_VERSION, recorded)
+    )
+
+
 def test_mode_configs():
     data = _load()
     for label in MODE_CONFIGS:
         entry = data[label]
         f = _build(entry["config"])
+        _check_modes(f, entry["modes"], label)
+        _check_samples(f, entry["samples"], label)
+        _check_relhelicity(f, entry["relativeHelicity"], label)
+        _check_bakesum(f, entry["bake3d4_sum"], label)
+
+
+def test_factory_configs():
+    """Configs the fixture builds through a named factory rather than an options dict.
+
+    ``P_abc`` was in the fixture from the start and never ran here: the entry carries a
+    ``$factory`` descriptor instead of a ``config``, and this suite only knew how to build from
+    ``config``. So ``abc()`` shipped with its parity to the reference unmeasured.
+    """
+    data = _load()
+    for label in FACTORY_CONFIGS:
+        entry = data[label]
+        desc = entry["factory"]
+        f = FACTORY_REGISTRY[desc["$factory"]](*desc["args"])
         _check_modes(f, entry["modes"], label)
         _check_samples(f, entry["samples"], label)
         _check_relhelicity(f, entry["relativeHelicity"], label)

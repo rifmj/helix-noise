@@ -31,7 +31,15 @@ PHI = (1.0 + math.sqrt(5.0)) / 2.0
 POLAR_SALT = 0x9E3779B9
 POLAR_DEG_MAX = 0.97
 
-VERSION = "1.8.0"
+# This tool's own version -- mirrors CHANGELOG.md, nothing else. It sat at "1.8.0", mirroring a
+# long-gone reference release, while the CHANGELOG moved to 0.5.0.
+VERSION = "0.5.0"
+
+# Revision of the JS reference this emitter is verified against. Pinned by tests/test_shaders.py
+# to the `$spec_version` in spec/parity_fixture.json, so regenerating the fixture from a newer
+# reference fails the suite until someone re-verifies. Which blocks are covered at that revision
+# is the parity table in spec/PORTING_SPEC.md.
+SPEC_VERSION = "1.11.3"
 
 
 # ---------------------------------------------------------------------------

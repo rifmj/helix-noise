@@ -7,15 +7,25 @@ TAU = 2.0 * math.pi
 # Golden angle (radians) — the Fibonacci-sphere azimuth increment.
 GA = math.pi * (3.0 - math.sqrt(5.0))
 
-#: Seed salt for the polarization channel's second RNG stream (32-bit wrapping add).
 #: Golden ratio -- the flutter harmonic's rate multiplier (never resynchronizes with churn).
 PHI = (1.0 + math.sqrt(5.0)) / 2.0
 
+#: Seed salt for the polarization channel's second RNG stream (32-bit wrapping add).
 POLAR_SALT = 0x9E3779B9
 #: Polarization-degree ball radius: sqrt(d^2 + chi^2) is clamped to this (PSD of the covariance).
 POLAR_DEG_MAX = 0.97
 
+#: This package's own version -- mirrors ``pyproject.toml``, nothing else. For "which revision
+#: of the reference field does this implement", see :data:`SPEC_VERSION`.
 VERSION = "0.6.0"
+
+#: Revision of the JS reference this package is verified against.
+#:
+#: Pinned by ``tests/test_parity.py`` to the ``$spec_version`` recorded in
+#: ``spec/parity_fixture.json``, so regenerating the fixture from a newer reference fails the
+#: suite until someone re-verifies the port. Which *blocks* are covered at that revision is the
+#: parity table in ``spec/PORTING_SPEC.md``; this only says which reference the numbers match.
+SPEC_VERSION = "1.11.3"
 
 # Default options, filled in for every field. ``spectrum`` stays optional
 # (there is no default spectral-law callable).

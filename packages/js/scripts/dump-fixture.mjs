@@ -1,6 +1,6 @@
 // Dump a canonical parity fixture from the JS reference implementation.
 // Consumed by the Python / Rust / shader ports' tests to prove numerical parity.
-import { create, createAtoms, abc, shellPeak, rolloff, condensate } from "../dist/helix-noise.js";
+import { create, createAtoms, abc, shellPeak, rolloff, condensate, version } from "../dist/helix-noise.js";
 
 // Callable options can't live in JSON, so the fixture stores them as named preset descriptors
 // ({"$preset": name, "args": [...]}) that every port maps through its own preset registry.
@@ -39,7 +39,11 @@ const TIMES = [0, 0.5];
 
 const arr = (a) => Array.from(a);
 
-const out = {};
+// Which revision of the reference produced these numbers. Ports assert their own SPEC_VERSION
+// against this, so a regenerated fixture that nobody re-verified fails loudly instead of silently
+// drifting — the same pin that closed the constants.ts/package.json drift in the JS package.
+// The `$` prefix keeps it out of the config namespace, as with `$preset` / `$factory`.
+const out = { $spec_version: version };
 for (const [name, cfg] of Object.entries(CONFIGS)) {
   const f = create(resolve(cfg));
   const modes = {

@@ -14,16 +14,27 @@ pub fn ga() -> f64 {
     std::f64::consts::PI * (3.0 - 5.0_f64.sqrt())
 }
 
-/// Library version string, mirroring the reference package.
-/// Seed salt for the polarization channel's second RNG stream (32-bit wrapping add).
 /// Golden ratio — the flutter harmonic's rate multiplier (never resynchronizes with churn).
 pub const PHI: f64 = 1.618_033_988_749_894_9;
 
+/// Seed salt for the polarization channel's second RNG stream (32-bit wrapping add).
 pub const POLAR_SALT: u32 = 0x9E37_79B9;
 /// Polarization-degree ball radius: `sqrt(d^2 + chi^2)` is clamped to this (PSD of the covariance).
 pub const POLAR_DEG_MAX: f64 = 0.97;
 
-pub const VERSION: &str = "1.1.0";
+/// This crate's own version — mirrors `Cargo.toml`, nothing else.
+///
+/// For "which revision of the reference field does this implement", see [`SPEC_VERSION`]: the
+/// two answer different questions and are free to move independently.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Revision of the JS reference this crate is verified against.
+///
+/// Pinned by `tests/parity.rs` to the `$spec_version` recorded in `spec/parity_fixture.json`, so
+/// regenerating the fixture from a newer reference fails the suite until someone re-verifies the
+/// port. Which *blocks* are covered at that revision is the parity table in `spec/PORTING_SPEC.md`;
+/// this constant only says which reference the numbers were checked against.
+pub const SPEC_VERSION: &str = "1.11.3";
 
 /// Mode layout strategy.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

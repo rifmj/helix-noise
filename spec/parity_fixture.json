@@ -1,4 +1,5 @@
 {
+  "$spec_version": "1.11.3",
   "A_default_small": {
     "config": {
       "modes": 8,

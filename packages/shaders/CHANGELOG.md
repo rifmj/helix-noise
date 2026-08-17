@@ -5,6 +5,14 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [0.5.0]
 
+- **`VERSION` said `1.8.0` in a tool whose CHANGELOG said `0.5.0`.** It mirrored a reference release
+  rather than this emitter, so the two version lines in one file disagreed by three minor versions.
+  `VERSION` is now this tool's own (`0.5.0`).
+- **New `SPEC_VERSION`** (`"1.11.3"`) — the revision of the JS reference the emitter is verified
+  against, pinned by `tests/test_shaders.py` to the `$spec_version` key now recorded in
+  `spec/parity_fixture.json`, so regenerating the fixture from a newer reference fails the suite
+  until someone re-verifies. It says which reference the numbers match, never which blocks are
+  ported (`twoScale` still is not — see the parity table in `spec/PORTING_SPEC.md`).
 - **Flutter (spec 1.3)**: `flutter` adds a fast, deterministic second harmonic to each mode's phase
   — `ph_eff = ph + flutter*(sin(omf*t + ph) - sin(ph))`, which vanishes exactly at `t = 0` and
   consumes no RNG draws. Rate is the finest scale's eddy rate times PHI, so it never

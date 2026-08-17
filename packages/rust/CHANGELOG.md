@@ -5,6 +5,19 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [0.7.0]
 
+- **`VERSION` was a third of a release line behind, and could not catch up.** It was a hand-written
+  `"1.1.0"` mirroring a long-gone reference release, exported from a crate at `0.7.0` — a consumer
+  reading it got a number belonging to no package on any registry. It now derives from
+  `env!("CARGO_PKG_VERSION")`, so it cannot disagree with `Cargo.toml` again, and a test asserts it.
+- **New `SPEC_VERSION`** (`"1.11.3"`) answers the question `VERSION` was being misused for: which
+  revision of the JS reference this crate's numbers were checked against. `tests/parity.rs` pins it
+  to the `$spec_version` key now recorded in `spec/parity_fixture.json`, so regenerating the fixture
+  from a newer reference fails the suite until someone re-verifies the port, rather than leaving a
+  stale claim in a source file. It says which reference the numbers match, never which blocks are
+  ported — that stays the parity table in `spec/PORTING_SPEC.md`.
+- **Doc comments were shifted by one item.** `PHI` carried three `///` lines: the description of
+  `VERSION`, the description of `POLAR_SALT`, and its own; `POLAR_SALT` and `VERSION` carried none.
+  `cargo doc` rendered two wrong descriptions on `PHI`. Each is reattached to its constant.
 - **Flutter (spec 1.3)**: `flutter` adds a fast, deterministic second harmonic to each mode's phase
   — `ph_eff = ph + flutter*(sin(omf*t + ph) - sin(ph))`, which vanishes exactly at `t = 0` and
   consumes no RNG draws. Rate is the finest scale's eddy rate times PHI, so it never

@@ -71,7 +71,7 @@ mod rng;
 
 pub use atoms::{AtomOptions, HelixAtoms, ScalarField3};
 pub use boundary::{BoundaryOptions, BoundedField, VectorPotential};
-pub use constants::{ga, HelixOptions, Layout, ScaleFn, SpectrumFn, TAU, VERSION};
+pub use constants::{ga, HelixOptions, Layout, ScaleFn, SpectrumFn, SPEC_VERSION, TAU, VERSION};
 pub use field::{HelixField, ModeSnapshot};
 pub use glsl::GlslOptions;
 pub use presets::{

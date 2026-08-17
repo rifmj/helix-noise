@@ -347,9 +347,16 @@ shader.
 cargo test
 ```
 
-The library version is exposed as the `VERSION` constant. Two further public items are the
-`TAU` constant (`2π`) and `ga()` (the golden angle, `π · (3 − √5)`), used by the Fibonacci
-layout. The deterministic PRNG itself is public as `Mulberry32` (`Mulberry32::new(seed)` /
+Two constants answer two different questions. `VERSION` is the crate's own version, derived from
+`Cargo.toml` so it cannot drift from it — it sat at `1.1.0` while the crate shipped `0.7.0`, which
+is exactly the drift this now forecloses. `SPEC_VERSION` is the revision of the JS reference the
+crate is verified against (`"1.11.3"`); `tests/parity.rs` pins it to the `$spec_version` recorded in
+`spec/parity_fixture.json`, so a fixture regenerated from a newer reference fails the suite until
+someone re-verifies the port. Neither says *which blocks* are ported — that is the parity table in
+`spec/PORTING_SPEC.md`.
+
+Two further public items are the `TAU` constant (`2π`) and `ga()` (the golden angle,
+`π · (3 − √5)`), used by the Fibonacci layout. The deterministic PRNG itself is public as `Mulberry32` (`Mulberry32::new(seed)` /
 `Mulberry32::seeded(seed)` / `next_f64()`), so you can reproduce the exact `mulberry32` draw
 stream the mode construction consumes.
 

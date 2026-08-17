@@ -29,7 +29,7 @@ The library has **zero runtime dependencies** and no threads or I/O in the hot p
 
 ```toml
 [dependencies]
-helix-noise = "0.1"
+helix-noise = "0.7"
 ```
 
 ## Quickstart

@@ -137,6 +137,27 @@ fn check_mode_array(name: &str, modes: &Value, key: &str, got: &[f64]) {
     }
 }
 
+/// The fixture records which reference produced it; the crate records which it was checked
+/// against. Regenerating from a newer reference must fail here rather than pass quietly.
+#[test]
+fn spec_version_matches_fixture() {
+    let root: Value = serde_json::from_str(FIXTURE).unwrap();
+    let recorded = root["$spec_version"].as_str().unwrap();
+    assert_eq!(
+        helix_noise::SPEC_VERSION, recorded,
+        "SPEC_VERSION is {} but the fixture was generated from reference {recorded} \
+         — re-verify the port, then bump SPEC_VERSION",
+        helix_noise::SPEC_VERSION
+    );
+}
+
+/// `VERSION` is the crate's own version and nothing else — the drift that let it sit at
+/// `1.1.0` while `Cargo.toml` moved to `0.7.0` is closed by deriving it from Cargo.
+#[test]
+fn version_is_the_crate_version() {
+    assert_eq!(helix_noise::VERSION, env!("CARGO_PKG_VERSION"));
+}
+
 #[test]
 fn spectral_configs_match_fixture() {
     let root: Value = serde_json::from_str(FIXTURE).unwrap();

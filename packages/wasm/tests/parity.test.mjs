@@ -19,6 +19,21 @@ await init({ module_or_path: readFileSync(join(here, "../pkg/helix_noise_wasm_bg
 
 const fixture = JSON.parse(readFileSync(join(here, "parity_fixture.json"), "utf8"));
 
+// The fixture records which reference produced it; the bindings record which one the wrapped
+// crate was checked against. Regenerating from a newer reference must fail here, not pass quietly.
+assert.equal(
+  wasm.spec_version(),
+  fixture.$spec_version,
+  `spec_version() is ${wasm.spec_version()} but the fixture was generated from reference ` +
+    `${fixture.$spec_version} — re-verify the port, then bump SPEC_VERSION`
+);
+// version() is this package's own, not the wrapped crate's — they are different release cycles.
+assert.equal(
+  wasm.version(),
+  JSON.parse(readFileSync(join(here, "../pkg/package.json"), "utf8")).version,
+  "version() must report this package's version"
+);
+
 const TOL = 1e-9;
 let checks = 0;
 const close = (g, e) => Math.abs(g - e) <= TOL + TOL * Math.abs(e);

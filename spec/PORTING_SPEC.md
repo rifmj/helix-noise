@@ -44,10 +44,28 @@ GA   = pi * (3 - sqrt(5))     # golden angle (Fibonacci sphere azimuth step)
 VERSION = "1.11.3"     # mirrors packages/js/src/constants.ts verbatim
 ```
 
-**NOTE (normative):** `VERSION` is whatever the JS reference *exports*, and as of `1.11.3` that is
-the package version — the two are now pinned to each other by a test in `packages/js/test`, which is
-what closed the `1.11.1`/`1.11.2` drift (`constants.ts` sat at `1.11.0` while `package.json` moved).
-Ports MUST mirror the exported constant.
+**NOTE (normative):** in the JS reference `VERSION` is the package version, the two pinned to each
+other by a test in `packages/js/test` — that pin is what closed the `1.11.1`/`1.11.2` drift, where
+`constants.ts` sat at `1.11.0` while `package.json` moved.
+
+Ports MUST NOT mirror that number into their own `VERSION`. A port's `VERSION` is **its own package
+version** and nothing else; mirroring the reference is what left the Rust crate exporting `1.1.0`
+at crate version `0.7.0`, and the shader emitter exporting `1.8.0` against a `0.5.0` CHANGELOG.
+Instead every port exports a second constant:
+
+```
+VERSION       # this port's own package version (Cargo.toml / pyproject.toml / package.json)
+SPEC_VERSION  # revision of the JS reference the port is verified against — "1.11.3"
+```
+
+`spec/parity_fixture.json` records the reference that generated it under the top-level
+`$spec_version` key, and each port's parity suite MUST assert its `SPEC_VERSION` equals it. So a
+fixture regenerated from a newer reference fails every port that has not been re-verified, instead
+of drifting quietly — the same mechanism, applied across repositories rather than within one.
+
+`SPEC_VERSION` says *which reference the numbers match*, never *which blocks are ported*. That is
+the parity table above, and the two are independent: a port can be verified against `1.11.3` while
+implementing none of §§11–13.
 
 Defaults (every option):
 ```

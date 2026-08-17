@@ -5,6 +5,23 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [0.6.0]
 
+- **`abc()` shipped with its parity to the reference never once measured.** `P_abc` has been in the
+  fixture from the start, but the entry carries a `$factory` descriptor instead of a `config` dict
+  and this suite only knew how to build from `config` — so the config was silently skipped while the
+  suite reported all green. It now runs: `abc()` matches the reference **exactly**, `0.0` difference
+  on `u`, `w` and `A` across all eight sample points and on the whole mode table. A coverage hole,
+  not a defect — but it was indistinguishable from one until measured.
+- **New `SPEC_VERSION`** (`"1.11.3"`) — the revision of the JS reference this port is verified
+  against, pinned by `tests/test_parity.py` to the `$spec_version` key now recorded in
+  `spec/parity_fixture.json`. Regenerating the fixture from a newer reference fails the suite until
+  someone re-verifies the port. `VERSION` keeps its existing meaning (this package's own version);
+  the two are now documented as answering different questions.
+- **The package docstring claimed to be "numerically at parity with the reference"** without
+  qualification, while the sparse-atom engine, the structure primitives and the time warps are not
+  ported at all. It now names what is verified (spectral engine, SDF boundary) and points at the
+  parity table for the rest.
+- **Doc comments were shifted by one item**: `PHI` carried `POLAR_SALT`'s description and
+  `POLAR_SALT` carried none. Reattached.
 - **Flutter (spec 1.3)**: `flutter` adds a fast, deterministic second harmonic to each mode's phase
   — `ph_eff = ph + flutter*(sin(omf*t + ph) - sin(ph))`, which vanishes exactly at `t = 0` and
   consumes no RNG draws. Rate is the finest scale's eddy rate times PHI, so it never

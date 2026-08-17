@@ -309,7 +309,25 @@ def test_preset_configs():
         print("  [ok] %s: samples match the reference within 1e-6" % label)
 
 
+def test_spec_version():
+    """The fixture records which reference produced it; the emitter records which it was checked
+    against. Regenerating from a newer reference must fail here rather than pass quietly."""
+    sys.path.insert(0, ROOT)
+    import generate
+
+    with open(FIXTURE) as fh:
+        recorded = json.load(fh)["$spec_version"]
+    assert generate.SPEC_VERSION == recorded, (
+        "generate.SPEC_VERSION is {!r} but the fixture was generated from reference {!r} "
+        "-- re-verify the emitter, then bump SPEC_VERSION".format(
+            generate.SPEC_VERSION, recorded
+        )
+    )
+
+
 def main():
+    print("test_spec_version")
+    test_spec_version()
     print("test_glsl_parity")
     test_glsl_parity()
     print("test_structural_targets")
