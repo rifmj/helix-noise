@@ -50,6 +50,7 @@ Watch it under the repo's **Actions** tab; the published package shows a provena
 | `helix-noise-gpu@` | `helix-noise-gpu` | `packages/gpu` | npm | `NPM_TOKEN` |
 | `helix-noise-wasm@` | `helix-noise-wasm` | `packages/wasm` | npm (via wasm-pack) | `NPM_TOKEN` |
 | `helix-noise-crate@` | `helix-noise` (crate) | `packages/rust` | crates.io | `CARGO_REGISTRY_TOKEN` |
+| `helix-noise-py@` | `helix-noise` (PyPI) | `packages/python` | PyPI | **none** — trusted publishing |
 
 > The crate uses the `helix-noise-crate@` prefix, **not** `helix-noise@`: the crates.io crate and the
 > npm js package share the name `helix-noise`, so the bare tag is reserved for the npm package. For
@@ -63,7 +64,35 @@ git tag helix-noise-crate@0.2.0
 git push origin helix-noise-crate@0.2.0
 ```
 
+## PyPI — one-time setup (no token)
+
+PyPI publishes through **trusted publishing**: GitHub proves the workflow's identity over OIDC and
+PyPI accepts the upload, so there is no `PYPI_TOKEN` to create, store, leak, or rotate. That setup
+lives on PyPI, not in this repo, and only you can do it:
+
+> pypi.org → the `helix-noise` project → **Manage** → **Publishing** → *Add a new publisher*
+>
+> | field | value |
+> |---|---|
+> | Owner | `rifmj` |
+> | Repository | `helix-noise` |
+> | Workflow name | `release.yml` |
+> | Environment name | `pypi` |
+
+The environment name must match the `environment: pypi` in the `publish-pypi` job. If the project
+did not exist on PyPI yet you would add a *pending* publisher instead, from your account's
+*Publishing* page — but `helix-noise` is already there at `0.1.0`, so use the project page.
+
+Until that publisher exists the job fails at the upload step with an OIDC error and **nothing is
+published** — a failed release, not a partial one.
+
+Then release exactly like the others:
+
+```sh
+git tag helix-noise-py@0.6.0
+git push origin helix-noise-py@0.6.0
+```
+
 ## Not yet automated
 
-- **PyPI** (`packages/python`) — same tag model; add a `helix-noise-py@*` trigger, a `PYPI_TOKEN`
-  secret, and a `python -m build && twine upload` branch to `release.yml`.
+- Nothing. Every package in the table above releases from a tag.

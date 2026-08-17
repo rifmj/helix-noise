@@ -16,8 +16,8 @@ name: Release
 #     tag) — so the first release after adding a job must be tagged on a commit that includes it.
 #
 # Covered: helix-noise (packages/js), helix-noise-r3f (packages/r3f), helix-noise-gpu (packages/gpu),
-# helix-noise-wasm (packages/wasm, npm via wasm-pack), helix-noise crate (packages/rust, crates.io).
-# See RELEASING.md. PyPI (packages/python) is still manual.
+# helix-noise-wasm (packages/wasm, npm via wasm-pack), helix-noise crate (packages/rust, crates.io),
+# helix-noise (packages/python, PyPI via trusted publishing — no token secret). See RELEASING.md.
 
 on:
   push:
@@ -27,6 +27,7 @@ on:
       - "helix-noise-gpu@*"
       - "helix-noise-wasm@*"
       - "helix-noise-crate@*"
+      - "helix-noise-py@*"
 
 permissions:
   contents: write # create the GitHub Release
@@ -189,5 +190,67 @@ jobs:
         working-directory: .
         run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes
           || echo "GitHub Release step skipped (it may already exist) — the crates.io publish above is the release of record."
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+  # ---- PyPI: the Python port (tag prefix helix-noise-py@ to avoid the npm name clash) ----
+  #
+  # Publishes via PyPI **Trusted Publishing** (OIDC) — there is no PYPI token secret to create,
+  # leak, or rotate; PyPI verifies the workflow identity directly. One-time setup on PyPI:
+  #   pypi.org -> your project -> Manage -> Publishing -> Add a new pending/trusted publisher
+  #     Owner: rifmj   Repository: helix-noise
+  #     Workflow name: release.yml   Environment name: pypi
+  # Until that publisher exists, this job fails at the upload step with an OIDC error and nothing
+  # is published.
+  publish-pypi:
+    name: Publish ${{ github.ref_name }} (PyPI)
+    if: startsWith(github.ref_name, 'helix-noise-py@')
+    runs-on: ubuntu-latest
+    environment: pypi # must match the environment named in the PyPI trusted publisher
+    permissions:
+      contents: write # create the GitHub Release
+      id-token: write # OIDC token for trusted publishing
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Verify version matches the tag
+        working-directory: packages/python
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME##*@}"
+          PY_VERSION="$(grep -m1 '^version' pyproject.toml | sed -E 's/.*"([^"]+)".*/\1/')"
+          if [ "$PY_VERSION" != "$VERSION" ]; then
+            echo "::error::tag version '$VERSION' != packages/python/pyproject.toml version '$PY_VERSION'"
+            exit 1
+          fi
+          echo "Publishing helix-noise $VERSION to PyPI"
+
+      - name: Install build tooling
+        run: python -m pip install --upgrade build twine pytest numpy
+
+      - name: Test
+        working-directory: packages/python
+        run: python -m pytest tests/ -q
+
+      - name: Build sdist + wheel
+        working-directory: packages/python
+        run: python -m build --outdir dist
+
+      - name: Check metadata
+        working-directory: packages/python
+        run: python -m twine check dist/*
+
+      - name: Publish to PyPI (trusted publishing, no token)
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: packages/python/dist
+
+      - name: Create GitHub Release
+        run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes
+          || echo "GitHub Release step skipped (it may already exist) — the PyPI publish above is the release of record."
         env:
           GH_TOKEN: ${{ github.token }}
