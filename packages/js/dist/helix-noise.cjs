@@ -56,7 +56,7 @@ var TAU = 2 * Math.PI;
 var PHI = (1 + Math.sqrt(5)) / 2;
 var POLAR_SALT = 2654435769;
 var POLAR_DEG_MAX = 0.97;
-var VERSION = "1.11.0";
+var VERSION = "1.11.3";
 var DEFAULTS = {
   modes: 48,
   // number of helical modes (cost of one sample is O(modes))

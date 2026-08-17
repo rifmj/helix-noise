@@ -11,7 +11,7 @@ export const POLAR_SALT = 0x9e3779b9;
 export const POLAR_DEG_MAX = 0.97;
 
 /** Library version. Must match `package.json` — the spec suite asserts it (release checklist). */
-export const VERSION = "1.11.0";
+export const VERSION = "1.11.3";
 
 /** Default options, filled in for every field (`spectrum` stays optional — no default law object). */
 export const DEFAULTS: Required<Omit<HelixNoiseOptions, "spectrum">> & Pick<HelixNoiseOptions, "spectrum"> = {

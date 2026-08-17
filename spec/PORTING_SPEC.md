@@ -41,13 +41,13 @@ JS reference to ~1e-12 relative, NOT bit-for-bit. Parity tests must use a tolera
 ```
 TAU  = 2*pi
 GA   = pi * (3 - sqrt(5))     # golden angle (Fibonacci sphere azimuth step)
-VERSION = "1.11.0"     # mirrors packages/js/src/constants.ts verbatim
+VERSION = "1.11.3"     # mirrors packages/js/src/constants.ts verbatim
 ```
 
-**NOTE (normative):** `VERSION` is whatever the JS reference *exports*, not the package version.
-`packages/js/package.json` is at `1.11.2` while `constants.ts` still exports `"1.11.0"` — the
-constant was not bumped in the 1.11.1/1.11.2 patch releases. Ports MUST mirror the exported
-constant, not the package version.
+**NOTE (normative):** `VERSION` is whatever the JS reference *exports*, and as of `1.11.3` that is
+the package version — the two are now pinned to each other by a test in `packages/js/test`, which is
+what closed the `1.11.1`/`1.11.2` drift (`constants.ts` sat at `1.11.0` while `package.json` moved).
+Ports MUST mirror the exported constant.
 
 Defaults (every option):
 ```

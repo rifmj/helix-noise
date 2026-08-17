@@ -22,7 +22,7 @@ algorithm once and re-verify every language in one CI run.
 
 | Package | Language | Registry | Version | Status |
 |---|---|---|---|---|
-| [`packages/js`](packages/js) | TypeScript / JS | npm `helix-noise` | `1.11.2` | reference implementation (spectral + atom engines, boundaries, GLSL, WASM batch kernel, structure primitives, time warps, gradient diagnostics) |
+| [`packages/js`](packages/js) | TypeScript / JS | npm `helix-noise` | `1.11.3` | reference implementation (spectral + atom engines, boundaries, GLSL, WASM batch kernel, structure primitives, time warps, gradient diagnostics) |
 | [`packages/python`](packages/python) | Python 3 + numpy | PyPI `helix-noise` | `0.6.0` | spectral engine + boundary + GLSL; vectorized `sample_many` |
 | [`packages/rust`](packages/rust) | Rust | crates.io `helix-noise` | `0.7.0` | spectral **+ atom** engines + boundary (wraps either) + GLSL; zero runtime deps, WASM-friendly |
 | [`packages/wasm`](packages/wasm) | Rust → WebAssembly | npm `helix-noise-wasm` | `0.6.0` | `wasm-bindgen` build of the Rust core; both engines, native-speed sampling in the browser |
