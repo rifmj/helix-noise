@@ -78,6 +78,32 @@ jobs:
           cp -R "$SRC/docs/.vitepress/dist/." "$SITE/docs/"
           echo "Assembled site:"; find "$SITE" -maxdepth 1 | sort
 
+      # The bundle filenames carry no content hash and Pages serves them with `max-age=600`, so a
+      # visitor who loaded the site in the ten minutes before a deploy gets the fresh HTML against
+      # the stale cached bundle. That is exactly how examples/two-scale.html — a page that did not
+      # exist in the previous deploy, so it could not be cached — came to call `HelixNoise.abc`
+      # against a 1.1.0 build that never exported it: `abc is not a function`, self-healing after
+      # the TTL, which is the worst kind of bug to be handed. Stamping the commit onto every
+      # reference makes the cache miss certain. The sources keep their plain relative paths.
+      - name: Cache-bust the bundle references
+        run: |
+          set -e
+          SITE="$RUNNER_TEMP/_site"
+          V="${GITHUB_SHA::7}"
+          # VitePress already content-hashes its own assets, and none of these patterns occur there.
+          find "$SITE" -name '*.html' -not -path "$SITE/docs/*" -print0 | xargs -0 sed -i \
+            -e "s|helix-noise\.global\.js\"|helix-noise.global.js?v=$V\"|g" \
+            -e "s|node_modules/helix-noise/dist/helix-noise\.js\"|node_modules/helix-noise/dist/helix-noise.js?v=$V\"|g" \
+            -e "s|\.\./dist/index\.js\"|../dist/index.js?v=$V\"|g"
+          # A sed that silently matches nothing is the failure mode this step exists to prevent,
+          # so make the count load-bearing rather than decorative.
+          N="$(grep -rlF "?v=$V" "$SITE" --include='*.html' | wc -l | tr -d ' ')"
+          echo "Stamped ?v=$V into $N pages."
+          if [ "$N" -eq 0 ]; then
+            echo "::error::cache-bust matched nothing — the bundle reference paths must have changed"
+            exit 1
+          fi
+
       - uses: actions/upload-pages-artifact@v3
         with:
           path: ${{ runner.temp }}/_site
