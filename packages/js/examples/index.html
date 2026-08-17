@@ -166,6 +166,41 @@
       <p class="d">One dial — <b>anisotropy γ</b> — shears an advected dye sky: wisps combed <b>along</b> the jet at γ&lt;0, billow bands <b>across</b> it at γ&gt;0. Same field, one number.</p>
       <span class="tag">webgl2</span>
     </a>
+    <a class="card" style="--ac:#8fe6a8" href="murmuration.html">
+      <p class="t">Murmuration <code>sampleMany · sampleGrad</code></p>
+      <p class="d">A few thousand starlings on the usual three boid rules, with one addition: the ambient wind they steer into is <b>not hand-authored</b>. Because the field is div-free, an evenly seeded flock stays evenly seeded — and the page measures that instead of asserting it.</p>
+      <span class="tag">three.js</span>
+    </a>
+    <a class="card" style="--ac:#e6a45c" href="hair-wind.html">
+      <p class="t">Hair &amp; fur in wind <code>sampleMany</code></p>
+      <p class="d">A groom of a few thousand strands, each a chain of 12 segments, every segment bent by the velocity <b>at its own position</b> — the strand is walked through the field root to tip, one batch call per segment layer.</p>
+      <span class="tag">three.js</span>
+    </a>
+    <a class="card" style="--ac:var(--violet)" href="portal-vfx.html">
+      <p class="t">Portal <code>createRing · strainedColumn</code></p>
+      <p class="d">A game effect assembled from closed-form pieces instead of a solver: the ring is the rim (exactly zero outside its own tube, so it touches nothing else), the strained column is the throat — an exact stationary Navier–Stokes solution.</p>
+      <span class="tag">three.js</span>
+    </a>
+    <a class="card" style="--ac:var(--cyan)" href="loop-kit.html">
+      <p class="t">Loop kit <code>tileable · dssCollapse</code></p>
+      <p class="d">Five drop-in animated backgrounds that <b>close exactly</b> — last frame of the period is the first frame of the next, to roundoff, with no cross-fade hiding the join. A property of the field, not a rendering trick.</p>
+      <span class="tag">webgl2</span>
+    </a>
+    <a class="card" style="--ac:#961e2d" href="material-lab.html">
+      <p class="t">Material lab <code>tileable · sampleMany</code></p>
+      <p class="d">A flow field as an <b>anisotropic material</b>: walk every pixel backwards along the streamlines and read a periodic pattern where the walk ends — bands bend into the flow, noise smears into streaks.</p>
+      <span class="tag">canvas</span>
+    </a>
+    <a class="card" style="--ac:var(--violet)" href="infinite-zoom.html">
+      <p class="t">Infinite zoom <code>dssCollapse</code></p>
+      <p class="d">Evaluating the field at 1e-30 costs what evaluating it at 1 costs — but that alone does <b>not</b> buy an infinite zoom, and the page is careful about the difference. The log-periodic warp is what makes the dive close on itself.</p>
+      <span class="tag">canvas</span>
+    </a>
+    <a class="card" style="--ac:#4aa3ff" href="wind-map.html">
+      <p class="t">Wind map <code>sampleMany · sampleGrad</code></p>
+      <p class="d">A weather map with the grammar people read: drifting streaklets, isotachs, a cursor that reports the vector under it. Nothing is faked into place — and the cost stays flat as the zoom travels seven octaves.</p>
+      <span class="tag">canvas</span>
+    </a>
   </div>
 
   <h2>Simulation &amp; surfaces</h2>
@@ -204,6 +239,35 @@
       <p class="t">Audio-reactive <code>WebAudio</code></p>
       <p class="d">Bass pumps <b>amplitude</b>, treble drives <b>churn</b>, stereo balance tips <b>helicity</b>. Built-in demo beat, or your mic / a track.</p>
       <span class="tag">audio</span>
+    </a>
+    <a class="card" style="--ac:var(--amber)" href="tornado-obstacle.html">
+      <p class="t">A tornado meets a wall <code>strainedColumn · withBoundary</code></p>
+      <p class="d">An exact stationary Navier–Stokes solution — inward strain holding a filament open against viscosity, Gaussian axial vorticity with core radius <b>√(2ν/a)</b> — put in front of an SDF obstacle it has to slide around.</p>
+      <span class="tag">three.js</span>
+    </a>
+    <a class="card" style="--ac:var(--teal)" href="composition.html">
+      <p class="t">Composition bench <code>compose · collapse</code></p>
+      <p class="d">Fields stack: the sum of div-free fields is div-free with the sum of their potentials, so a ring, a column and a mode sum add in any combination — and obstacles, potential bakes and the gradient diagnostics all keep working on the result.</p>
+      <span class="tag">canvas</span>
+    </a>
+  </div>
+
+  <h2>Receipts</h2>
+  <div class="grid">
+    <a class="card" style="--ac:#8fe6a8" href="not-curl-noise.html">
+      <p class="t">Why this is not curl noise <code>with a control</code></p>
+      <p class="d">Curl noise finite-differences a noise potential: div-free up to the stencil's truncation, on the grid it was differenced on. This is a <b>closed-form</b> curl, so ∇·u = 0 is an identity measurable at any point at any scale. The page runs both, side by side.</p>
+      <span class="tag">canvas</span>
+    </a>
+    <a class="card" style="--ac:var(--cyan)" href="parity-wall.html">
+      <p class="t">The parity wall <code>JS · WASM · GLSL</code></p>
+      <p class="d">One field, three backends, same slice, same instant — compared value-for-value rather than by eye. JS↔WASM lands at <b>~1e-16</b> (both float64), the GPU at <b>~1e-6</b> because fp32 is fp32. A page printing "0" there would be lying.</p>
+      <span class="tag">webgl2</span>
+    </a>
+    <a class="card" style="--ac:var(--violet)" href="tiling.html">
+      <p class="t">Seamless by construction <code>tileable</code></p>
+      <p class="d">Snap every wavevector to the integer lattice and the sum is exactly 2π-periodic — as arithmetic, not as a blend. The readout prints the seam mismatch live: <b>~1e-15</b> tileable against ~2 free.</p>
+      <span class="tag">canvas</span>
     </a>
   </div>
 
