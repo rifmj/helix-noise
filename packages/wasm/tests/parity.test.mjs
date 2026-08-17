@@ -56,7 +56,13 @@ function checkSamples(label, field, samples) {
 }
 
 // Spectral engine.
-for (const name of ["A_default_small", "B_helical_coherent", "C_random_aniso", "D_decay_time", "E_tileable", "J_elliptic_linear", "K_elliptic_half", "Q_grain"]) {
+// Every spectral config whose options survive the JS->wasm boundary. `M_coherence_k`,
+// `N_helicity_k` and `O_shellpeak` are excluded on purpose: their options are *callables*
+// (`coherence`/`helicity`/`spectrum` as functions), which these bindings do not accept, and
+// `P_abc` is built by a factory rather than an options object. `R_flutter` has no such excuse —
+// it is plain numbers, and leaving it out is what let `flutter` go unread by `field_options`
+// through a published release.
+for (const name of ["A_default_small", "B_helical_coherent", "C_random_aniso", "D_decay_time", "E_tileable", "J_elliptic_linear", "K_elliptic_half", "Q_grain", "R_flutter"]) {
   const entry = fixture[name];
   const f = new wasm.Field(entry.config);
   assert.equal(f.modes(), entry.modes.N, `${name}.modes`);

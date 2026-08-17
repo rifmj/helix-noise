@@ -87,6 +87,9 @@ fn field_options(opts: &JsValue) -> HelixOptions {
     if let Some(v) = num(opts, "anisotropy") {
         o.anisotropy = v;
     }
+    if let Some(v) = num(opts, "flutter") {
+        o.flutter = v;
+    }
     if let Some(v) = num(opts, "ellipticity") {
         o.ellipticity = v;
     }
