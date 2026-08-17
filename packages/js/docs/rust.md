@@ -31,7 +31,7 @@ Or add it to `Cargo.toml`:
 
 ```toml
 [dependencies]
-helix-noise = "0.1"
+helix-noise = "0.7"
 ```
 
 ## Quickstart
@@ -91,9 +91,64 @@ individual fields with struct-update syntax.
 | `decay`      | `f64`             | `0.0`          | Viscosity `nu >= 0`: amplitudes decay as `e^(-nu k² t)`.       |
 | `anisotropy` | `f64`             | `0.0`          | Direction stretch along `axis` (`<0` streaks, `>0` layers).   |
 | `axis`       | `[f64; 3]`        | `[0, 0, 1]`    | Anisotropy axis.                                              |
+| `ellipticity` | `f64`            | `1.0`          | Polarization ellipticity `eps` in `[0, 1]` (clamped): per-mode chirality `chi = eps*s`. `1` = circular/Beltrami modes (tubes & corkscrews), `0` = linearly polarized modes (sheets & jets, zero helicity). Consumes no RNG draws. |
 | `spectrum`   | `Option<Box<dyn Fn(f64) -> f64>>` | `None` | Custom amplitude law; overrides `\|k\|^-slope`.       |
+| `coherence_fn` | `Option<Box<dyn Fn(f64) -> f64>>` | `None` | Optional per-wavenumber coherence `(k) -> lambda`; overrides `coherence` when set. |
+| `helicity_fn` | `Option<Box<dyn Fn(f64) -> f64>>` | `None` | Optional per-wavenumber helicity `(k) -> p`; overrides `helicity` when set.     |
+| `polarization_axis` | `Option<[f64; 3]>` | `None`   | World-space grain axis for linear polarization. `None` = channel off.          |
+| `polarization_bias` | `f64`        | `0.0`          | Linear-polarization strength `d` in `[0, 0.95]` along `polarization_axis`.      |
+| `flutter`    | `f64`             | `0.0`          | Temporal flutter `>= 0`: a fast, deterministic phase wobble on top of the churn drift. Vanishes exactly at `t = 0` and consumes no RNG draws. |
 
-The `spectrum` field type is aliased as `SpectrumFn` (`Box<dyn Fn(f64) -> f64>`).
+The `spectrum` field type is aliased as `SpectrumFn` (`Box<dyn Fn(f64) -> f64>`); `coherence_fn`
+and `helicity_fn` share that same alias as `ScaleFn` (`Box<dyn Fn(f64) -> f64>`), evaluated once
+per mode at its final `|k|` — pure and RNG-free, so setting the scalar or the callable never
+changes the draw sequence.
+
+## Presets
+
+The `presets` module has three per-wavenumber dial shapes (`ScaleFn` factories, no RNG), a
+closed-form ABC cell field, a two-field compositor, and two option bundles for exact/measured
+Navier–Stokes states.
+
+```rust
+use helix_noise::{
+    abc, exact_ns, ns_developed, rolloff, shell_peak, AbcOptions, ExactNsOptions, HelixField,
+    HelixOptions,
+};
+
+// Energy-containing shell instead of a power law; pair with a matching kmin/kmax.
+let field = HelixField::new(HelixOptions {
+    spectrum: Some(shell_peak(4.0, 0.8)),
+    coherence_fn: Some(rolloff(3.0)),
+    ..Default::default()
+});
+
+// The classical ABC cell, as exactly three engine modes — every sampler works on it unchanged.
+let cell = abc(1.0, 1.0, 1.0, AbcOptions::default());
+
+// An exact Navier–Stokes solution: single shell, one handedness, pure viscous decay.
+let ns = HelixField::create(HelixOptions {
+    seed: 7,
+    ..exact_ns(ExactNsOptions { k0: 2.0, nu: 0.02, sign: 1.0 })
+});
+
+// Polarization calibrated to measured developed turbulence (spectrum left at the default power law).
+let dev = HelixField::create(HelixOptions { seed: 3, ..ns_developed() });
+```
+
+| Item | Kind | Meaning |
+|------|------|---------|
+| `shell_peak(k_peak, width)` | `fn -> ScaleFn` | Gaussian shell bump `a(k) = exp(-(k-k_peak)²/(2·width²))`, an energy-containing band instead of a power law. |
+| `rolloff(kc)` | `fn -> ScaleFn` | Coherence preset `lambda(k) = clamp(1 - k/kc, 0, 1)`: organized structure below `kc`, uncorrelated noise above it. |
+| `condensate(k_split, p_large, p_small)` | `fn -> ScaleFn` | Helicity preset: `p_large` for `k <= k_split`, `p_small` above — a handed large-scale condensate over a near-mirror-symmetric fine background. |
+| `abc(a, b, c, AbcOptions)` | `fn -> HelixField` | The classical ABC (Arnold–Beltrami–Childress) cell, built as exactly three modes. Consumes no RNG, is exactly `2π`-tileable, and is a pure Beltrami field (`curl u = u`). |
+| `AbcOptions { amplitude, decay }` | struct | `amplitude: Option<f64>` RMS-normalizes when set (default `None` returns the literal field); `decay: f64` gives the exact viscous solution `u(t) = e^(-nu·t) u(0)`. |
+| `TwoScale { base, detail, detail_gain }` | struct | Componentwise sum of two fields (still divergence-free); `TwoScale::new(base, detail, detail_gain)`, with `sample`/`sample_uw`/`sample_ua`/`vorticity`/`helicity_density`/`potential`. |
+| `C_TWO_SCALE` | `f64` const | `1.6` — detail-layer amplitude constant: `amplitude = C_TWO_SCALE / k_detail` holds its vorticity budget fixed as you move the detail wavenumber. |
+| `exact_ns(ExactNsOptions)` | `fn -> HelixOptions` | Option bundle for a field that is an **exact solution of the Navier–Stokes equations**: one shell `|k| = k0`, one handedness, decaying as `e^(-nu·k0²·t)`. |
+| `ExactNsOptions { k0, nu, sign }` | struct | `k0: f64` (default `2.0`) shell wavenumber; `nu: f64` (default `0.02`) viscosity; `sign: f64` (default `1.0`) chirality `+1`/`-1`. |
+| `ns_developed()` / `ns_forced()` | `fn -> HelixOptions` | Option bundles whose **polarization** matches measured developed / forced turbulence (`NS_TARGETS_DEV` / `NS_TARGETS_FORCED`); the spectrum stays the default power law — supply your own `spectrum` if you have a measured one. |
+| `NsTargets { d, abs_p, signed_p }` | struct | Energy-weighted polarization of a measured turbulence state: linear-polarization degree, per-shell helical fraction `\|p\|`, and its signed mean. |
 
 ## API
 
@@ -121,6 +176,78 @@ The `spectrum` field type is aliased as `SpectrumFn` (`Box<dyn Fn(f64) -> f64>`)
 arrays (`kx`, `ky`, `kz`, `km`, `a`, `s`, `ph`, `om`, the transverse frame `e1*`/`e2*`, plus
 `nu`, `scale`, and the mode count `n`) for diagnostics, serialization, and cross-port parity
 checks.
+
+## Atom engine
+
+`HelixAtoms` is the sparse-atom counterpart to the spectral `HelixField`: a divergence-free sum
+of compactly-supported helical wavelets ("atoms") drawn deterministically from a spatial hash,
+rather than a finite mode sum evaluated everywhere. Each atom is
+`u_atom = curl(W * A) = (grad W) x A + W * u_wave`, with `u_wave` a helical plane wave, `A` its
+exact Beltrami potential, and `W = (1 - q²)³` a `C²` window that vanishes at the support radius.
+Atoms live on a hash lattice (one PRNG per cell), so the field is infinite, grid-free, amortized
+`O(1)` per sample, and any region can carry its own helicity/gain via `helicity_field` /
+`gain_field`. It is divergence-free exactly — every atom is a curl. This is a numerical-parity
+port of the JS reference `HelixAtoms`: the integer spatial hash and the per-atom `mulberry32`
+draw order are bit-identical.
+
+```rust
+use helix_noise::{AtomOptions, HelixAtoms};
+
+let atoms = HelixAtoms::new(AtomOptions { octaves: 4, helicity: 0.7, seed: 42, ..Default::default() });
+
+let u = atoms.sample(1.0, 2.0, 3.0);
+let (u, w) = atoms.sample_uw(1.0, 2.0, 3.0, 0.0);
+let h = atoms.relative_helicity(12);
+```
+
+### `AtomOptions`
+
+| Field              | Type                      | Default        | Meaning                                                        |
+|---------------------|--------------------------|----------------|------------------------------------------------------------------|
+| `octaves`           | `usize`                  | `3`            | Octave layers; each halves the atom radius and doubles the wavenumber. |
+| `atoms_per_cell`     | `usize`                  | `8`            | Atoms per hash cell (a cell is one atom diameter wide). Density/quality knob. |
+| `radius`             | `f64`                    | `1.6`          | Support radius of the largest atoms (octave 0); octave `o` uses `radius / 2^o`. |
+| `cycles_per_atom`    | `f64`                    | `2.0`          | Wavelengths across an atom's diameter — sets `\|k\| * radius` per octave. |
+| `slope`              | `f64`                    | `1.6`          | Amplitude `~ \|k\|^-slope` across octaves.                      |
+| `helicity`           | `f64`                    | `0.0`          | `p` in `[-1, 1]`, as in the spectral engine.                    |
+| `amplitude`          | `f64`                    | `1.0`          | Output scale. The field is normalized to unit RMS at `t = 0`, then multiplied by this. |
+| `seed`               | `u32`                    | `1`            | PRNG seed (`0` is treated as `1`).                              |
+| `churn`              | `f64`                    | `1.0`          | Time-evolution rate: per-atom phase churn at `omega(k) ~ k^(2/3)`. `0` freezes. |
+| `anisotropy`         | `f64`                    | `0.0`          | Direction anisotropy `gamma` (clamped to `[-0.99, 9]`): streaks (`< 0`) or layers (`> 0`) along `axis`. |
+| `axis`               | `[f64; 3]`                | `[0, 0, 1]`    | Anisotropy axis (normalized internally).                        |
+| `helicity_field`     | `Option<ScalarField3>`    | `None`         | Spatially-varying helicity, sampled at each atom's center. Overrides `helicity` locally. |
+| `gain_field`         | `Option<ScalarField3>`    | `None`         | Spatially-varying amplitude gain, sampled at each atom's center. |
+| `spectrum`           | `Option<SpectrumFn>`      | `None`         | Custom amplitude law `a(\|k\|) >= 0`, replacing the octave power law (shape only). |
+
+`ScalarField3` is `Box<dyn Fn(f64, f64, f64) -> f64>` — a spatially-varying scalar field sampled
+once at each atom's center.
+
+### `HelixAtoms` API
+
+| Method                          | Returns                | Description                                             |
+|----------------------------------|------------------------|------------------------------------------------------------|
+| `HelixAtoms::new(opts)` / `create(opts)` | `HelixAtoms`     | Build an atom field.                                     |
+| `set(opts)`                      | `&mut Self`            | Replace the options and re-tune: recompute the base wavenumber, flush the atom cache, renormalize to unit RMS. |
+| `options()`                      | `&AtomOptions`          | Current options.                                          |
+| `k_base()`                       | `f64`                   | Base wavenumber `\|k\|` of octave 0 (`cycles_per_atom * pi / radius`). |
+| `scale()`                        | `f64`                   | The RMS-normalization scale applied to every sample.       |
+| `sample(x, y, z)`                | `[f64; 3]`              | Velocity at time 0.                                        |
+| `sample_t(x, y, z, t)`           | `[f64; 3]`              | Velocity at time `t`.                                      |
+| `sample_uw(x, y, z, t)`          | `([f64; 3], [f64; 3])`  | Velocity and its analytic vorticity, one pass.              |
+| `sample_ua(x, y, z, t)`          | `([f64; 3], [f64; 3])`  | Velocity and its exact vector potential, one pass.           |
+| `vorticity(x, y, z, t)`          | `[f64; 3]`              | Curl of the velocity.                                       |
+| `helicity_density(x, y, z, t)`   | `f64`                   | `u · w`.                                                     |
+| `potential(x, y, z, t)`          | `[f64; 3]`              | Exact vector potential.                                      |
+| `sample_many(pos, t)`            | `Vec<f64>`              | Batch velocities for interleaved `[x, y, z, ...]` points, returning `[u, v, w, ...]`. |
+| `sample_many_uw(pos, t)`         | `Vec<f64>`              | Batch velocity + analytic vorticity, 6 floats per point.     |
+| `relative_helicity(ng)`          | `f64`                   | `<u . omega> / (‖u‖ ‖omega‖)` on an `ng³` grid spanning a few radii. |
+| `bake3d(n, t)`                   | `Vec<f32>`              | `n³` RGBA volume: `rgb` = velocity, `a` = helicity density, over `[0, 2π)³`. |
+| `bake2d(nx, ny, z, t)`           | `Vec<f32>`              | `nx*ny` RGBA slice at height `z`.                             |
+| `bake_potential3d(n, t)`         | `Vec<f32>`              | `n³` RGBA volume: `rgb` = vector potential `A`, `a` = helicity density. |
+| `with_boundary(sdf, opts)`       | `BoundedField`          | Wrap this field with a free-slip SDF obstacle.               |
+
+Unlike `HelixField`, `HelixAtoms` has **no `glsl()`** — the atom-engine GLSL emitter of the JS
+reference (`atomsToGLSL`) is not yet ported.
 
 ## Boundaries (free-slip SDF)
 
@@ -228,14 +355,26 @@ stream the mode construction consumes.
 
 ## Scope
 
-v0.1 covers the spectral engine, the free-slip SDF boundary, and the GLSL emitter. The particle
-"atom" engine of the JS reference (`createAtoms`) is a documented follow-up and is not yet
-ported — it is out of scope for this release.
+The crate covers both engines of the JS reference — the spectral `HelixField` and the sparse-atom
+`HelixAtoms` — plus the free-slip SDF boundary (wraps either engine), the GLSL emitter for
+`HelixField`, and the `presets` module (dial shapes, the ABC cell, `TwoScale`, and the
+`exact_ns`/`ns_developed`/`ns_forced` option bundles).
 
-Relative to the JavaScript reference and the Python port, this crate also omits the batched
-samplers (`sampleMany` / `sampleManyUW`), in-place `set()` re-tuning, and `selfTest()`: sample in
-your own loop, rebuild with `HelixField::new`, and rely on `cargo test` for validation. The
-single-point sampling surface, boundaries, bakes, and GLSL emit are at full parity.
+What it still lacks relative to the JavaScript reference and the Python port:
+
+- **On `HelixField`**: the batched samplers (`sampleMany` / `sampleManyUW`), in-place `set()`
+  re-tuning, and `selfTest()` — sample in your own loop, rebuild with `HelixField::new`, and rely
+  on `cargo test` for validation. (`HelixAtoms` *does* have its own `sample_many` /
+  `sample_many_uw` and `set()` — see [Atom engine](#atom-engine) above.)
+- **On `HelixAtoms`**: the GLSL emitter (`atomsToGLSL` in the JS reference) is not ported, so
+  atom fields can't yet be baked into a shader the way spectral fields can with `glsl()`.
+- The structure primitives (`createRing`, `axisymmetric`, `strainedColumn`, and friends) and the
+  time warps (`collapse`, `dssCollapse`) that the JS reference exports from `primitives.ts` /
+  `warps.ts` have no Rust equivalent at all — there is no `primitives` or `warps` module in this
+  crate.
+
+The single-point sampling surface, boundaries, bakes, and GLSL emit for `HelixField` are at full
+parity; the atom engine's sampling surface, boundaries, and bakes are likewise at full parity.
 
 ## License
 

@@ -79,6 +79,10 @@ default.
 | `decay`       | `0.0`          | Viscosity ν >= 0: amplitudes decay as `e^(-ν k² t)`. |
 | `anisotropy`  | `0.0`          | Direction stretch along `axis` (< 0 streaks, > 0 layers). |
 | `axis`        | `[0, 0, 1]`    | Anisotropy axis. |
+| `ellipticity` | `1.0`          | In `[0, 1]`: per-mode chirality `chi = eps*s`. `1` = circular/Beltrami modes (tubes & corkscrews), `0` = linearly polarized modes (sheets & jets, zero helicity). Consumes no RNG draws. |
+| `polarizationAxis` | `None`   | World-space grain axis for linear polarization (a 3-vector); `None` = channel off. |
+| `polarizationBias` | `0.0`    | Linear-polarization strength `d` in `[0, 0.95]` along `polarizationAxis`. |
+| `flutter`     | `0.0`          | Fast deterministic phase wobble on top of the churn drift (>= 0). Vanishes exactly at `t = 0` and consumes no RNG draws. |
 | `spectrum`    | `None`         | Optional callable `(k: float) -> float` overriding the `\|k\|^-slope` law. |
 
 ### `HelixField` methods
@@ -100,6 +104,7 @@ numpy-vectorized and return numpy arrays. Method names are snake_case.
 | `bake2d(nx, ny, z=0.0, t=0.0)` | `(ny, nx, 4)` float32 | Slice at height `z`. |
 | `bake_potential3d(n, t=0.0)` | `(n, n, n, 4)` float32 | rgb = potential, a = `u·w`. |
 | `relative_helicity(ng=12)` | `float` | Normalized mean helicity over an `ng³` grid on `[0, TAU)`. |
+| `relative_helicity_spectral(t=0.0)` | `float` | Relative helicity straight from the mode arrays, no grid — the infinite-volume value; `relative_helicity` differs only by the cross-mode terms a finite grid fails to cancel. |
 | `with_boundary(sdf, thickness=1.0, gradient=None, fd_step=1e-3)` | `BoundedField` | Free-slip SDF obstacle. |
 | `glsl(name="helixNoise", precision=7, curl=True, potential=False)` | `str` | Self-contained WebGL2 shader. |
 | `set(**opts)` | `self` | Update options and rebuild in place. |
@@ -133,6 +138,41 @@ base field beyond the influence band.
 | `GA` | Golden angle (radians) — the Fibonacci-sphere azimuth increment. |
 | `VERSION` | Field-format version string shared with the reference implementation. |
 | `__version__` | The installed package version. |
+
+## Presets
+
+`helix_noise.presets` (re-exported from the top-level package) has three per-wavenumber dial
+shapes, a closed-form ABC cell field, a two-field compositor, and two option bundles for
+exact/measured Navier-Stokes states. Everything here is a pure function of `|k|` or a closed
+form -- no RNG, so mixing presets in never disturbs a field's mode layout.
+
+```python
+import helix_noise as hn
+
+# Energy-containing shell instead of a power law; pair with a matching kmin/kmax.
+field = hn.create(spectrum=hn.shell_peak(4.0, 0.8), coherence=hn.rolloff(3.0))
+
+# The classical ABC cell, as exactly three engine modes -- every sampler works on it unchanged.
+cell = hn.abc(A=1.0, B=1.0, C=1.0)
+
+# An exact Navier-Stokes solution: single shell, one handedness, pure viscous decay.
+ns = hn.create(**hn.exact_ns(k0=2.0, nu=0.02, sign=1), seed=7)
+
+# Polarization calibrated to measured developed turbulence (spectrum left at the default power law).
+dev = hn.create(**hn.ns_developed(), seed=3)
+```
+
+| Name | Signature | Meaning |
+|------|-----------|---------|
+| `shell_peak(k_peak, width=1.0)` | `-> callable` | Gaussian shell bump `a(k) = exp(-(k-k_peak)^2/(2*width^2))`, an energy-containing band instead of a power law. |
+| `rolloff(kc)` | `-> callable` | Coherence preset `lam(k) = clamp(1 - k/kc, 0, 1)`: organized structure below `kc`, uncorrelated noise above it. |
+| `condensate(k_split, p_large, p_small=0.0)` | `-> callable` | Helicity preset: `p_large` for `k <= k_split`, `p_small` above -- a handed large-scale condensate over a near-mirror-symmetric fine background. |
+| `abc(A=1.0, B=1.0, C=1.0, amplitude=None, decay=0.0)` | `-> HelixField` | The classical ABC (Arnold-Beltrami-Childress) cell, built as exactly three modes. Consumes no RNG, is exactly 2π-tileable, and is a pure Beltrami field (`curl u = u`). `amplitude` RMS-normalizes when set (default `None` returns the literal field); `decay=nu` gives the exact viscous solution `u(t) = exp(-nu*t) u(0)`. |
+| `two_scale(base, detail, detail_gain=1.0)` | `-> TwoScaleField` | Componentwise sum of two fields (still divergence-free), with `sample`/`sample_uw`/`sample_ua`/`vorticity`/`helicity_density`/`potential`/`with_boundary`. |
+| `C_TWO_SCALE` | `float` | `1.6` -- detail-layer amplitude constant: `amplitude = C_TWO_SCALE / k_detail` holds its vorticity budget fixed as you move the detail wavenumber. |
+| `exact_ns(k0=2.0, nu=0.02, sign=1, **rest)` | `-> dict` | Option bundle for a field that is an **exact solution of the Navier-Stokes equations**: one shell `\|k\| = k0`, one handedness, decaying as `exp(-nu*k0^2*t)`. Pass it through `**` into `create()`. |
+| `ns_developed(**overrides)` / `ns_forced(**overrides)` | `-> dict` | Option bundles whose **polarization** matches measured developed / forced turbulence (`NS_TARGETS["dev"]` / `NS_TARGETS["forced"]`); the spectrum stays the default power law -- supply your own `spectrum` if you have a measured one. |
+| `NS_TARGETS` | `dict` | Energy-weighted polarization of the two measured turbulence states, keyed `"dev"` / `"forced"`, each with `d` (linear-polarization degree), `absP` (per-shell helical fraction), and `signedP` (its signed mean). |
 
 ## Boundaries (free-slip SDF)
 
@@ -189,9 +229,15 @@ python3 -m pytest -q                # if pytest is installed
 
 ## Scope / follow-ups
 
-v0.1 ships the spectral engine, the free-slip SDF boundary, and the GLSL emitter. The **atom
-engine** from the JavaScript library is out of scope for this release and is a documented
-follow-up.
+At 0.6.0 this port ships the spectral engine (including the batched `sample_many` /
+`sample_many_uw` samplers and in-place `set()` re-tuning), the free-slip SDF boundary, the GLSL
+emitter, and the `presets` module (dial shapes, the ABC cell, `two_scale`, and the
+`exact_ns`/`ns_developed`/`ns_forced` option bundles).
+
+The **atom engine** (`HelixAtoms` / `createAtoms` in the JavaScript library) has no Python port
+at all yet — there is no `atoms` module — and remains a documented follow-up. The structure
+primitives (rings, `axisymmetric`, the strained column) and the time warps (`collapse`,
+`dssCollapse`) that the JS reference exports are likewise not ported here.
 
 ## License
 

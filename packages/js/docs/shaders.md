@@ -98,6 +98,14 @@ above. The constant arrays and helper names are prefixed with `helixNoise_` (or
 | `--decay NU` | `0.0` | Viscous decay `≥ 0`: amplitudes fade as `e^(-NU·k²·t)`. |
 | `--anisotropy G` | `0.0` | Stretch directions along the axis (`<0` streaks along it, `>0` layers across). |
 | `--axis X Y Z` | `0 0 1` | The anisotropy axis (three floats). |
+| `--spectrum-preset NAME:ARGS` | none | Named spectrum preset overriding the `\|k\|^-slope` power law, e.g. `shellPeak:3` or `shellPeak:3,1.5`. |
+| `--coherence-preset NAME:ARGS` | none | Named coherence preset, e.g. `rolloff:4`. |
+| `--helicity-preset NAME:ARGS` | none | Named helicity preset, e.g. `condensate:3,1,-1`. |
+| `--flutter F` | `0.0` | Fast deterministic phase wobble on top of the churn drift (default: 0). |
+| `--polarization-axis X,Y,Z` | none | World grain axis for linear polarization, e.g. `0,1,0` (off by default). |
+| `--polarization-bias D` | `0.0` | Linear-polarization strength `d` in `[0, 0.95]` along that axis. |
+| `--abc A,B,C` | none | Emit the closed-form ABC cell field as 3 modes (no RNG), e.g. `--abc 1.5,1,0.5`. |
+| `--ellipticity EPS` | `1.0` | Polarization ellipticity `eps` in `[0, 1]`: `1` = circular/tubes (default), `0` = linear/sheets. |
 | `--name NAME` | `helixNoise` | Emitted function/const prefix. |
 | `--precision P` | `7` | Significant figures for float literals. |
 | `--no-curl` | (curl on) | Omit the `Curl` function. |
@@ -200,12 +208,16 @@ Run it with `python3 tests/test_shaders.py`.
 
 ## Scope
 
-v0.1 covers the **spectral engine** shader emitters (GLSL / HLSL / WGSL / Godot):
+At 0.5.0, `generate.py` covers the **spectral engine** shader emitters (GLSL / HLSL / WGSL /
+Godot):
 
 - the analytic Beltrami-mode velocity field and its curl (vorticity);
 - the optional vector potential for SDF free-slip boundaries;
-- time evolution (`--churn`, `--decay`);
-- the artist controls `--slope`, `--helicity`, `--coherence`.
+- time evolution (`--churn`, `--decay`), plus the flutter phase wobble (`--flutter`);
+- the artist controls `--slope`, `--helicity`, `--coherence`, and their per-wavenumber preset
+  forms (`--spectrum-preset`, `--coherence-preset`, `--helicity-preset`);
+- the polarization channels `--ellipticity` and `--polarization-axis`/`--polarization-bias`;
+- the closed-form `--abc` cell field, emitted through the same engine.
 
 The particle/atom advection engine from the JS library (`createAtoms`) is a documented
 follow-up and is **not** included in this port.

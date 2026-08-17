@@ -145,6 +145,18 @@ interface BoundedField {
     sampleUW<T extends Out6>(x: number, y: number, z: number, out6: T, t?: number): T;
     /** The ramped vector potential `ramp(d)·A` — its exact curl is this bounded field. */
     potential(x: number, y: number, z: number, t?: number): Vec3;
+    /**
+     * Velocity gradient, row-major `out9[3m + n] = ∂uₙ/∂xₘ`. The one **approximate** gradient in the
+     * library — central differences of the bounded velocity, O(fdStep²) — because it depends on `∇d`
+     * of your SDF. Pass `gradient` in {@link BoundaryOptions} to sharpen it.
+     */
+    sampleGrad<T extends Out6>(x: number, y: number, z: number, out9: T, t?: number): T;
+    /** Q-criterion of the bounded field, from the finite-difference {@link sampleGrad}. */
+    qCriterion(x: number, y: number, z: number, t?: number): number;
+    /** λ₂ of the bounded field, from the finite-difference {@link sampleGrad}. */
+    lambda2(x: number, y: number, z: number, t?: number): number;
+    /** Vortex stretching of the bounded field, from the finite-difference {@link sampleGrad}. */
+    stretching(x: number, y: number, z: number, t?: number): number;
     /** Bake rgb = bounded velocity, a = bounded helicity density (FD vorticity — slow, offline). */
     bake3D(n: number, t?: number): Bake3DResult;
     /**

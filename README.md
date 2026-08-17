@@ -8,27 +8,36 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT">
-  <img src="https://img.shields.io/badge/parity-~1e--15%20across%20ports-brightgreen" alt="numerical parity">
+  <img src="https://img.shields.io/badge/parity-~1e--12%20across%20ports-brightgreen" alt="numerical parity">
 </p>
 
 ---
 
 This repository holds the reference implementation and its ports. **All ports produce the *same field***
-for the same seed and parameters — verified to ~1e-15 (machine epsilon) against the JS reference, not
-just visually. That parity is a hard, tested invariant: the whole point of the monorepo is to change the
-algorithm once and re-verify every language in one CI run.
+for the same seed and parameters — verified numerically against the JS reference, not just visually. The
+RNG stream is bit-exact across languages; the field values themselves agree to **~1e-12 relative**, and
+the parity suites assert `abs+rel ~1e-9`. They are *not* bit-for-bit, and cannot be: `sin`/`cos`/`pow`/
+`cbrt`/`atan2`/`exp` differ by about 1 ULP between language runtimes. The normative statement lives in
+[`spec/PORTING_SPEC.md`](spec/PORTING_SPEC.md). That parity is a hard, tested invariant: the whole point
+of the monorepo is to change the algorithm once and re-verify every language in one CI run.
 
 ## Packages
 
-| Package | Language | Registry | Version | Status |
-|---|---|---|---|---|
-| [`packages/js`](packages/js) | TypeScript / JS | npm `helix-noise` | `1.11.3` | reference implementation (spectral + atom engines, boundaries, GLSL, WASM batch kernel, structure primitives, time warps, gradient diagnostics) |
-| [`packages/python`](packages/python) | Python 3 + numpy | PyPI `helix-noise` | `0.6.0` | spectral engine + boundary + GLSL; vectorized `sample_many` |
-| [`packages/rust`](packages/rust) | Rust | crates.io `helix-noise` | `0.7.0` | spectral **+ atom** engines + boundary (wraps either) + GLSL; zero runtime deps, WASM-friendly |
-| [`packages/wasm`](packages/wasm) | Rust → WebAssembly | npm `helix-noise-wasm` | `0.6.0` | `wasm-bindgen` build of the Rust core; both engines, native-speed sampling in the browser |
-| [`packages/shaders`](packages/shaders) | GLSL · HLSL · WGSL · Godot | — | `0.5.0` | code generator + ready-to-paste shaders for Shadertoy / Unity / Unreal / Godot / WebGPU |
-| [`packages/r3f`](packages/r3f) | TypeScript / React | npm `helix-noise-r3f` | `0.1.0` | react-three-fiber components (declarative particles + material); CPU + GPU engines, SDF obstacles |
-| [`packages/gpu`](packages/gpu) | TypeScript / WebGL2 | npm `helix-noise-gpu` | `0.1.0` | framework-agnostic GPU particle engine (transform-feedback advection via injected `field.glsl()`, ~10⁶ particles); no three.js/React |
+| Package | Language | Registry | In repo | Published | Status |
+|---|---|---|---|---|---|
+| [`packages/js`](packages/js) | TypeScript / JS | npm `helix-noise` | `1.11.3` | `1.0.2` | reference implementation (spectral + atom engines, boundaries, GLSL, WASM batch kernel, structure primitives, time warps, gradient diagnostics) |
+| [`packages/python`](packages/python) | Python 3 + numpy | PyPI `helix-noise` | `0.6.0` | `0.1.0` | spectral engine + boundary + GLSL; vectorized `sample_many` |
+| [`packages/rust`](packages/rust) | Rust | crates.io `helix-noise` | `0.7.0` | `0.2.0` | spectral **+ atom** engines + boundary (wraps either) + GLSL; zero runtime deps, WASM-friendly |
+| [`packages/wasm`](packages/wasm) | Rust → WebAssembly | npm `helix-noise-wasm` | `0.6.0` | `0.1.0` | `wasm-bindgen` build of the Rust core; both engines, native-speed sampling in the browser |
+| [`packages/shaders`](packages/shaders) | GLSL · HLSL · WGSL · Godot | — | `0.5.0` | — | code generator + ready-to-paste shaders for Shadertoy / Unity / Unreal / Godot / WebGPU |
+| [`packages/r3f`](packages/r3f) | TypeScript / React | npm `helix-noise-r3f` | `0.1.0` | `0.1.0` | react-three-fiber components (declarative particles + material); CPU + GPU engines, SDF obstacles |
+| [`packages/gpu`](packages/gpu) | TypeScript / WebGL2 | npm `helix-noise-gpu` | `0.1.0` | `0.1.0` | framework-agnostic GPU particle engine (transform-feedback advection via injected `field.glsl()`, ~10⁶ particles); no three.js/React |
+
+> **Read the two version columns before you `npm i`.** *In repo* is what this tree builds; *Published*
+> is what the registry currently serves. They have drifted: the automated release job has been failing
+> since it was added, so the 1.1–1.11 line of `helix-noise` (and everything in the ports past their
+> first release) exists only here. Installing from a registry today gets you the older API — no
+> structure primitives, no time warps, no gradient diagnostics. Build from source if you need those.
 
 The project's front-door site lives in [`site/`](site) (the landing) plus `packages/js/docs` (the VitePress
 reference); the `Deploy Site` workflow assembles them into one GitHub Pages site — landing at `/`, docs at `/docs`.

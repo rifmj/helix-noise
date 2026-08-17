@@ -91,6 +91,13 @@ coordinates into that range. `t` is an optional time (your animation clock).
 | `--churn X` | `1.0` | Time-evolution rate for `helixNoise(p, t)`. |
 | `--decay NU` | `0.0` | Viscous decay `≥ 0`: amplitudes fade as `e^(-NU·k²·t)`. |
 | `--anisotropy G` / `--axis X Y Z` | `0.0` / `0 0 1` | Stretch directions along an axis (`<0` streaks along it, `>0` layers across). |
+| `--spectrum-preset NAME:ARGS` | none | Named spectrum preset overriding the `\|k\|^-slope` power law, e.g. `shellPeak:3` or `shellPeak:3,1.5`. |
+| `--coherence-preset NAME:ARGS` | none | Named coherence preset, e.g. `rolloff:4`. |
+| `--helicity-preset NAME:ARGS` | none | Named helicity preset, e.g. `condensate:3,1,-1`. |
+| `--flutter F` | `0.0` | Fast deterministic phase wobble on top of the churn drift. |
+| `--polarization-axis X,Y,Z` / `--polarization-bias D` | none / `0.0` | World grain axis for linear polarization (off by default) and its strength `d` in `[0, 0.95]` along that axis. |
+| `--abc A,B,C` | none | Emit the closed-form ABC cell field as 3 modes (no RNG), e.g. `--abc 1.5,1,0.5`. |
+| `--ellipticity EPS` | `1.0` | Polarization ellipticity `eps` in `[0, 1]`: `1` = circular/tubes (default), `0` = linear/sheets. |
 | `--name NAME` | `helixNoise` | Emitted function/const prefix. |
 | `--precision P` | `7` | Significant figures for float literals. |
 | `--no-curl` | (curl on) | Omit the `Curl` function. |
@@ -159,9 +166,11 @@ coordinates into that range. `t` is an optional time (your animation clock).
 
 ## Scope
 
-v0.1 covers the **spectral engine** shader emitters (GLSL / HLSL / WGSL / Godot).
-The particle/atom advection engine from the JS library is a documented follow-up
-and is **not** included here.
+At 0.5.0, `generate.py` covers the **spectral engine** shader emitters (GLSL / HLSL / WGSL /
+Godot): the Beltrami-mode velocity field and its curl/potential, time evolution and flutter,
+the artist controls and their preset forms, the polarization channels, and the closed-form
+`--abc` cell field. The particle/atom advection engine from the JS library is a documented
+follow-up and is **not** included here.
 
 ## Changelog
 

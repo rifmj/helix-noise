@@ -1,0 +1,15 @@
+// Type-checking config — the build (tsup + tsconfig.json) emits from `src` only, so `src` is all it
+// needs to compile. But the tests are where the *public* types actually get used, and they run under
+// tsx, which strips types without checking them: a method missing from an interface it is meant to
+// describe is invisible to both. That is exactly how `BoundedField` came to omit `sampleGrad`,
+// `qCriterion`, `lambda2` and `stretching` while `BoundedFieldImpl` implemented all four — callable
+// at runtime, rejected by `tsc`. Checking `test` too closes that gap.
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": ".",
+    "types": ["node"]
+  },
+  "include": ["src", "test"]
+}

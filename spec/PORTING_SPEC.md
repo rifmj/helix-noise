@@ -12,9 +12,9 @@ each block already exists, not what a port is forbidden to add.
 | block | spec § | JS | Python | Rust | WASM | shaders | in fixture |
 |---|---|---|---|---|---|---|---|
 | spectral engine (build + sampling) | §§1–6 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `withBoundary` (SDF free-slip) | §7 | ✅ | ✅ | ✅ | ✅ | — | ✅ |
-| GLSL / shader emitter | §8 | ✅ | ✅ | ✅ | — | ✅ 4 targets | ✅ (GLSL) |
-| scale-fn + `abc` + `twoScale` presets | §10.1–10.3 | ✅ | ✅ | ✅ | — | — | ✅ |
+| `withBoundary` (SDF free-slip) | §7 | ✅ | ✅ | ✅ | — | — | ✅ |
+| GLSL / shader emitter | §8 | ✅ | ✅ | ✅ | ✅ | ✅ 4 targets | ✅ (GLSL) |
+| scale-fn + `abc` + `twoScale` presets | §10.1–10.3 | ✅ | ✅ | ✅ | — | ⚠️ no `twoScale` | ✅ |
 | NS presets (`exactNS`, `nsDeveloped`, `nsForced`) | §10.4–10.5 | ✅ | ✅ | ✅ | — | — | ❌ |
 | `relativeHelicitySpectral` | §6.1 | ✅ | ✅ | ✅ | — | — | ❌ |
 | structure primitives (rings, chassis, columns) | §11 | ✅ | — | — | — | — | ❌ |

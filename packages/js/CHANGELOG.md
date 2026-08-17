@@ -57,6 +57,16 @@ All notable changes to this project are documented here. This project adheres to
   wrong sign, not merely the wrong magnitude. Outside the band the two agree to the FD step, which is
   why it went unnoticed. `vorticity()` was unaffected only because slots 3..5 are written last.
 
+- **`BoundedField` hid four of its own methods from TypeScript.** `BoundedFieldImpl` implements
+  `sampleGrad`, `qCriterion`, `lambda2` and `stretching`, but the `BoundedField` interface — the type
+  `withBoundary()` actually returns — declared none of them. They worked at runtime and were a
+  compile error to call: `field.withBoundary(sdf).qCriterion(x, y, z)` returned `-0.0790…` under
+  `tsx` and `TS2339: Property 'qCriterion' does not exist on type 'BoundedField'` under `tsc`. The
+  four are now declared, with the note that this `sampleGrad` is the library's one finite-difference
+  gradient. Nothing was caught because `typecheck` covered `src` only while the tests — the one place
+  the public types get exercised — ran under `tsx`, which strips types without checking them;
+  `npm run typecheck` now covers `test` too (`tsconfig.typecheck.json`).
+
 ### Notes
 
 - Five of the six are one defect class — a scratch buffer still live across a call into other code —

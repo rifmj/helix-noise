@@ -1812,7 +1812,7 @@ test("gradient parity: a boundary-constrained field is the one approximate case,
   assert.ok(band.length >= 3, "test points must actually sit in the influence band");
 
   const g: number[] = new Array(9).fill(0);
-  const worstDiv = (f: FlowField): number => {
+  const worstDiv = (f: Pick<FlowField, "sampleGrad">): number => {
     let d = 0;
     for (const [x, y, z] of band) { f.sampleGrad(x, y, z, g); d = Math.max(d, Math.abs(g[0] + g[4] + g[8])); }
     return d;

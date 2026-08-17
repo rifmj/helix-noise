@@ -63,6 +63,7 @@ One call: a simulation + a renderer, driven by a built-in orbit camera and a
 | `speed` | `1` | advection-speed multiplier |
 | `seed` | `1` | initial particle layout seed |
 | `precision` | `7` | baked-constant significant digits (shader size vs. accuracy) |
+| `calibrationSamples` | `1200` | probe points for the one-off speed calibration |
 | `colorLow` / `colorHigh` | amber / teal | hues for left- / right-handed local helicity |
 | `clear` / `clearColor` | `true` / navy | clear the framebuffer before drawing |
 | `controls` / `autoRotate` | `true` / `true` | pointer orbit + zoom; idle rotation |

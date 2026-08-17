@@ -51,6 +51,8 @@ TypeScript types are included. Zero runtime dependencies.
 |---|---|---|
 | [`create(options?)`](#createoptions--the-spectral-field) | [`Field`](#field) | The main engine. Coherent, tileable, GPU-friendly. Start here. |
 | [`createAtoms(options?)`](#createatomsoptions--the-atom-field) | [`AtomField`](#atomfield) | Infinite, broadband, regionally art-directed flow. |
+| [structure primitives](#structure-primitives) | [`FlowField`](#flowfield) | Closed-form rings, columns and the axisymmetric chassis — no randomness in them at all. |
+| [time warps](#time-warps) | [`FlowField`](#flowfield) | Wrap any field so the whole pattern focuses: `collapse`, `dssCollapse`. |
 | [`version`](#helpers) | `string` | The library version. |
 | [`selfTest()`](#helpers) | [`SelfTestReport`](#selftestreport) | A built-in sanity check (divergence, etc.). |
 
@@ -93,7 +95,7 @@ Returns a [`Field`](#field). All options are optional — sensible defaults are 
 | `kmin` | `number` | `1` | Smallest wavenumber = the **largest** structures. |
 | `kmax` | `number` | `6.2` | Largest wavenumber = the **finest** detail. |
 | `centers` | `number` | `3` | How many focus points the coherent structures organize around (only matters when `coherence > 0`). |
-| `amplitude` | `number` | `1` | Output scale. The field is normalized to unit average speed, then multiplied by this. |
+| `amplitude` | `number` | `1` | Output scale. The field is normalized to unit **RMS** speed (at `t = 0`), then multiplied by this. |
 | `seed` | `number` | `1` | Integer seed. Same seed ⇒ exactly the same field. |
 
 **Time (only active when you pass `t` to a sampler):**
@@ -219,8 +221,13 @@ randomness in them at all. A smoke ring is a smoke ring, wherever you sample it.
 |---|---|---|
 | `createRing({ center, axis, radius, core, circulation, advect })` | `FlowField` | A **vortex ring** — a compact torus of swirl pushing a jet through its own middle. Exactly zero outside the core. `advect: true` sends it flying at the textbook self-induced speed. |
 | `collidingRings({ …, separation })` | `FlowField` | Two rings fired head-on: equal and opposite circulation, mirrored. |
+| `axisymmetric({ stream, swirl, swirlIntegral, center, axis })` | `FlowField` | The **chassis**: any pair of smooth profiles becomes a swirling, exactly incompressible field with no seam on the axis. |
+| `strainedColumn({ strain, viscosity, circulation, center, axis })` | `FlowField` | A **tornado** — and an exact stationary solution of Navier–Stokes. |
+| `counterSwirlColumns({ …, separation, offsetAxis })` | `FlowField` | Two strained columns side by side, spinning opposite ways, with an impermeable plane between them. |
 | `compose(...fields)` | `FlowField` | Sum any number of flows — primitives with each other, or with a noise field. |
 | `ringSpeed(circulation, radius, core)` | `number` | Kelvin's self-induced ring speed, if you want to drive the motion yourself. |
+| `columnCore(strain, viscosity)` | `number` | The column's core radius `√(2ν/a)`. |
+| `columnPeakVorticity(strain, viscosity, circulation)` | `number` | Its peak axial vorticity `εa/ν`, on the axis. |
 
 ```js
 import { create, createRing, collidingRings, compose } from "helix-noise";
@@ -235,6 +242,152 @@ These are built as an explicit curl, so they are exactly divergence-free *and* c
 potential — obstacles and the potential bakes work on them, and on any `compose` of them, exactly
 as they do on a noise field. The ring's potential is compactly supported too, so a `withBoundary`
 obstacle outside the core sees literally nothing.
+
+#### The axisymmetric family
+
+`axisymmetric` is the chassis the columns are built on. Give it two profiles in `(q, z)` with
+`q = r²` — a stream profile `P` and a swirl profile `h` — and it assembles the field
+
+```
+ψ = r²·P(r², z)      Γ = r²·h(r², z)
+u^r = −r·∂_z P       u^z = 2P + 2q·∂_q P      u^θ = r·h
+```
+
+Taking `r²` rather than `r` as the argument is the whole trick: it forces the parity a smooth
+axisymmetric field must have, the divisions by `r` cancel out of the formulas, and the axis becomes
+an ordinary point instead of a removable singularity. No seam down the middle, no special case at
+`r = 0`.
+
+```js
+import { axisymmetric } from "helix-noise";
+
+const funnel = axisymmetric({
+  stream: (q, z) => Math.exp(-q) * z,      // ψ = r²·P
+  swirl: (q) => Math.exp(-2 * q),          // Γ = r²·h
+});
+```
+
+| Option | Type | Default | What it does |
+|---|---|---|---|
+| `stream` | `AxiProfile` | — | `P` in `ψ = r²·P(r², z)`. Omit for no poloidal flow. |
+| `swirl` | `AxiProfile` | — | `h` in `Γ = r²·h(r², z)`. Omit for no rotation. |
+| `swirlIntegral` | `(q, z) => number` | — | `H(q,z) = ∫₀^q h dt`, used only by `potential()`. Supply it for an exact vector potential; without it a fixed Simpson rule stands in. |
+| `center` | `Vec3` | `[0,0,0]` | Where the axis passes through. |
+| `axis` | `Vec3` | `[0,0,1]` | Symmetry axis; normalized internally. |
+
+An `AxiProfile` is a plain `(q, z) => number` that may carry derivatives as properties — `dq`, `dz`
+for the field itself, `dqq`, `dqz`, `dzz` for `sampleGrad`. **Supply `dq` and `dz` and the field is
+exactly divergence-free; without them the partials are central differences and the divergence is
+O(h²) instead of machine zero.** That is the one place in the primitives where you choose the
+guarantee.
+
+**`axisymmetric` on its own is not a Navier–Stokes solution** — an arbitrary pair of profiles gives
+you incompressible and smooth, nothing more. `strainedColumn` is the pair that does solve the
+equations:
+
+```
+u^r = −a·r      u^z = 2a·z      u^θ = ε(1 − e^(−a r²/2ν)) / r
+```
+
+An inward strain `a` holds the filament open against viscosity `ν`, and the balance is exact: the
+vorticity is purely axial and Gaussian, `ω_z = (εa/ν)·e^(−a r²/2ν)`, with core radius `√(2ν/a)`.
+Raise the strain and the filament gets **thinner and brighter at once** — the peak `εa/ν` climbs as
+the width falls, which is how a real intensifying vortex reads.
+
+```js
+import { strainedColumn, columnCore, columnPeakVorticity } from "helix-noise";
+
+const tornado = strainedColumn({ strain: 0.9, viscosity: 0.05, circulation: 1.3 });
+columnCore(0.9, 0.05);                    // → 0.333…  the 1/e radius
+columnPeakVorticity(0.9, 0.05, 1.3);      // → 23.4     on the axis
+```
+
+| Option | Type | Default | What it does |
+|---|---|---|---|
+| `strain` | `number` | `0.7` | Inward strain rate `a` — how hard the flow squeezes toward the axis. |
+| `viscosity` | `number` | `0.05` | `ν`. With `strain` it fixes the core radius `√(2ν/a)`. |
+| `circulation` | `number` | `1` | `ε` — how fast the column spins. |
+| `center` / `axis` | `Vec3` | `[0,0,0]` / `[0,0,1]` | Placement, as above. |
+
+Two caveats, both structural rather than incidental. The strain field **grows with distance**
+(`u ~ a·r`), so a column is a *local-domain* object: bound the region you render or the far field
+takes over. And its vector potential, though exact, grows logarithmically and is **not** compactly
+supported — a swirling column cannot have a compact one — so unlike `createRing`, an obstacle far
+from the column is still affected slightly.
+
+`counterSwirlColumns` puts two of them side by side with opposite circulation. Note *side by side*:
+stacking them along a shared axis is the tempting arrangement and it is degenerate, because `ω_z`
+depends on `r` alone and never decays along `z`, so two opposed columns on one axis cancel each
+other **globally** and leave nothing but doubled strain. Offset laterally, they instead do what a
+real vortex pair does, with two exact consequences worth checking rather than believing: the
+mid-plane is **impermeable** (`u·n̂ = 0` on it exactly, an invisible wall), and the vorticity
+vanishes on that plane and only there — so both filaments stay individually bright while the
+doubled swirl between them drives a **jet** along the plane.
+
+| Option | Type | Default | What it does |
+|---|---|---|---|
+| `separation` | `number` | `2` | Distance between the two axes. |
+| `offsetAxis` | `Vec3` | — | Direction they are separated along; any vector not parallel to `axis` (its perpendicular part is used). |
+
+…plus every `strainedColumn` option, which both halves share.
+
+### Time warps
+
+`churn` and `flutter` are local in time — they drift and jitter phases. These two are global: they
+make the whole pattern **focus**, shrinking toward a point while speeding up, with the two locked
+together.
+
+| Factory | Returns | What it is |
+|---|---|---|
+| `collapse(field, opts?)` | `FlowField` | The pattern shrinks toward `center` like `(T − t)^q` while the flow speeds up like `(T − t)^(q−1)`. |
+| `dssCollapse(field, opts?)` | `FlowField` | The same focusing, dressed with a log-periodic modulation that makes it an **exact loop**. |
+
+```js
+import { create, collapse } from "helix-noise";
+
+const imploding = collapse(create({ modes: 48, tileable: true }), { T: 6, q: 0.55 });
+```
+
+A warp is `u(x,t) = A(t)·U((x−c)/L(t), t)`. Velocity scales by `A`, vorticity picks up an extra
+`1/L` from the chain rule and the vector potential an extra `L` — and because the chain rule gives
+`∇·u = (A/L)·(∇·U) = 0`, **any** length scale and **any** amplitude keep the field exactly
+divergence-free. A warp cannot break the library's one guarantee, whatever you set it to.
+
+| Option | Type | Default | What it does |
+|---|---|---|---|
+| `T` | `number` | `1` | The instant the collapse completes. Sampling is only defined for `t < T`. |
+| `q` | `number` | `0.6` | Space exponent, and the drama knob: near `1` a slow gathering, small a violent snap. `0 < q < 1` completes in finite time; as `q → 1` it becomes a drift that never quite arrives. |
+| `center` | `Vec3` | `[0,0,0]` | The point everything focuses on. |
+| `tieAmplitude` | `boolean` | `true` | Tie amplitude to scale (`A = \|L′\|`) so the flow speeds up exactly as fast as it shrinks, giving `‖u‖∞ = q(T−t)^(q−1)`. Set `false` to zoom without accelerating. |
+| `minTau` | `number` | `1e-4` | Floor on `T − t`, so an animation that runs past `T` degrades instead of returning `Infinity`. |
+| `freezeProfile` | `boolean` | `true` | Freeze the wrapped field's own clock so the warp supplies all the motion. |
+
+Because the warp samples the wrapped field at `(x − c)/L` with `L → 0`, it walks ever further into
+that field's far reaches. **Wrap a `tileable` field or a closed-form primitive** if you want
+structure to survive a deep zoom instead of dissolving into hash.
+
+`dssCollapse` adds the part that closes the loop. Driving by the renormalization time
+`s = −log(T − t)`, the scale is `(T−t)^b·Θ(s/log λ)` and the amplitude `(T−t)^(−a)·𝒜(s/log λ)` with
+`Θ` and `𝒜` 1-periodic. So every time `s` advances by `log λ` the field is **identical to what it
+was, up to a rescale** by `λ^(−b)` in space and `λ^a` in amplitude: one rendered period tiles the
+whole collapse, with no cross-fade and no drift. That is the difference between a Droste zoom that
+is faked and one that closes — and it is why `freezeProfile` defaults to `true` here, since a
+profile that is itself churning cannot repeat.
+
+| Option | Type | Default | What it does |
+|---|---|---|---|
+| `lambda` | `number` | `2` | Discrete zoom ratio: the picture repeats every `log λ` of renormalization time. |
+| `b` | `number` | `0.6` | Space exponent. |
+| `a` | `number` | `0.8` | Amplitude exponent. |
+| `scaleProfile` | `(phase01) => number` | `1 + 0.25·cos(2πφ)` | 1-periodic, strictly positive scale modulation. |
+| `ampProfile` | `(phase01) => number` | `1` | 1-periodic, strictly positive amplitude modulation. |
+
+…plus every `collapse` option.
+
+> **On the exponents.** They are free parameters. A hypothetical Navier–Stokes singularity would
+> have to satisfy `1/2 < b < 1` and `b < a < (1+b)/2`, so that range is offered as a sane starting
+> point — but it is a *necessary* budget constraint on an object nobody has exhibited, it is not
+> enforced, and this warp is a kinematic animation law rather than a claim about turbulence.
 
 ### Ready-made looks
 
@@ -349,6 +502,7 @@ const src = field.glsl({ name: "helixNoise" });
 | `precision` | `number` | `7` | Significant digits for baked float constants. |
 | `curl` | `boolean` | `true` | Also emit `<name>Curl(vec3 p)` (the vorticity). |
 | `potential` | `boolean` | `false` | Also emit `<name>Pot(vec3 p)` (the vector potential — for in-shader SDF boundaries). |
+| `gradient` | `boolean` | `false` | Also emit `mat3 <name>Grad(vec3 p)` (the analytic velocity gradient) and `float <name>Q(vec3 p)` (the Q-criterion) — the GPU half of [Colouring by structure](#colouring-by-structure). |
 
 ### Re-tuning
 
@@ -417,15 +571,21 @@ methods** as the spectral `Field`, minus `sample`-time re-tuning specifics noted
 ```js
 import { version, selfTest } from "helix-noise";
 
-version;        // e.g. "1.0.0"
-selfTest();     // → { transversality, fdDivergenceRms, rhoVsP }
+version;        // e.g. "1.11.3"
+selfTest();     // → { transversality, fdDivergenceRms, rhoVsP,
+                //     ellipticityRho, fdDivergenceRmsElliptic }
 ```
 
-- **`version`** — the library version string.
+- **`version`** — the library version string. It is the package version: a test pins the two
+  together, so what you import and what you installed cannot disagree.
 - **`selfTest()`** — runs the built-in validation and returns a [`SelfTestReport`](#selftestreport):
   `transversality` is analytic and machine-zero (≈ `1e-16`); `fdDivergenceRms` is a finite-difference
   residual — a small O(h²) truncation of the exactly divergence-free field (order `1e-6`, **not**
-  machine-zero). Both staying small is a good CI smoke test.
+  machine-zero). Both staying small is a good CI smoke test. The last two repeat the checks off the
+  Beltrami case: `ellipticityRho` is the worst error against the closed form `2χ/(1+χ²)` over
+  single-mode fields at `ellipticity ∈ {0, 0.5, 1}` (≈ `1e-12`), and `fdDivergenceRmsElliptic` is the
+  divergence residual at `ellipticity: 0.5` — because divergence-freedom must not depend on the
+  polarization, and that is worth measuring rather than assuming.
 
 You can also import the classes directly (`HelixField`, `HelixAtoms`) if you prefer `new` over the
 factory functions — they're equivalent.
@@ -443,12 +603,23 @@ The atom field returned by `createAtoms()`. Same surface as `Field` (batch, bake
 with the atom-specific options and caching rules above.
 
 ### `FlowField`
-The shared surface both engines implement: `sample`, `vorticity`, `helicityDensity`, `sampleUW`,
-`sampleUA`, `potential`, `bake3D`, `bake2D`, `bakePotential3D`, `withBoundary`.
+The shared surface both engines implement — and so do the structure primitives, `compose`, and the
+time warps: `sample`, `vorticity`, `helicityDensity`, `sampleUW`, `sampleUA`, `potential`,
+`sampleGrad`, `qCriterion`, `lambda2`, `stretching`, `bake3D`, `bake2D`, `bakePotential3D`,
+`withBoundary`.
 
 ### `BoundedField`
-A field constrained by an obstacle (from `withBoundary`). Same reading/baking methods, plus
-`base` (the field it wraps) and `sdf` (the obstacle).
+A field constrained by an obstacle (from `withBoundary`). It carries `base` (the field it wraps) and
+`sdf` (the obstacle), the reading and baking methods `sample`, `vorticity`, `helicityDensity`,
+`sampleUW`, `potential`, `bake3D`, `bakePotential3D`, and the four diagnostics `sampleGrad`,
+`qCriterion`, `lambda2`, `stretching`.
+
+Two differences from `FlowField`, both deliberate. A bounded field has **no** `sampleUA`, `bake2D`
+or `withBoundary` — you cannot nest obstacles. And its `sampleGrad` is **the one approximate
+gradient in the library**: the bounded velocity depends on `∇d` of *your* SDF, which in general has
+no closed form, so it uses central differences at the same `fdStep` as `vorticity` — consistent with
+it by construction. Pass `gradient` in [`BoundaryOptions`](#boundaryoptions) and both sharpen
+together. Everywhere else in this library, `sampleGrad` is analytic.
 
 ### `Vec3`
 `[number, number, number]` — a 3-component vector (velocity, vorticity, potential, …).
@@ -460,6 +631,11 @@ they can write without allocating.
 ### `Sdf`
 `(x, y, z) => number` — a signed distance function: `> 0` outside the obstacle, `< 0` inside, `0`
 on the wall.
+
+### `ScaleFn`
+`(k: number) => number` — a per-wavenumber law. Anywhere `helicity`, `coherence` or `spectrum`
+accepts a number, it also accepts one of these, which is what the [scale-dependent
+dials](#scale-dependent-dials) return.
 
 ### `Bake3DResult`
 `{ data: Float32Array; size: number; channels: 4 }` — an `size³` RGBA volume.
@@ -480,7 +656,10 @@ Options for `create()` — see [Options](#options).
 Options for `createAtoms()` — see the [atom field](#createatomsoptions--the-atom-field).
 
 ### `SelfTestReport`
-`{ transversality: number; fdDivergenceRms: number; rhoVsP: Record<string, number> }` — the result
+`{ transversality: number; fdDivergenceRms: number; rhoVsP: Record<string, number>;
+ellipticityRho: number; fdDivergenceRmsElliptic: number }` — the result
 of `selfTest()`. `transversality` is machine-zero (≈ `1e-16`, exact by construction); `fdDivergenceRms`
 is a small O(h²) finite-difference residual (order `1e-6`), not machine-zero; `rhoVsP` maps a helicity
-value to the measured handedness.
+value to the measured handedness; `ellipticityRho` is the worst deviation from `2χ/(1+χ²)` across
+`ellipticity ∈ {0, 0.5, 1}` (≈ `1e-12`); `fdDivergenceRmsElliptic` is `fdDivergenceRms` re-measured at
+`ellipticity: 0.5`, confirming that incompressibility is independent of polarization.

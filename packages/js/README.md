@@ -431,9 +431,14 @@ All samplers and bakes take an optional trailing `t` (default `0`).
 | `withBoundary(sdf, opts?)` | `BoundedField` | obstacle-aware field: free-slip at the wall, zero inside, still div-free |
 | `set(options)` | `this` | re-tune any params and rebuild (sub-millisecond) |
 | `relativeHelicity(ng?)` | `number` | `⟨u·ω⟩/(‖u‖‖ω‖)`; a live check that helicity tracks `p` |
+| `relativeHelicitySpectral(t?)` | `number` | the same ratio computed from the modes, with no sampling grid |
+| `sampleGrad(x, y, z, out9, t?)` | `out9` | the **analytic** velocity gradient, row-major `out9[3m+n] = ∂uₙ/∂xₘ` |
+| `qCriterion(x, y, z, t?)` | `number` | > 0 inside vortex cores, < 0 in shear layers — the cheapest good thing to colour by |
+| `lambda2(x, y, z, t?)` | `number` | < 0 inside a core; stricter than Q — it ignores swirl that is really shear |
+| `stretching(x, y, z, t?)` | `number` | > 0 where a vortex is being spun up, < 0 where it is squashed |
 | `bake3D(n, t?)` / `bake2D(nx, ny, z?, t?)` | `{ data, … }` | RGBA `Float32Array` for a GPU texture |
 | `bakePotential3D(n, t?)` | `{ data, … }` | rgb = A; FD-curl it in the shader → discretely div-free velocity |
-| `glsl(opts?)` | `string` | self-contained GLSL — the exact field, GPU-side, `(vec3 p)` + `(vec3 p, float t)`; `{ potential: true }` adds `<name>Pot` |
+| `glsl(opts?)` | `string` | self-contained GLSL — the exact field, GPU-side, `(vec3 p)` + `(vec3 p, float t)`; `{ potential: true }` adds `<name>Pot`, `{ gradient: true }` adds `<name>Grad` / `<name>Q` |
 
 ### `createAtoms(options?)` → `AtomField`
 
